@@ -41,8 +41,6 @@ namespace Bestie
 
         [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
 
-        static double Now { get { return clock.Elapsed.TotalSeconds; } }
-
         /// <summary>UI thread, every frame (it samples ~30 times a second).</summary>
         public static void Tick()
         {
@@ -75,11 +73,6 @@ namespace Bestie
             return list;
         }
 
-        /// <summary>The last `seconds` of movement as points (oldest first), for drawing the laser's tail.</summary>
-        public static List<Point> Trail(double seconds)
-        {
-            return Recent(seconds).Select(s => new Point(s.X, s.Y)).ToList();
-        }
 
         /// <summary>What the pointer did during the last `seconds` (roughly: while they were speaking). Any thread.</summary>
         public static PointerGesture Collect(double seconds)
@@ -223,7 +216,7 @@ namespace Bestie
 
         // ================================================================== drawing it on screenshots
 
-        public static readonly Color Laser = Color.FromArgb(255, 45, 85);
+        public static readonly Color Laser = Color.FromArgb(255, 45, 85);   // the red of the marks
 
         /// <summary>Four short corner ticks pointing in at a spot, leaving the spot itself clear (for the close-up).</summary>
         public static void MarkSpot(Graphics g, Point c, float scale)
@@ -251,67 +244,6 @@ namespace Bestie
             float cx = gesture.Focus.X - bounds.Left, cy = gesture.Focus.Y - bounds.Top, rr = 24 * scale;
             using (var halo = new Pen(Color.FromArgb(120, 255, 255, 255), 7 * scale)) g.DrawEllipse(halo, cx - rr, cy - rr, rr * 2, rr * 2);
             using (var ring = new Pen(Color.FromArgb(235, Laser), 3.5f * scale)) g.DrawEllipse(ring, cx - rr, cy - rr, rr * 2, rr * 2);
-        }
-    }
-
-    /// <summary>The red laser dot (with a short tail) that follows the mouse while it's listening, so pointing
-    /// at something while you talk feels like pointing. Click-through, and left out of screenshots.</summary>
-    internal sealed class LaserWindow : LayeredWindow
-    {
-        [DllImport("user32.dll")] static extern bool SetWindowDisplayAffinity(IntPtr hWnd, uint affinity);
-        const uint WDA_EXCLUDEFROMCAPTURE = 0x11;
-
-        Surface surf;
-        double alpha;
-        bool shown;
-
-        public LaserWindow() { ClickThrough = true; }
-
-        protected override void OnHandleCreated(EventArgs e)
-        {
-            base.OnHandleCreated(e);
-            try { SetWindowDisplayAffinity(Handle, WDA_EXCLUDEFROMCAPTURE); } catch { }
-        }
-
-        /// <summary>Every frame. on: it should be showing. scale: the creature's DPI scale.</summary>
-        public void Update(bool on, double dt, float scale)
-        {
-            alpha += (on ? 1 : -1) * dt / (on ? 0.12 : 0.35);
-            alpha = Math.Max(0, Math.Min(1, alpha));
-            if (alpha <= 0)
-            {
-                if (shown && surf != null) { Present(surf, -32000, -32000, 0); shown = false; }
-                return;
-            }
-            int size = (int)(260 * scale);
-            if (surf == null || surf.Width != size) { if (surf != null) surf.Dispose(); surf = new Surface(size, size); }
-            List<Point> trail = Pointer.Trail(0.28);
-            if (trail.Count == 0) return;
-            Point tip = trail[trail.Count - 1];
-            int ox = tip.X - size / 2, oy = tip.Y - size / 2;
-            surf.Clear();
-            Graphics g = surf.G;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-            // tail: thin and faint at the old end, bright at the tip
-            for (int i = 1; i < trail.Count; i++)
-            {
-                float k = (float)i / trail.Count;
-                using (var pen = new Pen(Color.FromArgb((int)(170 * k), Pointer.Laser), (1.5f + 5f * k) * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round })
-                    g.DrawLine(pen, trail[i - 1].X - ox, trail[i - 1].Y - oy, trail[i].X - ox, trail[i].Y - oy);
-            }
-            float cx = size / 2f, cy = size / 2f;
-            // glow
-            for (int i = 5; i >= 1; i--)
-            {
-                float r = (4 + i * 3.2f) * scale;
-                using (var b = new SolidBrush(Color.FromArgb(22, Pointer.Laser))) g.FillEllipse(b, cx - r, cy - r, r * 2, r * 2);
-            }
-            float core = 5.5f * scale;
-            using (var b = new SolidBrush(Pointer.Laser)) g.FillEllipse(b, cx - core, cy - core, core * 2, core * 2);
-            float hot = 2.2f * scale;
-            using (var b = new SolidBrush(Color.FromArgb(230, 255, 235, 240))) g.FillEllipse(b, cx - hot - core * 0.25f, cy - hot - core * 0.25f, hot * 2, hot * 2);
-            Present(surf, ox, oy, (byte)(255 * alpha));
-            shown = true;
         }
     }
 }
