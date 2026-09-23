@@ -376,6 +376,7 @@ function safeUrl(raw) {
 }
 
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const COMMANDS = {
   async list_tabs() {
@@ -434,7 +435,53 @@ const COMMANDS = {
     await chrome.search.query({ text: text.slice(0, 2000), disposition: "NEW_TAB" });
     return { ok: true };
   },
+
+  // Press "Save" on a prefilled Google Calendar event page (one bestie opened from a calendar link).
+  // Only works on calendar.google.com, so nothing else can use it to click around.
+  async gcal_save({ tabId, timeoutMs = 20000 }) {
+    const deadline = Date.now() + clamp(Number(timeoutMs) || 20000, 3000, 60000);
+    const isCal = (u) => /^https:\/\/calendar\.google\.com\//.test(u || "");
+    let tab = await findTab(tabId);
+    while (Date.now() < deadline) {
+      tab = await findTab(tabId);
+      const url = tab.url || tab.pendingUrl || "";
+      if (/^https:\/\/accounts\.google\.com\//.test(url)) throw new Error("you need to be signed in to google in this browser first");
+      if (tab.status === "complete" && isCal(url)) break;
+      await sleep(250);
+    }
+    if (!isCal(tab.url)) throw new Error("that tab isn't google calendar");
+    while (Date.now() < deadline) {
+      let state = "waiting";
+      try {
+        const [frame] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, func: pressCalendarSave });
+        state = (frame && frame.result) || "waiting";
+      } catch (e) { /* page mid-navigation; try again */ }
+      if (state === "clicked") {
+        // saved once the page leaves the event editor
+        for (let i = 0; i < 30; i++) {
+          await sleep(250);
+          const t = await findTab(tabId).catch(() => null);
+          if (!t || !/eventedit|action=TEMPLATE/i.test(t.url || "")) return { ok: true, saved: true };
+        }
+        return { ok: true, saved: true, unsure: true };
+      }
+      await sleep(400);
+    }
+    throw new Error("the save button never showed up");
+  },
 };
+
+// Runs inside calendar.google.com. Must stay self-contained.
+function pressCalendarSave() {
+  const buttons = Array.from(document.querySelectorAll("button, [role=button]"));
+  const save = document.getElementById("xSaveBu") || buttons.find((b) => {
+    const label = ((b.getAttribute("aria-label") || b.innerText || "") + "").trim().toLowerCase();
+    return label === "save";
+  });
+  if (!save || save.offsetParent === null || save.disabled || save.getAttribute("aria-disabled") === "true") return "waiting";
+  save.click();
+  return "clicked";
+}
 
 // ---------------------------------------------------------------- small stuff
 

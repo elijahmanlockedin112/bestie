@@ -99,11 +99,23 @@ If [Wispr Flow](https://wisprflow.ai) is installed, Bestie plugs into the real a
 
 All four switches are under **wispr flow** in the right-click menu. Bestie reads Wispr's local history (`flow.sqlite`) read-only, using the SQLite that's built into Windows. If a Wispr update changes that file, those features stop working quietly; nothing breaks.
 
+### Widgets
+
+Right-click → **widgets** puts little paper cards on your desktop:
+- **to-do:** check things off, or right-click to delete. Its list is `Documents\Bestie\todo.md`, a plain checklist you can edit by hand.
+- **calendar:** this week's events and your Bestie reminders, plus a box to add an event ("dentist fri 3pm").
+- **now playing:** what's playing on Spotify, Mothball's rating out of 7, and play/skip buttons.
+- **sticky notes:** as many as you want, in five colors. Each is saved to `notes\`.
+
+You can drag them by the header, resize them from the corner, and use the pin to keep one on top. The assistant can use them too: *"add milk to my to-do"*, *"put my calendar on the desktop"*, *"stick a note that says call abby"*.
+
+The creature treats widgets like any other window: it'll stand on your to-do list (its "Clipboard") and nap on your sticky notes.
+
 ### Google Calendar
 
-Bestie can read your calendar and add, move or delete events. Moving or deleting always asks you first with a yes/no pop-up. When you're connected, it also warns you about 10 minutes before each event.
+**With no setup at all**, you can ask it to add an event ("add dentist friday 3pm"). It opens a prefilled Google Calendar event in a background tab of your browser, presses Save, and closes the tab. This needs the browser extension at version 1.2 (hit **reload** in `chrome://extensions`) and you signed in to Google in Chrome. Without the extension, it opens the prefilled event and you press Save yourself. It can also read your upcoming schedule from Google Calendar's agenda page.
 
-Setup takes about 5 minutes, once:
+**With the full connection**, it can also move and delete events (always asking you first with a yes/no pop-up), fill the calendar widget, and warn you about 10 minutes before each event. Setup takes about 5 minutes, once:
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a project called "Bestie".
 2. Under **APIs & Services**, enable **Google Calendar API**.
@@ -174,7 +186,9 @@ chats\     transcripts of your conversations, written as you talk
 .state\    its brain (saved every 15 seconds), settings, logs
 ```
 
-It saves constantly. The journal and chat transcripts are appended as things happen, and the brain is saved every 15 seconds and right away when it learns something big. After each conversation it pulls out anything worth remembering about you into `memory\about-you.md`, plus a one-line summary in `memory\conversations.md`.
+It saves constantly. The journal and chat transcripts are appended as things happen, and the brain is saved every 15 seconds and right away when it learns something big.
+
+About a minute and a half after a conversation goes quiet, one small AI call reads it and writes down anything lasting about you (people, school, projects, preferences) in `memory\about-you.md`, plus a one-line summary in `memory\conversations.md`. You'll see *"(wrote that down. i'll remember.)"* when it does. It reads both files before every conversation, so it remembers across days. Passwords, keys and card numbers are never stored. Anything it hasn't processed yet waits in `.state\memory-pending.txt`, so quitting doesn't lose it.
 
 To start over with a brand-new egg, say goodbye to it and delete `.state\brain.json`.
 

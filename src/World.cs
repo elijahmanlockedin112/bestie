@@ -122,9 +122,16 @@ namespace Bestie
             {
                 if (!Native.IsWindowVisible(h) || Native.IsIconic(h)) return true;
                 uint pid; Native.GetWindowThreadProcessId(h, out pid);
-                if (pid == ownPid) return true;
+                // its own windows are invisible to it, except its desktop widgets: those are furniture it can stand on
+                string widget = null;
+                if (pid == ownPid)
+                {
+                    string t = Native.TitleOf(h);
+                    if (!t.StartsWith("bestie widget: ")) return true;
+                    widget = "widget:" + t.Substring("bestie widget: ".Length);
+                }
                 int ex = Native.GetWindowLong(h, Native.GWL_EXSTYLE);
-                if ((ex & Native.WS_EX_TOOLWINDOW) != 0 && (ex & Native.WS_EX_APPWINDOW) == 0) return true;
+                if (widget == null && (ex & Native.WS_EX_TOOLWINDOW) != 0 && (ex & Native.WS_EX_APPWINDOW) == 0) return true;
                 if ((ex & Native.WS_EX_TRANSPARENT) != 0 && (ex & Native.WS_EX_LAYERED) != 0) return true;
                 if (Native.IsCloaked(h)) return true;
                 string cls = Native.ClassOf(h);
@@ -135,7 +142,7 @@ namespace Bestie
                 if (!Native.FrameBounds(h, out r) || r.Width < 100 || r.Height < 50) return true;
 
                 var win = new Win { Hwnd = h, R = r, Title = title, Z = z++, Maximized = Native.IsZoomed(h) };
-                win.App = AppName(pid, cls, title);
+                win.App = widget ?? AppName(pid, cls, title);
                 Wins.Add(win);
                 if (h == fg) Foreground = win;
                 return true;

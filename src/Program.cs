@@ -24,6 +24,7 @@ namespace Bestie
             if (args.Length >= 3 && args[0] == "--simulate") { Tools.Simulate(double.Parse(args[1]), args[2]); return 0; }
             if (args.Length >= 2 && args[0] == "--icon") { Tools.WriteIcon(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--diary") { Tools.DiaryImage(args[1]); return 0; }
+            if (args.Length >= 2 && args[0] == "--widgets") { Tools.WidgetsImage(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--sessions")
             {
                 AiSessions.Start();
@@ -190,6 +191,41 @@ namespace Bestie
                 bmp.Save(path, ImageFormat.Png);
             }
             panel.Close();
+        }
+
+        /// <summary>Render every widget (with whatever data is around) side by side into a PNG.</summary>
+        public static void WidgetsImage(string path)
+        {
+            var brain = Brain.Load(Home.State("brain.json"));
+            brain.FilePath = null;   // look, don't touch
+            var c = new Creature(brain, 0);
+            c.NowPlaying = new Song { Title = "End of Beginning", Artist = "Djo", Source = "spotify" };
+            var host = new Form();
+            host.CreateControl();
+            WidgetManager.Init(host, c, () => null);
+            var forms = new WidgetForm[] {
+                new TodoWidget(new WidgetState { Id = "todo", Kind = "todo" }),
+                new CalendarWidget(new WidgetState { Id = "calendar", Kind = "calendar" }),
+                new MusicWidget(new WidgetState { Id = "music", Kind = "music" }),
+                new NoteWidget(new WidgetState { Id = "note-99", Kind = "note", Color = 0 }) };
+            int gap = 20, width = gap, height = 0;
+            foreach (var f in forms) { f.CreateControl(); width += f.Width + gap; height = Math.Max(height, f.Height); }
+            using (var bmp = new Bitmap(width, height + gap * 2))
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.FromArgb(58, 62, 74));
+                int x = gap;
+                foreach (var f in forms)
+                {
+                    using (var one = new Bitmap(f.Width, f.Height))
+                    {
+                        f.DrawToBitmap(one, new Rectangle(0, 0, f.Width, f.Height));
+                        g.DrawImage(one, x, gap);
+                    }
+                    x += f.Width + gap;
+                }
+                bmp.Save(path, ImageFormat.Png);
+            }
         }
 
         public static void WriteIcon(string path)

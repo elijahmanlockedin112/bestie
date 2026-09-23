@@ -71,6 +71,17 @@ namespace Bestie
             catch (Exception ex) { DebugLog.Write("ai sessions failed to start: " + ex); }
             try { StartWispr(); }
             catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
+            try
+            {
+                WidgetManager.Init(this, c, () => assistant);
+                Todos.Completed += item => OnUi(() =>
+                {
+                    c.Say(Rng.Pick("one less violation.", "checked off. the building thanks you.", "done! 7 out of 7.", "“" + (item.Text.Length > 30 ? item.Text.Substring(0, 28) + "…" : item.Text) + "”: handled."), false, 0);
+                    c.Emit("sparkle", 4);
+                    c.Squash = -0.3;
+                });
+            }
+            catch (Exception ex) { DebugLog.Write("widgets failed to start: " + ex); }
             timer.Start();
         }
 
@@ -240,6 +251,7 @@ namespace Bestie
             Add("look at my screen & ask…", null, () => { if (assistant != null) assistant.ShareScreenAndAsk(); });
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
+            menu.Items.Add(WidgetsMenu());
             Add(brain.Name + "'s diary", null, OpenDiary);
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
@@ -398,6 +410,7 @@ namespace Bestie
             Journal.Add(e.CloseReason == CloseReason.WindowsShutDown ? "the computer went to sleep. so did i." : "went to sleep. see you.");
             step("save", SaveAll);
             step("volume", () => { ducker.Restore(); ducker.Tick(1); ducker.Tick(1); });   // put everyone's volume back right away
+            step("widgets", WidgetManager.CloseAll);
             step("brain.md", () => c.WriteReadableBrain());
             step("assistant", () => { if (assistant != null) assistant.Dispose(); });
             System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
@@ -443,6 +456,27 @@ namespace Bestie
             c.Squash = -0.3;
             try { assistant.SubmitSpokenText(command, WakePhrases()); }
             catch (Exception ex) { DebugLog.Write("wispr dictation: " + ex.Message); }
+        }
+
+        ToolStripMenuItem WidgetsMenu()
+        {
+            var root = new ToolStripMenuItem("widgets");
+            foreach (var kind in new[] { "todo", "calendar", "music" })
+            {
+                string k2 = kind;
+                var item = new ToolStripMenuItem(WidgetManager.Label(kind)) { CheckOnClick = false };
+                item.Click += (s, e) => { try { WidgetManager.Toggle(k2); } catch (Exception ex) { DebugLog.Write("widgets: " + ex.Message); } };
+                root.DropDownOpening += (s, e) => item.Checked = WidgetManager.IsOpen(k2);
+                root.DropDownItems.Add(item);
+            }
+            root.DropDownItems.Add(new ToolStripSeparator());
+            var newNote = new ToolStripMenuItem("new sticky note");
+            newNote.Click += (s, e) => WidgetManager.NewNote(null);
+            var allNotes = new ToolStripMenuItem("show my sticky notes");
+            allNotes.Click += (s, e) => WidgetManager.ShowNotes();
+            root.DropDownItems.Add(newNote);
+            root.DropDownItems.Add(allNotes);
+            return root;
         }
 
         ToolStripMenuItem WisprMenu()

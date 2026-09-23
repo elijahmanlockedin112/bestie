@@ -1013,7 +1013,7 @@ namespace Bestie
         AssistantToolResult CalendarTool(string name, Dictionary<string, object> a)
         {
             AssistantCalendar c = module.Calendar;
-            if (c == null || !c.IsConnected) return new AssistantToolResult("the calendar isn't connected. they can connect it in my settings.");
+            if (c == null || !c.IsConnected) return LinkCalendarTool(name, a);   // no google setup: go through their browser
             try
             {
                 switch (name)

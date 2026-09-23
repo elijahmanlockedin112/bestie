@@ -121,7 +121,9 @@ namespace Bestie
                 P("minutes", "number", "minutes from now"), P("text", "string", "what to remind them of")));
             t.Add(Tool("list_reminders", "list pending reminders.", R()));
             t.Add(Tool("cancel_reminder", "cancel a reminder.", R("match"), P("match", "string", "reminder id or part of its text")));
-            if (module.Calendar != null && module.Calendar.IsConnected) AddCalendarTools(t);
+            bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
+            if (calendarConnected) AddCalendarTools(t);
+            AddExtraTools(t, browser, calendarConnected);
             t.Add(Tool("list_ai_sessions","list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
             t.Add(Tool("focus_ai_session", "bring one of those sessions to the front.", R("id"), P("id", "string", "session id from list_ai_sessions")));
             t.Add(Tool("new_ai_chat", "open a fresh claude or chatgpt chat in the browser.", R("provider"),
@@ -174,7 +176,7 @@ namespace Bestie
                     case "calendar_delete_event":
                     case "calendar_list_calendars":
                         return CalendarTool(name, a);
-                    default: return new AssistantToolResult("there's no tool called " + name + ".");
+                    default: return ExtraTool(name, a) ?? new AssistantToolResult("there's no tool called " + name + ".");
                 }
             }
             catch (BridgeException ex) { return new AssistantToolResult("the browser said: " + ex.Message); }

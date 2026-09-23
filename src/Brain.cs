@@ -355,11 +355,16 @@ namespace Bestie
             { "settings", new[] { "the Knob Shelf", "the Switch Box" } },
             { "calc", new[] { "the Number Shelf" } },
             { "taskmgr", new[] { "the Worry Box" } },
+            { "widget:todo", new[] { "my Clipboard" } },
+            { "widget:calendar", new[] { "the Wall Calendar" } },
+            { "widget:music", new[] { "the Jukebox" } },
+            { "widget:note", new[] { "the Sticky Note", "the Little Yellow Roof" } },
         };
 
         static string Kind(string app)
         {
             if (app == null) return null;
+            if (app.StartsWith("widget:")) return Known.ContainsKey(app) ? app : null;
             string[][] map = {
                 new[] { "browser", "chrome", "msedge", "firefox", "brave", "opera", "arc", "vivaldi", "iexplore", "zen", "floorp", "librewolf" },
                 new[] { "files", "explorer" },
