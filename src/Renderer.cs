@@ -101,6 +101,7 @@ namespace Bestie
             if (c.Face == Face.Dizzy) rot += Math.Sin(t * 6) * 7;
             if (c.Vibing) { bob -= Math.Abs(Math.Sin(t * 6.3)) * 2.2; rot += Math.Sin(t * 3.15) * 5; armF = 60 + Math.Sin(t * 6.3) * 20; }   // bopping along to your music
             if (c.Mood == "listening") { sq -= 0.05; armF = 110; }
+            if (c.ListenAlong && c.Pose != Pose.Lie) { armF = 158; rot += 9 + Math.Sin(t * 2.5) * 2; sq -= 0.04; }   // hand cupped to its "ear", leaning in
             sq += Math.Sin(t * 2.1) * 0.015;   // breathing
             sq = Math.Max(-0.5, Math.Min(0.55, sq));
 
@@ -129,6 +130,21 @@ namespace Bestie
 
             g.TranslateTransform(0, -3 * s);   // body sits on its little feet
             g.ScaleTransform(sx * s * facing, sy * s);
+
+            if (c.Halo > 0.02)
+            {
+                // a warm glow behind the whole body while it's listening to you
+                using (var gp = new GraphicsPath())
+                {
+                    gp.AddEllipse(-40, -58, 80, 72);
+                    using (var pgb = new PathGradientBrush(gp))
+                    {
+                        pgb.CenterColor = Color.FromArgb((int)(130 * c.Halo), 255, 228, 130);
+                        pgb.SurroundColors = new[] { Color.FromArgb(0, 255, 228, 130) };
+                        g.FillPath(pgb, gp);
+                    }
+                }
+            }
 
             using (var pen = new Pen(dark, 2.1f) { LineJoin = LineJoin.Round })
             {
@@ -159,8 +175,23 @@ namespace Bestie
                 DrawArm(g, -21, -17, armB, -1, body, pen);
                 DrawArm(g, 22, -17, armF, 1, body, pen);
                 DrawFace(g, c, looks, t, lx, ly, dark);
+                if (c.Halo > 0.02) DrawHalo(g, c.Halo, t);
             }
             g.Restore(saved);
+        }
+
+        /// <summary>A golden angel halo floating over its head: "i'm listening".</summary>
+        static void DrawHalo(Graphics g, double strength, double t)
+        {
+            float y = -62 + (float)Math.Sin(t * 3) * 1.5f;
+            float pulse = (float)(0.8 + 0.2 * Math.Sin(t * 5));
+            for (int i = 3; i >= 1; i--)
+                using (var glow = new Pen(Color.FromArgb((int)(45 * strength * pulse), 255, 215, 90), 2.5f + i * 2.8f))
+                    g.DrawEllipse(glow, -16, y - 4.5f, 32, 9);
+            using (var ring = new Pen(Color.FromArgb((int)(255 * strength), 255, 208, 70), 2.8f))
+                g.DrawEllipse(ring, -16, y - 4.5f, 32, 9);
+            using (var shine = new Pen(Color.FromArgb((int)(220 * strength), 255, 252, 215), 1.3f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawArc(shine, -14, y - 3.8f, 28, 7.6f, 200, 70);
         }
 
         static GraphicsPath BodyPath(double round, double t)

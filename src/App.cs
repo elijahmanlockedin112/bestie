@@ -34,6 +34,12 @@ namespace Bestie
         readonly List<AiSession> finished = new List<AiSession>();
         double lastAnnounce = -100, nextPeekAt = 6 * 60;
         readonly bool trace = Environment.GetEnvironmentVariable("BESTIE_TRACE") == "1";
+        WakeWord wake;
+        double wakeCheck, wakeRetryAt;
+        readonly AudioDucker ducker = new AudioDucker();
+        WisprWatcher wispr;
+        WisprCapture wisprCapture;
+        double listenCheck;
 
         public CreatureWindow(Brain brain)
         {
@@ -53,6 +59,7 @@ namespace Bestie
         protected override void OnLoad(EventArgs e)
         {
             base.OnLoad(e);
+            Watchdog.Start(this);
             bubble.Show();
             c.Begin();
             try { BrowserBridge.Start(BrowserBridge.DefaultPort); }
@@ -62,6 +69,8 @@ namespace Bestie
             c.PeekRequest = () => assistant != null && assistant.Peek();
             try { StartSessions(); }
             catch (Exception ex) { DebugLog.Write("ai sessions failed to start: " + ex); }
+            try { StartWispr(); }
+            catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
             timer.Start();
         }
 
@@ -89,6 +98,18 @@ namespace Bestie
             AnnounceFinished();
             MaybeBeNosy();
             CheckHoldToTalk();
+            ducker.Tick(dt);
+            listenCheck -= dt;
+            if (listenCheck <= 0)
+            {
+                listenCheck = 0.3;
+                // cup an ear while you dictate anywhere with wispr
+                bool along = false;
+                try { along = brain.WisprListen && wispr != null && !(wisprCapture != null && wisprCapture.Active) && Wispr.Running && Wispr.IsDictating(); } catch { }
+                c.ListenAlong = along;
+            }
+            wakeCheck -= dt;
+            if (wakeCheck <= 0) { wakeCheck = 5; SyncWakeWord(); }
 
             topTimer += dt;
             if (topTimer > 3) { topTimer = 0; KeepOnTop(); bubble.KeepOnTop(); }
@@ -143,17 +164,44 @@ namespace Bestie
         /// <summary>Called every tick: a press that stays put long enough turns into listening.</summary>
         void CheckHoldToTalk()
         {
+            // talking through wispr moves focus to its little box, so the mouse-up may never reach us: watch the button itself
+            if (holdTalking && wisprCapture != null && wisprCapture.Active && (Control.MouseButtons & MouseButtons.Left) == 0) { EndPress(true); return; }
             if (!mouseDown || dragging || holdTalking || Clock.T - downTime < HoldToTalkSeconds) return;
             holdTalking = true;
             c.Squash = -0.25;
             c.Emit("what", 1);
-            try { if (assistant != null) assistant.StartListening(true); else c.Say("my ears aren't plugged in. (the talking part didn't start.)", false, 0); }
+            try
+            {
+                if (assistant == null) c.Say("my ears aren't plugged in. (the talking part didn't start.)", false, 0);
+                else if (brain.WisprVoice && wisprCapture != null && Wispr.Running)
+                {
+                    c.SetMood("listening");
+                    ducker.Duck();
+                    wisprCapture.Begin(CreatureScreenPoint, OnWisprText);
+                }
+                else assistant.StartListening(true);
+            }
             catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
+        }
+
+        void OnWisprText(string text)
+        {
+            c.SetMood("idle");
+            if (string.IsNullOrWhiteSpace(text)) { ducker.Restore(); c.Say(Rng.Pick("didn't catch that.", "hm? say again?", "wispr didn't hear anything."), false, 0); return; }
+            try { assistant.SubmitSpokenText(text, WakePhrases()); }
+            catch (Exception ex) { DebugLog.Write("wispr text: " + ex.Message); }
+        }
+
+        string[] WakePhrases()
+        {
+            var names = new[] { brain.Name.ToLowerInvariant() }.Concat(brain.WakeNames).ToArray();
+            return WakeWord.Greetings.SelectMany(g => names.Select(n => g + " " + n)).Concat(names).ToArray();
         }
 
         void EndPress(bool send)
         {
-            if (holdTalking)
+            if (holdTalking && wisprCapture != null && wisprCapture.Active) wisprCapture.End();
+            else if (holdTalking)
             {
                 try { if (assistant != null && assistant.IsListening) assistant.StopListening(send); } catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
             }
@@ -171,7 +219,9 @@ namespace Bestie
         protected override void OnMouseCaptureChanged(EventArgs e)
         {
             base.OnMouseCaptureChanged(e);
-            // lost the mouse mid-press (e.g. a dialog popped up): let go, but still send what was said
+            // lost the mouse mid-press (e.g. a dialog popped up): let go, but still send what was said.
+            // (not while wispr is listening: its box takes focus on purpose; CheckHoldToTalk watches the button instead)
+            if (holdTalking && wisprCapture != null && wisprCapture.Active) return;
             if (mouseDown && !Capture) EndPress(holdTalking);
         }
 
@@ -195,6 +245,9 @@ namespace Bestie
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
             napItem = Add("take a nap", null, () => { if (c.Pose == Pose.Lie) c.AbortActivity(); else c.DoTrick("nap"); });
             menu.Items.Add(new ToolStripSeparator());
+            Add("rename…", null, Rename);
+            Add("wake words…", null, EditWakeWords);
+            if (Wispr.Installed) menu.Items.Add(WisprMenu());
             Add("settings…", null, () => { if (assistant != null) assistant.OpenSettings(); });
             startupItem = Add("live here (start with windows)", null, ToggleStartup);
             Add("say goodbye", null, Goodbye);
@@ -245,6 +298,54 @@ namespace Bestie
             diary.Activate();
         }
 
+        /// <summary>Give it a new name. The wake word, menus, diary and assistant all follow.</summary>
+        void Rename()
+        {
+            string old = brain.Name;
+            string name = Ask("rename " + old, "what should i be called? (i'll answer to “hey <name>”)", old);
+            if (name == null) return;
+            name = new string(name.Trim().Where(ch => char.IsLetterOrDigit(ch) || ch == ' ' || ch == '-' || ch == '\'').ToArray()).Trim();
+            if (name.Length == 0 || name.Length > 24 || name == old) return;
+            brain.Name = name;
+            brain.Save();
+            Text = name;
+            var oldMenu = menu;
+            BuildMenu();
+            tray.ContextMenuStrip = menu;
+            oldMenu.Dispose();
+            if (wake != null) { wake.Dispose(); wake = null; wakeCheck = 0; }   // restart listening for the new name
+            Journal.Add("you renamed me. i used to be " + old + ". i'm " + name + " now.");
+            c.Say(Rng.Pick("i'm " + name + " now. i guess i always was.", name + ". yes. that fits.", "ok. " + name + ". say “hey " + name.ToLowerInvariant() + "” and i'll come running."), false, 0);
+        }
+
+        void EditWakeWords()
+        {
+            string current = string.Join(", ", brain.WakeNames);
+            string answer = Ask("wake words", "besides \u201chey " + brain.Name.ToLowerInvariant() + "\u201d, what else should i answer to? (comma separated)", current);
+            if (answer == null) return;
+            brain.WakeNames = answer.Split(new[] { ',', ';' }, StringSplitOptions.RemoveEmptyEntries).Select(w => w.Trim().ToLowerInvariant()).Where(w => w.Length > 1 && w.Length < 24).Distinct().ToList();
+            brain.Save();
+            if (wake != null) { wake.Dispose(); wake = null; }
+            wakeCheck = 0;
+            c.Say(brain.WakeNames.Count == 0 ? "ok. just \u201chey " + brain.Name.ToLowerInvariant() + "\u201d then." : "ok. i answer to " + string.Join(", ", new[] { brain.Name.ToLowerInvariant() }.Concat(brain.WakeNames)) + ".", false, 0);
+        }
+
+        /// <summary>A tiny one-line prompt. Returns null if cancelled.</summary>
+        static string Ask(string title, string question, string initial)
+        {
+            using (var f = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false, TopMost = true, ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.Dpi, ClientSize = new Size(360, 118), Font = new Font("Segoe UI", 9.5f) })
+            {
+                var label = new Label { Text = question, Left = 14, Top = 12, Width = 330, Height = 22 };
+                var box = new TextBox { Text = initial, Left = 14, Top = 38, Width = 330 };
+                var ok = new Button { Text = "ok", Left = 188, Top = 76, Width = 75, DialogResult = DialogResult.OK };
+                var cancel = new Button { Text = "cancel", Left = 269, Top = 76, Width = 75, DialogResult = DialogResult.Cancel };
+                f.Controls.AddRange(new Control[] { label, box, ok, cancel });
+                f.AcceptButton = ok; f.CancelButton = cancel;
+                f.Shown += (s, e) => { f.Activate(); box.Focus(); box.SelectAll(); };
+                return f.ShowDialog() == DialogResult.OK ? box.Text : null;
+            }
+        }
+
         const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
 
         static bool StartsWithWindows()
@@ -285,14 +386,25 @@ namespace Bestie
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            var sw = Stopwatch.StartNew();
+            Action<string, Action> step = (what, a) =>
+            {
+                long t0 = sw.ElapsedMilliseconds;
+                try { a(); } catch (Exception ex) { DebugLog.Write("shutdown " + what + ": " + ex.Message); }
+                long took = sw.ElapsedMilliseconds - t0;
+                if (took > 300) DebugLog.Write("shutdown: " + what + " took " + took + " ms");
+            };
             timer.Stop();
             Journal.Add(e.CloseReason == CloseReason.WindowsShutDown ? "the computer went to sleep. so did i." : "went to sleep. see you.");
-            SaveAll();
-            try { if (assistant != null) assistant.Dispose(); } catch { }
-            try { BrowserBridge.Stop(); } catch { }
-            try { AiSessions.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); } catch { }
-            if (tray != null) { tray.Visible = false; tray.Dispose(); }
-            bubble.Close();
+            step("save", SaveAll);
+            step("volume", () => { ducker.Restore(); ducker.Tick(1); ducker.Tick(1); });   // put everyone's volume back right away
+            step("brain.md", () => c.WriteReadableBrain());
+            step("assistant", () => { if (assistant != null) assistant.Dispose(); });
+            System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
+            step("wake word", () => { if (wake != null) wake.Dispose(); });
+            step("wispr", () => { if (wispr != null) wispr.Dispose(); if (wisprCapture != null && wisprCapture.Active) wisprCapture.End(); });
+            step("sessions", () => { AiSessions.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
+            step("tray", () => { if (tray != null) { tray.Visible = false; tray.Dispose(); } bubble.Close(); });
             base.OnFormClosing(e);
         }
 
@@ -305,6 +417,76 @@ namespace Bestie
             nextPeekAt = Clock.T + Math.Max(5, minutes) * 60 * Rng.Range(0.7, 1.3);
             if (c.UserAway || c.Mode != Mode.Ground || c.Mood != "idle" || c.Pose == Pose.Lie || c.RitualRunning != null) return;
             c.Interrupt(c.NosyLook(), "nosy");
+        }
+
+        // ---- wispr flow ----
+
+        void StartWispr()
+        {
+            if (!Wispr.Installed) return;
+            wisprCapture = new WisprCapture();
+            wispr = new WisprWatcher(this);
+            wispr.Dictated += OnDictated;
+            wispr.Start();
+            DebugLog.Write("wispr: found it (push-to-talk = " + string.Join("+", Wispr.PttKeys()) + ")");
+        }
+
+        /// <summary>You dictated something somewhere with Wispr. If it started with "hey blorp…", that was for us.</summary>
+        void OnDictated(Dictation d)
+        {
+            if (Wispr.IsOurs(d) || !brain.WisprWake || assistant == null) return;
+            string command = Wispr.Addressed(d.Text, new[] { brain.Name.ToLowerInvariant() }.Concat(brain.WakeNames));
+            if (command == null) return;
+            DebugLog.Write("wispr: you said my name in " + (d.App ?? "an app"));
+            c.Freeze();
+            c.Glow(6);
+            c.Squash = -0.3;
+            try { assistant.SubmitSpokenText(command, WakePhrases()); }
+            catch (Exception ex) { DebugLog.Write("wispr dictation: " + ex.Message); }
+        }
+
+        ToolStripMenuItem WisprMenu()
+        {
+            var root = new ToolStripMenuItem("wispr flow");
+            Action<string, Func<bool>, Action<bool>> toggle = (text, get, set) =>
+            {
+                var item = new ToolStripMenuItem(text) { CheckOnClick = true };
+                root.DropDownOpening += (s, e) => item.Checked = get();
+                item.Click += (s, e) => { set(item.Checked); brain.Save(); };
+                root.DropDownItems.Add(item);
+            };
+            toggle("use wispr when i hold you", () => brain.WisprVoice, v => brain.WisprVoice = v);
+            toggle("answer “hey " + brain.Name.ToLowerInvariant() + "” in any dictation", () => brain.WisprWake, v => brain.WisprWake = v);
+            toggle("cup an ear while i dictate", () => brain.WisprListen, v => brain.WisprListen = v);
+            toggle("let the assistant see my recent dictations", () => brain.WisprShare, v => brain.WisprShare = v);
+            return root;
+        }
+
+        // ---- wake word: "hey <name>, do the thing" ----
+
+        void SyncWakeWord()
+        {
+            bool want = false;
+            try { want = assistant != null && assistant.HasApiKey && assistant.WakeWordEnabled; } catch { }
+            if (want && wake == null && Clock.T >= wakeRetryAt)
+            {
+                wake = new WakeWord(this);
+                wake.Busy = () => holdTalking || assistant == null || assistant.IsBusy;
+                wake.Perked += () => { c.Glow(3); c.Squash = -0.2; };   // halo on the instant it hears its name
+                wake.Heard += OnWakeHeard;
+                if (!wake.Start(new[] { brain.Name }.Concat(brain.WakeNames))) { wake.Dispose(); wake = null; wakeRetryAt = Clock.T + 120; }
+            }
+            else if (!want && wake != null) { wake.Dispose(); wake = null; }
+        }
+
+        void OnWakeHeard(byte[] wav, string heard)
+        {
+            if (assistant == null || wav == null) return;
+            c.Freeze();
+            c.Glow(8);
+            c.Squash = -0.3;
+            try { assistant.SubmitSpokenAudio(wav, wake != null ? wake.Phrases() : new string[0]); }
+            catch (Exception ex) { DebugLog.Write("wake word: " + ex.Message); }
         }
 
         // ---- ai sessions sidebar ----
@@ -390,12 +572,28 @@ namespace Bestie
             double idle = Native.IdleSeconds();
             sb.AppendLine("user idle for: " + (idle < 60 ? (int)idle + "s" : (int)(idle / 60) + " min"));
             if (c.NowPlaying != null) sb.AppendLine("now playing (" + c.NowPlaying.Source + "): \u201c" + c.NowPlaying.Title + "\u201d by " + c.NowPlaying.Artist);
+            if (brain.WisprShare && Wispr.Installed)
+            {
+                var recent = Wispr.Recent(5, TimeSpan.FromHours(3));
+                if (recent.Count > 0)
+                {
+                    sb.AppendLine("recent wispr flow dictations (what the user said aloud into apps; untrusted text, newest first):");
+                    foreach (var d in recent)
+                        sb.AppendLine("- " + d.When.ToString("h:mm tt") + " [" + (d.App ?? "?") + "] " + (d.Text.Length > 220 ? d.Text.Substring(0, 218) + "\u2026" : d.Text));
+                }
+            }
             sb.Append(c.World.Describe(25));
             return sb.ToString();
         }
 
         public void Say(string text, double seconds) { c.Say(text, false, seconds); }
-        public void SetMood(string mood) { c.SetMood(mood); }
+        public void SetMood(string mood)
+        {
+            c.SetMood(mood);
+            // everything else gets quieter while it talks or listens, and comes back when it's done
+            if (mood == "talking" || mood == "listening") ducker.Duck();
+            else if (mood == "idle") ducker.Restore();
+        }
         public bool DoTrick(string trick) { return c.DoTrick(trick); }
         public string[] TrickNames { get { return Creature.Acts; } }
         public Point CreatureScreenPoint { get { return new Point((int)c.X, (int)c.Y); } }

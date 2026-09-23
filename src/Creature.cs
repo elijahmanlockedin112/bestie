@@ -84,11 +84,24 @@ namespace Bestie
 
         // mood set by the assistant: idle, thinking, listening, talking
         public string Mood = "idle";
+        /// <summary>You're dictating somewhere (with Wispr Flow): it stops, leans in and cups an ear.</summary>
+        public bool ListenAlong;
+        /// <summary>0..1: the angel-halo glow that says "i'm listening to you".</summary>
+        public double Halo;
+        double haloUntil;
+
+        /// <summary>Light the halo now (e.g. it just heard its name) and keep it lit for at least this long.</summary>
+        public void Glow(double seconds)
+        {
+            if (Halo < 0.1) Emit("sparkle", 3);
+            haloUntil = Math.Max(haloUntil, Clock.T + seconds);
+        }
 
         // senses
         bool userAway; double awaySince, idleCheck, fgCheck, lastStartle;
         string fgKey; double fgSince; string fgApp, fgTitle;
         double scanTimer, saveTimer, aliveTimer;
+        int saves;
         double cursorX, cursorY, cursorSpeed;
         double musicCheck, lastSongTalk = -999;
         string songKey;
@@ -133,7 +146,12 @@ namespace Bestie
             }
 
             saveTimer += dt;
-            if (saveTimer > 60 && !Clock.Simulated) { saveTimer = 0; SaveSpot(); Brain.DailyDecay(); Brain.Save(); }
+            // save often: it's small, and nothing it learned should be lost to a crash or a shutdown
+            if (saveTimer > 15 && !Clock.Simulated)
+            {
+                saveTimer = 0; SaveSpot(); Brain.DailyDecay(); Brain.Save();
+                if (++saves % 8 == 1) WriteReadableBrain();
+            }
 
             if (!Clock.Simulated) Senses(dt);
 
@@ -648,8 +666,22 @@ namespace Bestie
                 }
             }
 
+            // what's playing is looked up off the UI thread (it walks every window on the system)
+            if (musicReady) { musicReady = false; CheckMusic(musicResult); }
             musicCheck -= dt;
-            if (musicCheck <= 0) { musicCheck = 5; CheckMusic(); }
+            if (musicCheck <= 0 && !musicBusy)
+            {
+                musicCheck = 5;
+                musicBusy = true;
+                System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+                {
+                    Song found = null;
+                    try { found = Music.Detect(); } catch { }
+                    musicResult = found;
+                    musicReady = true;
+                    musicBusy = false;
+                });
+            }
 
             fgCheck -= dt;
             if (fgCheck <= 0)
@@ -668,10 +700,11 @@ namespace Bestie
             }
         }
 
-        void CheckMusic()
+        volatile bool musicReady, musicBusy;
+        volatile Song musicResult;
+
+        void CheckMusic(Song s)
         {
-            Song s;
-            try { s = Music.Detect(); } catch { s = null; }
             NowPlaying = s;
             if (s == null) { songKey = null; return; }
             if (s.Key == songKey) return;
@@ -802,6 +835,9 @@ namespace Bestie
             Blink = Math.Max(0, Blink - dt * 8);
 
             Blush = Math.Max(0, Blush - dt * 0.35);
+            // halo: full while it's listening to you, softer while it thinks, then fades
+            double haloTarget = Clock.T < haloUntil || Mood == "listening" ? 1 : Mood == "thinking" ? 0.55 : 0;
+            Halo += (haloTarget - Halo) * Math.Min(1, dt * (haloTarget > Halo ? 14 : 2.5));
             EggWobble = Math.Max(0, EggWobble - dt * 1.2);
             double moved = Math.Abs(X - lastAnimX) + Math.Abs(Y - lastAnimY);
             Moving = moved / Math.Max(dt, 0.001) > 8 * S && Mode != Mode.Held && Mode != Mode.Air;

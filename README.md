@@ -73,12 +73,47 @@ Paste an OpenAI API key into **settings** (right-click → settings…). The key
 - **Its voice:** it reads replies aloud with OpenAI's cheap `gpt-4o-mini-tts`, using the *ballad* voice and a direction written for the character. That works out to about 1.5¢ per minute of speech, and it starts talking in under half a second because the audio streams in.
   - Without a key, or if anything goes wrong, it falls back to the free Windows voice.
   - You can pick the voice or turn speech off in settings.
+  - It's played about 2.4× louder, with a limiter so it doesn't crackle.
+  - **Everything else ducks:** while it talks or listens, Spotify, videos and every other app drop to 20% volume, then fade back. If you move an app's volume yourself in the meantime, it leaves that app alone.
 - **It sees your screens when you ask something:** every question includes a fresh low-detail screenshot of each monitor. You can turn that off in settings. Only the newest message keeps its screenshots, so costs don't pile up.
-- **Voice:** there are two ways to talk to it, and OpenAI transcribes what you say.
+- **Voice:** there are three ways to talk to it, and OpenAI transcribes what you say.
+  - **The wake word:** say its name, with or without "hey": *"hey Mothball, open youtube"*, *"bestie, what's on my calendar"*, *"blorp, play something"*.
+    - You can also say just the name, wait for *"yes?"*, and keep going.
+    - A golden **halo** lights up the instant it hears its name, so you know it's listening.
+    - Change its name with *rename…* and its extra names with *wake words…*, both in the right-click menu.
+    - The listening for the wake phrase happens entirely offline with the Windows speech recognizer. Nothing is sent anywhere until it hears the phrase.
+    - You can turn it off in settings.
   - Click and hold the creature, talk, and let go.
   - Press **Ctrl+Alt+V** and talk. It stops listening when you stop talking, or when you press the keys again.
 - **Memory:** when you tell it things worth keeping, it writes them to `Documents\Bestie\memory\about-you.md`. That's a plain file you can read and edit. It can also keep notes in `notes\`, set reminders, search its memory and journal, open apps from your Start menu, open folders, and do tricks.
 - **Costs:** it only calls the API when you talk to it, show it your screen or use voice. The creature's everyday life costs nothing. The model is set in settings and defaults to a cheap, fast one.
+
+### Wispr Flow
+
+If [Wispr Flow](https://wisprflow.ai) is installed, Bestie plugs into the real app. It doesn't use an API; it uses the app itself.
+
+- **Wispr is its ears:** when you hold the creature, Bestie presses Wispr's push-to-talk for you. It reads the shortcut from Wispr's config; yours is Ctrl+Win. Wispr types into a little box by the creature, and Bestie sends that the moment you let go.
+- **"hey Mothball" works in any dictation:** if a dictation anywhere starts with its name, Bestie acts on it.
+- **It listens along:** while you dictate anywhere, the creature stops, leans in and cups an ear.
+- **Optional, off by default:** the assistant can see your last few dictations as context.
+
+All four switches are under **wispr flow** in the right-click menu. Bestie reads Wispr's local history (`flow.sqlite`) read-only, using the SQLite that's built into Windows. If a Wispr update changes that file, those features stop working quietly; nothing breaks.
+
+### Google Calendar
+
+Bestie can read your calendar and add, move or delete events. Moving or deleting always asks you first with a yes/no pop-up. When you're connected, it also warns you about 10 minutes before each event.
+
+Setup takes about 5 minutes, once:
+
+1. Go to [console.cloud.google.com](https://console.cloud.google.com) and create a project called "Bestie".
+2. Under **APIs & Services**, enable **Google Calendar API**.
+3. Set up the **OAuth consent screen**:
+   - Choose External, name the app Bestie, and enter your email.
+   - Add yourself as a test user.
+   - Set **Publishing status → In production**. Otherwise Google expires the connection every 7 days.
+4. Go to **Credentials → Create credentials → OAuth client ID → Desktop app**, and copy the ID and secret into Bestie's settings.
+5. Click **connect google calendar…**.
+   - Google will say it "hasn't verified this app". Click **Advanced → continue**; it's your own app.
 
 ### AI sessions sidebar
 
@@ -131,12 +166,15 @@ The creature's own life, its brain and its journal stay local.
 `Documents\Bestie\` (this may sit inside OneDrive if your Documents folder does):
 
 ```
-memory\    what it knows about you (edit freely)
-journal\   what it noticed each day
+brain.md   a readable copy of everything it has learned (updated every couple of minutes)
+memory\    what it knows about you: about-you.md, conversations.md (edit freely; it reads these)
+journal\   what it noticed each day, written the moment it happens
 notes\     notes you asked it to keep
-chats\     transcripts of your conversations
-.state\    its brain, settings, logs
+chats\     transcripts of your conversations, written as you talk
+.state\    its brain (saved every 15 seconds), settings, logs
 ```
+
+It saves constantly. The journal and chat transcripts are appended as things happen, and the brain is saved every 15 seconds and right away when it learns something big. After each conversation it pulls out anything worth remembering about you into `memory\about-you.md`, plus a one-line summary in `memory\conversations.md`.
 
 To start over with a brand-new egg, say goodbye to it and delete `.state\brain.json`.
 

@@ -79,6 +79,10 @@ namespace Bestie
         public List<Ritual> Rituals = new List<Ritual>();
         public List<Thought> Thoughts = new List<Thought>();
         public int Pets, Pickups, Throws, Bonks, Falls, Welcomes;
+        public List<string> WakeNames = new List<string> { "bestie" };   // besides its own name: "hey <any of these>"
+        // wispr flow: use it as ears when holding the creature / answer "hey <name>" in any dictation /
+        // react while you dictate / let the assistant see recent dictations (off: it's personal)
+        public bool WisprVoice = true, WisprWake = true, WisprListen = true, WisprShare;
         public double Trust;   // -1 (scared of the cursor) .. 1 (loves it)
 
         [ScriptIgnore] public string FilePath;
@@ -140,6 +144,7 @@ namespace Bestie
             if (TrigramWhen == null) TrigramWhen = new Dictionary<string, string>();
             if (Rituals == null) Rituals = new List<Ritual>();
             if (Thoughts == null) Thoughts = new List<Thought>();
+            if (WakeNames == null) WakeNames = new List<string> { "bestie" };
             foreach (var r in Rituals) { if (r.Acts == null) r.Acts = new List<string>(); if (r.Places == null) r.Places = new List<string>(); }
         }
 

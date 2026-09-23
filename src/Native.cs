@@ -141,11 +141,15 @@ namespace Bestie
             var sb = new StringBuilder(256); GetClassName(hwnd, sb, 256); return sb.ToString();
         }
 
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int InternalGetWindowText(IntPtr hwnd, StringBuilder sb, int max);
+
+        /// <summary>A window's title. Uses InternalGetWindowText, which never sends messages, so a hung app can't freeze us
+        /// (GetWindowTextLength sends WM_GETTEXTLENGTH and waits forever on a busy window).</summary>
         public static string TitleOf(IntPtr hwnd)
         {
-            int n = GetWindowTextLength(hwnd);
-            if (n <= 0) return "";
-            var sb = new StringBuilder(n + 2); GetWindowText(hwnd, sb, sb.Capacity); return sb.ToString();
+            var sb = new StringBuilder(512);
+            int n = InternalGetWindowText(hwnd, sb, sb.Capacity);
+            return n > 0 ? sb.ToString() : "";
         }
 
         static readonly System.Collections.Generic.Dictionary<uint, string> procCache = new System.Collections.Generic.Dictionary<uint, string>();

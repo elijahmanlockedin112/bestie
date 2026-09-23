@@ -80,7 +80,7 @@ namespace Bestie
             if (abortPending) { KillCurrent(); abortPending = false; idleGap = Rng.Range(0.5, 1.5); }
             if (Mode == Mode.Held || Mode == Mode.Hidden) return;
             if (Mode == Mode.Air && !expectingAir) return;
-            if (Mood == "listening" || Mood == "thinking") { if (Mode == Mode.Ground) StopWalking(); return; }
+            if (Mood == "listening" || Mood == "thinking" || (ListenAlong && Pose != Pose.Lie)) { if (Mode == Mode.Ground) StopWalking(); return; }
             if (Pose != Pose.Lie) energy = Math.Max(0, energy - dt * 0.0006);
 
             if (current == null)
@@ -995,6 +995,7 @@ namespace Bestie
             Journal.Add("i have a new tradition: " + r.Name + ". " + steps + ".");
             Brain.Remember("new tradition: " + r.Name);
             if (Clock.Simulated) SimLog("*** NEW RITUAL " + r.Name + ": " + steps);
+            else { Brain.Save(); WriteReadableBrain(); }
         }
 
         public string PlaceSuffix(string place)
@@ -1246,6 +1247,42 @@ namespace Bestie
                 sb.AppendLine("habit: after " + CtxPhrase(h[0]) + " it usually does " + ActPhrase(h[1]) + ".");
             sb.AppendLine("right now: " + (CurrentAct != null ? ActPhrase(CurrentAct) : "idling") + " in/on " + DescribePlace(PlaceKeyHere()) + ", energy " + (int)(energy * 100) + "%.");
             return sb.ToString();
+        }
+
+        /// <summary>A human-readable copy of the brain, next to the rest of its folder (Documents\Bestie\brain.md).</summary>
+        public void WriteReadableBrain()
+        {
+            if (Clock.Simulated) return;
+            var sb = new StringBuilder();
+            sb.AppendLine("# " + Brain.Name + "'s brain");
+            sb.AppendLine();
+            sb.AppendLine("_updated " + DateTime.Now.ToString("MMM d, h:mm tt") + ". a readable copy of `.state\\brain.json` (editing this file changes nothing; edit `memory\\` instead)._");
+            sb.AppendLine();
+            sb.AppendLine("## what i know");
+            foreach (var line in Summary().Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)) sb.AppendLine("- " + line);
+            sb.AppendLine();
+            sb.AppendLine("## tenants (windows i've met)");
+            foreach (var kv in Brain.Apps.OrderByDescending(kv => kv.Value.StoodOn))
+                sb.AppendLine("- **" + kv.Value.Nick + "** (" + kv.Key + "): met " + kv.Value.Met + ", stood on it " + kv.Value.StoodOn + "×, napped " + kv.Value.Naps + "×, it dropped me " + kv.Value.Dropped + "×" + (kv.Value.EdgesKnown ? ", i know where it ends" : ""));
+            sb.AppendLine();
+            sb.AppendLine("## edges of the world");
+            foreach (var kv in Brain.Edges) sb.AppendLine("- " + kv.Key + ": found " + kv.Value.Found + ", bonked " + kv.Value.Bonks + "×, booped " + kv.Value.Boops + "×");
+            if (Brain.Artists.Count > 0)
+            {
+                sb.AppendLine();
+                sb.AppendLine("## music you play");
+                foreach (var kv in Brain.Artists.OrderByDescending(kv => kv.Value).Take(25)) sb.AppendLine("- " + kv.Key + " (" + (int)kv.Value + ")");
+            }
+            sb.AppendLine();
+            sb.AppendLine("## things i said lately");
+            foreach (var t in Enumerable.Reverse(Brain.Thoughts).Take(20)) sb.AppendLine("- " + t.At + " — " + t.Text);
+            try
+            {
+                string path = System.IO.Path.Combine(Home.Root, "brain.md");
+                string text = sb.ToString();
+                if (!System.IO.File.Exists(path) || System.IO.File.ReadAllText(path) != text) System.IO.File.WriteAllText(path, text, Encoding.UTF8);
+            }
+            catch (Exception ex) { DebugLog.Write("brain.md: " + ex.Message); }
         }
 
         public static string CtxPhrase(string ctx)

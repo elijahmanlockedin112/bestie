@@ -56,6 +56,12 @@ namespace Bestie
         public int NosyMinutes = 20;            // "about every N minutes"
         public bool SpeakNosy = false;          // say peek remarks out loud (also needs SpeakReplies)
         public string NosySkipList = DefaultNosySkipList;
+        public string GoogleClientId = "";
+        public string GoogleClientSecretProtected = "";   // DPAPI + base64
+        public bool CalendarWarn = true;        // heads-up ~10 minutes before timed events
+        public int VoiceGainPercent = 240;      // openai voice loudness, 100..400 (PcmStreamPlayer.Gain)
+        public bool AutoMemory = true;          // "remember things from our chats automatically"
+        public bool WakeWord = true;            // "listen for my wake word (hey <name>)"
 
         public const string DefaultNosySkipList =
             "1password, bitwarden, keepass, lastpass, dashlane, inprivate, incognito, private browsing, bank, banking, paypal, venmo, " +
@@ -98,6 +104,12 @@ namespace Bestie
                 s.NosyMinutes = Clamp((int)Json.Num(d, "nosyMinutes", 20), 5, 24 * 60);
                 s.SpeakNosy = Json.Bool(d, "speakNosy", false);
                 s.NosySkipList = Json.Str(d, "nosySkipList") ?? DefaultNosySkipList;
+                s.GoogleClientId = (Json.Str(d, "googleClientId") ?? "").Trim();
+                s.GoogleClientSecretProtected = Json.Str(d, "googleClientSecretProtected") ?? "";
+                s.CalendarWarn = Json.Bool(d, "calendarWarn", true);
+                s.VoiceGainPercent = Clamp((int)Json.Num(d, "voiceGainPercent", 240), 100, 400);
+                s.AutoMemory = Json.Bool(d, "autoMemory", true);
+                s.WakeWord = Json.Bool(d, "wakeWord", true);
                 s.TtsVoice = Json.Str(d, "ttsVoice") ?? "";
                 s.TtsRate = Clamp((int)Json.Num(d, "ttsRate", 0), -10, 10);
                 string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
@@ -130,6 +142,12 @@ namespace Bestie
             d["nosyMinutes"] = NosyMinutes;
             d["speakNosy"] = SpeakNosy;
             d["nosySkipList"] = NosySkipList ?? "";
+            d["googleClientId"] = GoogleClientId ?? "";
+            d["googleClientSecretProtected"] = GoogleClientSecretProtected ?? "";
+            d["calendarWarn"] = CalendarWarn;
+            d["voiceGainPercent"] = VoiceGainPercent;
+            d["autoMemory"] = AutoMemory;
+            d["wakeWord"] = WakeWord;
             d["ttsVoice"] = TtsVoice ?? "";
             d["ttsRate"] = TtsRate;
             d["hotkeyChat"] = HotkeyChat ?? "";
@@ -174,6 +192,15 @@ namespace Bestie
         public string ApiKey { get { string k = SavedKey; return k.Length > 0 ? k : EnvKey; } }
 
         public bool HasKey { get { return ApiKey.Length > 0; } }
+
+        /// <summary>The Google OAuth client secret (decrypted), or "".</summary>
+        public string GoogleClientSecret { get { return Unprotect(GoogleClientSecretProtected); } }
+
+        public void SetGoogleClientSecret(string secret)
+        {
+            secret = (secret ?? "").Trim();
+            GoogleClientSecretProtected = secret.Length == 0 ? "" : Protect(secret);
+        }
 
         /// <summary>OpenAI voice if chosen and a key exists; otherwise the free windows voice.</summary>
         public bool UseOpenAiVoice { get { return VoiceEngine != "windows" && HasKey; } }

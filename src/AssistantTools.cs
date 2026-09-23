@@ -32,7 +32,7 @@ namespace Bestie
         public string[] Tricks = new string[0];
     }
 
-    internal sealed class AssistantTools
+    internal sealed partial class AssistantTools
     {
         /// <summary>Tests: never launch urls/apps/folders, just log them in DryRunLog.</summary>
 #pragma warning disable 649   // only tests set it
@@ -121,7 +121,8 @@ namespace Bestie
                 P("minutes", "number", "minutes from now"), P("text", "string", "what to remind them of")));
             t.Add(Tool("list_reminders", "list pending reminders.", R()));
             t.Add(Tool("cancel_reminder", "cancel a reminder.", R("match"), P("match", "string", "reminder id or part of its text")));
-            t.Add(Tool("list_ai_sessions", "list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
+            if (module.Calendar != null && module.Calendar.IsConnected) AddCalendarTools(t);
+            t.Add(Tool("list_ai_sessions","list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
             t.Add(Tool("focus_ai_session", "bring one of those sessions to the front.", R("id"), P("id", "string", "session id from list_ai_sessions")));
             t.Add(Tool("new_ai_chat", "open a fresh claude or chatgpt chat in the browser.", R("provider"),
                 PE("provider", "which one", new[] { "claude", "chatgpt" })));
@@ -167,6 +168,12 @@ namespace Bestie
                     case "list_ai_sessions": return ListAiSessions();
                     case "focus_ai_session": return FocusAiSession(a);
                     case "new_ai_chat": return NewAiChat(a);
+                    case "calendar_list_events":
+                    case "calendar_create_event":
+                    case "calendar_update_event":
+                    case "calendar_delete_event":
+                    case "calendar_list_calendars":
+                        return CalendarTool(name, a);
                     default: return new AssistantToolResult("there's no tool called " + name + ".");
                 }
             }
@@ -859,6 +866,9 @@ namespace Bestie
 
         public void CheckNow() { Tick(null); }
 
+        /// <summary>Raised on the timer thread after each ~15 s check (the calendar heads-up hangs off this).</summary>
+        public event Action Ticked;
+
         void Tick(object state)
         {
             if (Interlocked.Exchange(ref ticking, 1) == 1) return;
@@ -876,6 +886,12 @@ namespace Bestie
                     bool late = (DateTime.UtcNow - r.DueUtc).TotalMinutes > 2;
                     try { onFire(r, late); }
                     catch (Exception ex) { DebugLog.Write("assistant: reminder fire: " + ex.Message); }
+                }
+                Action ticked = Ticked;
+                if (ticked != null)
+                {
+                    try { ticked(); }
+                    catch (Exception ex) { DebugLog.Write("assistant: reminder tick hook: " + ex.Message); }
                 }
             }
             catch (Exception ex) { DebugLog.Write("assistant: reminder tick: " + ex.Message); }

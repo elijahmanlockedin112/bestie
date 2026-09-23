@@ -39,6 +39,33 @@ namespace Bestie
         {
             try { ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12; } catch { }
             try { ServicePointManager.Expect100Continue = false; } catch { }
+            try { ServicePointManager.UseNagleAlgorithm = false; } catch { }
+            try { if (ServicePointManager.DefaultConnectionLimit < 8) ServicePointManager.DefaultConnectionLimit = 8; } catch { }
+        }
+
+        static readonly object prewarmGate = new object();
+        static DateTime lastPrewarmUtc = DateTime.MinValue;
+        static string lastPrewarmBase;
+
+        /// <summary>Fire-and-forget GET /models/{model} so the TLS connection to the API is already open (kept
+        /// alive) by the time a transcription or chat request goes out. At most once a minute per base url.</summary>
+        public static void Prewarm(string baseUrl, string apiKey, string model)
+        {
+            if (string.IsNullOrEmpty(apiKey)) return;
+            lock (prewarmGate)
+            {
+                if (lastPrewarmBase == baseUrl && (DateTime.UtcNow - lastPrewarmUtc).TotalSeconds < 60) return;
+                lastPrewarmBase = baseUrl;
+                lastPrewarmUtc = DateTime.UtcNow;
+            }
+            var t = new System.Threading.Thread(delegate()
+            {
+                try { new OpenAIClient(baseUrl, apiKey).GetJson("models/" + Uri.EscapeDataString(model ?? "gpt-6-luna"), 5000, model); }
+                catch { }   // only warming the connection; the answer doesn't matter
+            });
+            t.IsBackground = true;
+            t.Name = "bestie-prewarm";
+            t.Start();
         }
 
         public OpenAIClient(string baseUrl, string apiKey)
@@ -87,6 +114,191 @@ namespace Bestie
                     }
                     ApplyQuirk(fix, body);
                 }
+            }
+        }
+
+        /// <summary>Streaming chat completion (stream=true, SSE). onContent receives content deltas as they arrive,
+        /// onToolCall is told once a tool call starts. Returns the same shape as ChatCompletion
+        /// ({choices:[{message:{role, content, tool_calls}, finish_reason}]}). Falls back to a plain call if the
+        /// endpoint won't stream.</summary>
+        public Dictionary<string, object> ChatCompletionStream(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
+        {
+            string model = Json.Str(body, "model") ?? "";
+            string qkey = baseUrl + "|" + model;
+            bool noStream = false;
+            lock (quirkGate)
+            {
+                List<string> known;
+                if (quirks.TryGetValue(qkey, out known))
+                {
+                    foreach (string q in known) ApplyQuirk(q, body);
+                    noStream = known.Contains("no_stream");
+                }
+            }
+            if (noStream) return PlainAndFeed(body, timeoutMs, onContent, onToolCall);
+            body["stream"] = true;
+            for (int attempt = 0; ; attempt++)
+            {
+                try { return StreamOnce(body, timeoutMs, model, onContent, onToolCall); }
+                catch (OpenAIException ex)
+                {
+                    if (attempt >= 3 || ex.Status != 400) throw;
+                    string m = ((ex.ApiMessage ?? "") + " " + (ex.Param ?? "")).ToLowerInvariant();
+                    string fix = m.Contains("stream") ? "no_stream" : QuirkFor(ex, body);
+                    if (fix == null) throw;
+                    DebugLog.Write("assistant: adapting to '" + fix + "' for model " + model + " (" + Trunc(ex.ApiMessage, 160) + ")");
+                    lock (quirkGate)
+                    {
+                        List<string> known;
+                        if (!quirks.TryGetValue(qkey, out known)) { known = new List<string>(); quirks[qkey] = known; }
+                        if (!known.Contains(fix)) known.Add(fix);
+                    }
+                    if (fix == "no_stream") { body.Remove("stream"); return PlainAndFeed(body, timeoutMs, onContent, onToolCall); }
+                    ApplyQuirk(fix, body);
+                }
+            }
+        }
+
+        Dictionary<string, object> PlainAndFeed(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
+        {
+            body.Remove("stream");
+            Dictionary<string, object> r = ChatCompletion(body, timeoutMs);
+            FeedWhole(r, onContent, onToolCall);
+            return r;
+        }
+
+        static void FeedWhole(Dictionary<string, object> r, Action<string> onContent, Action onToolCall)
+        {
+            object[] choices = Json.Arr(r, "choices");
+            var msg = choices.Length > 0 ? Json.Obj(choices[0] as Dictionary<string, object>, "message") : null;
+            if (msg == null) return;
+            if (Json.Arr(msg, "tool_calls").Length > 0 && onToolCall != null) onToolCall();
+            string c = Json.Str(msg, "content");
+            if (!string.IsNullOrEmpty(c) && onContent != null) onContent(c);
+        }
+
+        sealed class ToolAcc { public string Id, Name; public readonly StringBuilder Args = new StringBuilder(); }
+
+        Dictionary<string, object> StreamOnce(Dictionary<string, object> body, int timeoutMs, string model, Action<string> onContent, Action onToolCall)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(Json.Write(body));
+            HttpWebRequest req = Make("chat/completions", "POST", timeoutMs);
+            req.ContentType = "application/json";
+            req.Accept = "text/event-stream";
+            lock (gate)
+            {
+                if (aborted) throw AbortedException();
+                current = req;
+            }
+            try
+            {
+                req.ContentLength = bytes.Length;
+                using (Stream s = req.GetRequestStream()) s.Write(bytes, 0, bytes.Length);
+                using (var resp = (HttpWebResponse)req.GetResponse())
+                {
+                    if ((resp.ContentType ?? "").IndexOf("event-stream", StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        // the server ignored stream=true and answered in one go
+                        Dictionary<string, object> whole = null;
+                        string text = ReadAll(resp);
+                        try { whole = Json.Obj(text); } catch { }
+                        if (whole == null) throw new OpenAIException("the big outside said something i couldn't read.", "unparseable response: " + Trunc(text, 200));
+                        FeedWhole(whole, onContent, onToolCall);
+                        return whole;
+                    }
+                    var content = new StringBuilder();
+                    var refusal = new StringBuilder();
+                    var calls = new SortedDictionary<int, ToolAcc>();
+                    string finish = null;
+                    bool toldToolCall = false;
+                    using (var reader = new StreamReader(resp.GetResponseStream(), Encoding.UTF8))
+                    {
+                        string line;
+                        while ((line = reader.ReadLine()) != null)
+                        {
+                            if (!line.StartsWith("data:")) continue;
+                            string data = line.Substring(5).Trim();
+                            if (data == "[DONE]") break;
+                            Dictionary<string, object> chunk = null;
+                            try { chunk = Json.Obj(data); } catch { }
+                            if (chunk == null) continue;
+                            Dictionary<string, object> err = Json.Obj(chunk, "error");
+                            if (err != null)
+                                throw new OpenAIException(FriendlyFor(500, Json.Str(err, "code"), Json.Str(err, "type"), Json.Str(err, "message"), model),
+                                    "stream error: " + Json.Str(err, "message"));
+                            object[] choices = Json.Arr(chunk, "choices");
+                            if (choices.Length == 0) continue;
+                            var choice = choices[0] as Dictionary<string, object>;
+                            string fr = Json.Str(choice, "finish_reason");
+                            if (!string.IsNullOrEmpty(fr)) finish = fr;
+                            Dictionary<string, object> delta = Json.Obj(choice, "delta");
+                            if (delta == null) continue;
+                            string c = Json.Str(delta, "content");
+                            if (!string.IsNullOrEmpty(c))
+                            {
+                                content.Append(c);
+                                if (onContent != null) { try { onContent(c); } catch (Exception ex) { DebugLog.Write("assistant: stream consumer: " + ex.Message); } }
+                            }
+                            string rf = Json.Str(delta, "refusal");
+                            if (!string.IsNullOrEmpty(rf)) refusal.Append(rf);
+                            foreach (object o in Json.Arr(delta, "tool_calls"))
+                            {
+                                var tc = o as Dictionary<string, object>;
+                                if (tc == null) continue;
+                                int idx = (int)Json.Num(tc, "index", calls.Count);
+                                ToolAcc acc;
+                                if (!calls.TryGetValue(idx, out acc)) { acc = new ToolAcc(); calls[idx] = acc; }
+                                string id = Json.Str(tc, "id");
+                                if (!string.IsNullOrEmpty(id)) acc.Id = id;
+                                Dictionary<string, object> fn = Json.Obj(tc, "function");
+                                string name = Json.Str(fn, "name");
+                                if (!string.IsNullOrEmpty(name)) acc.Name = (acc.Name ?? "") + name;
+                                string args = Json.Str(fn, "arguments");
+                                if (!string.IsNullOrEmpty(args)) acc.Args.Append(args);
+                                if (!toldToolCall && onToolCall != null) { toldToolCall = true; try { onToolCall(); } catch { } }
+                            }
+                        }
+                    }
+                    var msg = new Dictionary<string, object>();
+                    msg["role"] = "assistant";
+                    msg["content"] = content.Length > 0 ? content.ToString() : null;
+                    if (refusal.Length > 0) msg["refusal"] = refusal.ToString();
+                    if (calls.Count > 0)
+                    {
+                        var list = new List<object>();
+                        foreach (ToolAcc acc in calls.Values)
+                        {
+                            var fn = new Dictionary<string, object>();
+                            fn["name"] = acc.Name ?? "";
+                            fn["arguments"] = acc.Args.Length > 0 ? acc.Args.ToString() : "{}";
+                            var tc = new Dictionary<string, object>();
+                            tc["id"] = acc.Id ?? ("call_" + Guid.NewGuid().ToString("N").Substring(0, 12));
+                            tc["type"] = "function";
+                            tc["function"] = fn;
+                            list.Add(tc);
+                        }
+                        msg["tool_calls"] = list.ToArray();
+                    }
+                    var ch = new Dictionary<string, object>();
+                    ch["index"] = 0;
+                    ch["message"] = msg;
+                    ch["finish_reason"] = finish;
+                    var result = new Dictionary<string, object>();
+                    result["choices"] = new object[] { ch };
+                    return result;
+                }
+            }
+            catch (WebException ex) { throw Map(ex, model); }
+            catch (IOException ex)
+            {
+                if (aborted) throw AbortedException();
+                var e = new OpenAIException(NetworkDown, ex.Message);
+                e.Network = true;
+                throw e;
+            }
+            finally
+            {
+                lock (gate) { if (current == req) current = null; }
             }
         }
 

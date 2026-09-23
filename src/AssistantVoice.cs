@@ -58,15 +58,44 @@ namespace Bestie
         [DllImport("winmm.dll")] public static extern int waveOutUnprepareHeader(IntPtr hwo, IntPtr pwh, uint cbwh);
         [DllImport("winmm.dll")] public static extern int waveOutWrite(IntPtr hwo, IntPtr pwh, uint cbwh);
         [DllImport("winmm.dll")] public static extern int waveOutReset(IntPtr hwo);
+        [DllImport("winmm.dll")] public static extern int waveOutSetVolume(IntPtr hwo, uint volume);
         [DllImport("winmm.dll")] public static extern int waveOutClose(IntPtr hwo);
     }
 
     /// <summary>Plays 16-bit mono PCM from a stream through waveOut while it downloads.</summary>
     internal static class PcmStreamPlayer
     {
+        /// <summary>How much louder than OpenAI's (fairly quiet) output to play the voice. Peaks are soft-limited, not clipped.</summary>
+        public static double Gain = 2.4;
+
+        /// <summary>Boost 16-bit samples in place with a soft knee above ~70% so loud bits round off instead of crackling.</summary>
+        static void Amplify(byte[] data, int count)
+        {
+            if (Gain <= 1.0) return;
+            const double knee = 0.7;
+            for (int i = 0; i + 1 < count; i += 2)
+            {
+                double x = (short)(data[i] | (data[i + 1] << 8)) / 32768.0 * Gain;
+                double a = Math.Abs(x);
+                if (a > knee) a = knee + (1 - knee) * Math.Tanh((a - knee) / (1 - knee));
+                int s = (int)Math.Round(Math.Sign(x) * a * 32767);
+                data[i] = (byte)(s & 0xFF);
+                data[i + 1] = (byte)((s >> 8) & 0xFF);
+            }
+        }
+
         /// <summary>Blocks until the audio has played, the stream ends, or cancelled() turns true.
         /// firstAudio runs once, right when sound starts. Returns bytes queued for playback.</summary>
         public static long Play(Stream src, int sampleRate, Func<bool> cancelled, Action firstAudio)
+        {
+            bool given = false;
+            return PlaySequence(delegate { if (given) return null; given = true; return src; }, sampleRate, cancelled, firstAudio);
+        }
+
+        /// <summary>Plays several PCM streams back to back through ONE waveOut session (no gap from reopening the
+        /// device). next() blocks until the next stream is ready (e.g. the next sentence's audio) and returns null
+        /// when there are no more. Each stream is played while it downloads.</summary>
+        public static long PlaySequence(Func<Stream> next, int sampleRate, Func<bool> cancelled, Action firstAudio)
         {
             if (VoiceNative.waveOutGetNumDevs() <= 0) throw new InvalidOperationException("no speakers found");
             var fmt = new VoiceNative.WAVEFORMATEX();
@@ -79,17 +108,19 @@ namespace Bestie
             IntPtr h;
             int rc = VoiceNative.waveOutOpen(out h, VoiceNative.WAVE_MAPPER, ref fmt, IntPtr.Zero, IntPtr.Zero, VoiceNative.CALLBACK_NULL);
             if (rc != 0) throw new InvalidOperationException("couldn't open the speakers (error " + rc + ")");
+            VoiceNative.waveOutSetVolume(h, 0xFFFFFFFF);   // our stream at full volume (the system volume still applies)
             int hdrSize = Marshal.SizeOf(typeof(VoiceNative.WAVEHDR));
             int flagsOffset = Marshal.OffsetOf(typeof(VoiceNative.WAVEHDR), "dwFlags").ToInt32();
             var pending = new List<IntPtr[]>();     // { header, data }
             int chunk = sampleRate * 2 / 4;         // 250 ms per buffer
-            int prebuffer = sampleRate * 2 * 2 / 5; // wait for 400 ms before starting (avoids stutter)
+            int prebuffer = sampleRate * 2 * 3 / 10; // wait for 300 ms before starting (avoids stutter; tts arrives faster than realtime)
             var acc = new MemoryStream();
             var buf = new byte[16384];
             long written = 0;
             bool started = false;
             Action<byte[], int> write = delegate(byte[] data, int count)
             {
+                Amplify(data, count);
                 IntPtr mem = Marshal.AllocHGlobal(count);
                 IntPtr hdr = Marshal.AllocHGlobal(hdrSize);
                 Marshal.Copy(data, 0, mem, count);
@@ -132,12 +163,19 @@ namespace Bestie
             {
                 while (!cancelled())
                 {
-                    int n;
-                    try { n = src.Read(buf, 0, buf.Length); }
-                    catch { if (cancelled()) break; throw; }
-                    if (n <= 0) break;
-                    acc.Write(buf, 0, n);
-                    if (acc.Length >= (started ? chunk : prebuffer)) flush();
+                    Stream src = next();
+                    if (src == null) break;
+                    while (!cancelled())
+                    {
+                        int n;
+                        try { n = src.Read(buf, 0, buf.Length); }
+                        catch { if (cancelled()) break; throw; }
+                        if (n <= 0) break;
+                        acc.Write(buf, 0, n);
+                        if (acc.Length >= (started ? chunk : prebuffer)) flush();
+                        reap();
+                    }
+                    if (!cancelled() && acc.Length >= 2) flush();   // end of a sentence: play its tail now (and start, if it was short)
                     reap();
                 }
                 if (!cancelled() && acc.Length >= 2) flush();
@@ -158,10 +196,12 @@ namespace Bestie
         }
     }
 
-    /// <summary>Speaks replies: OpenAI text-to-speech (streamed, steered with Personality.VoiceDirection)
-    /// when chosen and a key exists, else the free windows voice. Any OpenAI failure before sound starts
-    /// falls back to the windows voice (logged). A new Speak, Stop or Dispose cuts off the current one.
-    /// Call Speak/Stop on the UI thread. Started/Finished may be raised on any thread.</summary>
+    /// <summary>Speaks replies: OpenAI text-to-speech (steered with Personality.VoiceDirection) when chosen and a
+    /// key exists, else the free windows voice. An utterance is Begin, Add (one or more sentences, e.g. while a
+    /// reply is still streaming in), End. OpenAI sentences are fetched one after another and played through one
+    /// continuous waveOut session, each while it downloads. Any OpenAI failure before sound starts switches the
+    /// utterance to the windows voice (logged). A new Begin/Speak, Stop or Dispose cuts off the current one.
+    /// All methods may be called from any thread. Started/Finished may be raised on any thread.</summary>
     internal sealed class AssistantSpeaker : IDisposable
     {
         public const int PcmRate = 24000;   // /audio/speech "pcm" = 24 kHz 16-bit mono little-endian
@@ -171,11 +211,23 @@ namespace Bestie
         internal static Action<string> TestWindowsVoiceHook;
 #pragma warning restore 649
 
-        readonly VoiceTts windows = new VoiceTts();
+        sealed class Utterance
+        {
+            public int Gen;
+            public AssistantSettings S;
+            public OpenAIClient Client;
+            public readonly Queue<string> Pending = new Queue<string>();
+            public readonly List<string> All = new List<string>();
+            public bool Ended, Windows, WindowsBegun;
+            public volatile bool Played;
+        }
+
+        readonly VoiceTts windows = new VoiceTts();   // UI thread only (reached through postToUi)
         readonly Action<Action> postToUi;
+        readonly object gate = new object();
         int generation;
-        volatile bool openAiActive;
-        volatile OpenAIClient client;
+        Utterance cur;
+        Utterance windowsOwner;                       // UI thread
         volatile bool disposed;
 
         public event Action Started;
@@ -184,11 +236,16 @@ namespace Bestie
         public AssistantSpeaker(Action<Action> postToUi)
         {
             this.postToUi = postToUi;
-            windows.Started += delegate { Raise(Started); };
-            windows.Finished += delegate { Raise(Finished); };
+            windows.Started += delegate { if (IsCurrent(windowsOwner)) Raise(Started); };
+            windows.Finished += delegate
+            {
+                Utterance u = windowsOwner;
+                windowsOwner = null;
+                if (u != null && FinishIfCurrent(u)) Raise(Finished);
+            };
         }
 
-        public bool Speaking { get { return openAiActive || windows.Speaking; } }
+        public bool Speaking { get { lock (gate) return cur != null; } }
 
         void Raise(Action a)
         {
@@ -196,65 +253,164 @@ namespace Bestie
             try { a(); } catch (Exception ex) { DebugLog.Write("assistant: speaker event: " + ex.Message); }
         }
 
+        bool IsCurrent(Utterance u) { lock (gate) return u != null && cur == u && !disposed; }
+
+        bool FinishIfCurrent(Utterance u)
+        {
+            lock (gate)
+            {
+                if (cur != u) return false;
+                cur = null;
+                return true;
+            }
+        }
+
+        /// <summary>Speak one complete text (cuts off whatever is playing).</summary>
         public void Speak(string text, AssistantSettings s)
+        {
+            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0) { Stop(); return; }
+            Begin(s);
+            Add(text);
+            End();
+        }
+
+        /// <summary>Start a new utterance (cuts off whatever is playing). The engine is chosen now.</summary>
+        public void Begin(AssistantSettings s)
         {
             if (disposed) return;
             Stop();
-            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0) return;
-            if (s.UseOpenAiVoice) SpeakOpenAi(text, s);
-            else SpeakWindows(text, s);
-        }
-
-        void SpeakWindows(string text, AssistantSettings s)
-        {
-            Action<string> hook = TestWindowsVoiceHook;
-            if (hook != null) { Raise(Started); hook(text); Raise(Finished); return; }
-            windows.Speak(text, s.TtsVoice, s.TtsRate);
-        }
-
-        void SpeakOpenAi(string text, AssistantSettings s)
-        {
-            int gen = Interlocked.Increment(ref generation);
-            var c = new OpenAIClient(s.BaseUrl, s.ApiKey);
-            client = c;
-            openAiActive = true;
-            string model = string.IsNullOrEmpty(s.TtsModel) ? AssistantSettings.DefaultTtsModel : s.TtsModel;
-            string voice = string.IsNullOrEmpty(s.OpenAiVoice) ? AssistantSettings.DefaultOpenAiVoice : s.OpenAiVoice;
-            AssistantSettings snap = s.Clone();
-            var t = new Thread(delegate()
+            var u = new Utterance();
+            u.S = s.Clone();
+            u.Windows = !s.UseOpenAiVoice;
+            lock (gate)
             {
-                bool played = false;
-                string fail = null;
-                Func<bool> stale = delegate { return disposed || gen != Volatile(ref generation); };
-                try
-                {
-                    using (HttpWebResponse resp = OpenSpeech(c, model, voice, text))
-                    using (Stream audio = resp.GetResponseStream())
-                    {
-                        PcmStreamPlayer.Play(audio, PcmRate, stale, delegate
-                        {
-                            played = true;
-                            if (!stale()) Raise(Started);
-                        });
-                    }
-                }
-                catch (OpenAIException ex) { if (!ex.Aborted) fail = ex.Message; }
-                catch (Exception ex) { if (!stale()) fail = ex.GetType().Name + ": " + ex.Message; }
-                if (stale()) return;              // superseded or stopped: Stop() already said Finished
-                openAiActive = false;
-                client = null;
-                if (fail != null && !played)
-                {
-                    DebugLog.Write("assistant: openai voice failed (" + fail + "); using the windows voice");
-                    postToUi(delegate { if (gen == Volatile(ref generation) && !disposed) SpeakWindows(text, snap); else Raise(Finished); });
-                    return;
-                }
-                if (fail != null) DebugLog.Write("assistant: openai voice broke mid-sentence: " + fail);
-                Raise(Finished);
-            });
+                u.Gen = ++generation;
+                cur = u;
+            }
+            if (u.Windows) return;   // the windows voice starts with the first sentence (on the UI thread)
+            u.Client = new OpenAIClient(s.BaseUrl, s.ApiKey);
+            var t = new Thread(delegate() { RunOpenAi(u); });
             t.IsBackground = true;
             t.Name = "bestie-voice";
             t.Start();
+        }
+
+        /// <summary>Queue a sentence of the current utterance.</summary>
+        public void Add(string text)
+        {
+            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0) return;
+            lock (gate)
+            {
+                Utterance u = cur;
+                if (u == null) return;
+                u.All.Add(text);
+                if (u.Windows) postToUi(delegate { WindowsSay(u, text); });
+                else { u.Pending.Enqueue(text); Monitor.PulseAll(gate); }
+            }
+        }
+
+        /// <summary>No more sentences for the current utterance.</summary>
+        public void End()
+        {
+            lock (gate)
+            {
+                Utterance u = cur;
+                if (u == null) return;
+                u.Ended = true;
+                if (u.Windows) postToUi(delegate { WindowsEnd(u); });
+                else Monitor.PulseAll(gate);
+            }
+        }
+
+        // ---------------------------------------------------------------- windows voice (UI thread)
+
+        void WindowsSay(Utterance u, string text)
+        {
+            if (!IsCurrent(u)) return;
+            Action<string> hook = TestWindowsVoiceHook;
+            if (!u.WindowsBegun)
+            {
+                u.WindowsBegun = true;
+                windowsOwner = u;
+                if (hook != null) Raise(Started);
+                else windows.Begin(u.S.TtsVoice, u.S.TtsRate);
+            }
+            if (hook != null) hook(text);
+            else windows.Enqueue(text);
+        }
+
+        void WindowsEnd(Utterance u)
+        {
+            if (!IsCurrent(u)) return;
+            if (!u.WindowsBegun || TestWindowsVoiceHook != null)
+            {
+                if (u.WindowsBegun) windowsOwner = null;
+                if (FinishIfCurrent(u)) Raise(Finished);   // nothing was said, or the test hook "said" it
+                return;
+            }
+            windows.End();
+        }
+
+        // ---------------------------------------------------------------- openai voice (its own thread)
+
+        void RunOpenAi(Utterance u)
+        {
+            string model = string.IsNullOrEmpty(u.S.TtsModel) ? AssistantSettings.DefaultTtsModel : u.S.TtsModel;
+            string voice = string.IsNullOrEmpty(u.S.OpenAiVoice) ? AssistantSettings.DefaultOpenAiVoice : u.S.OpenAiVoice;
+            HttpWebResponse resp = null;
+            string fail = null;
+            Func<bool> stale = delegate { return !IsCurrent(u); };
+            Func<Stream> next = delegate
+            {
+                if (resp != null) { try { resp.Close(); } catch { } resp = null; }
+                string text;
+                lock (gate)
+                {
+                    while (cur == u && u.Pending.Count == 0 && !u.Ended) Monitor.Wait(gate, 250);
+                    if (cur != u || u.Pending.Count == 0) return null;
+                    text = u.Pending.Dequeue();
+                }
+                try { resp = OpenSpeech(u.Client, model, voice, text); }
+                catch (OpenAIException ex)
+                {
+                    if (ex.Aborted) return null;
+                    if (!u.Played) throw;   // nothing heard yet: the whole thing goes to the windows voice
+                    DebugLog.Write("assistant: openai voice skipped a sentence: " + ex.Message);
+                    return new MemoryStream(new byte[0]);
+                }
+                return resp.GetResponseStream();
+            };
+            try
+            {
+                PcmStreamPlayer.PlaySequence(next, PcmRate, stale, delegate
+                {
+                    u.Played = true;
+                    if (!stale()) Raise(Started);
+                });
+            }
+            catch (OpenAIException ex) { if (!ex.Aborted) fail = ex.Message; }
+            catch (Exception ex) { if (!stale()) fail = ex.GetType().Name + ": " + ex.Message; }
+            finally { if (resp != null) { try { resp.Close(); } catch { } } }
+            if (stale()) return;   // superseded or stopped: Stop() already said Finished
+            if (fail != null && !u.Played)
+            {
+                DebugLog.Write("assistant: openai voice failed (" + fail + "); using the windows voice");
+                lock (gate)
+                {
+                    if (cur != u) return;
+                    u.Windows = true;
+                    string[] all = u.All.ToArray();
+                    bool ended = u.Ended;
+                    postToUi(delegate
+                    {
+                        foreach (string t in all) WindowsSay(u, t);
+                        if (ended) WindowsEnd(u);
+                    });
+                }
+                return;
+            }
+            if (fail != null) DebugLog.Write("assistant: openai voice broke mid-sentence: " + fail);
+            if (FinishIfCurrent(u)) Raise(Finished);
         }
 
         /// <summary>With Personality.VoiceDirection as instructions; if the model rejects those, once more without.</summary>
@@ -273,18 +429,21 @@ namespace Bestie
             }
         }
 
-        static int Volatile(ref int v) { return Interlocked.CompareExchange(ref v, 0, 0); }
-
+        /// <summary>Cut off whatever is being said (Finished is raised right away if something was).</summary>
         public void Stop()
         {
-            Interlocked.Increment(ref generation);
-            OpenAIClient c = client;
-            client = null;
-            if (c != null) { try { c.Abort(); } catch { } }
-            bool wasActive = openAiActive;
-            openAiActive = false;
-            windows.Stop();
-            if (wasActive) Raise(Finished);
+            Utterance u;
+            lock (gate)
+            {
+                generation++;
+                u = cur;
+                cur = null;
+                Monitor.PulseAll(gate);
+            }
+            if (u == null) return;
+            if (u.Client != null) { try { u.Client.Abort(); } catch { } }
+            if (u.Windows && u.WindowsBegun) postToUi(delegate { if (windowsOwner == u) { windowsOwner = null; windows.Stop(); } });
+            Raise(Finished);
         }
 
         public void Dispose()
@@ -292,14 +451,14 @@ namespace Bestie
             if (disposed) return;
             Stop();
             disposed = true;
-            windows.Dispose();
+            windows.Dispose();   // the module disposes us on the UI thread (posting would be dropped by then)
         }
     }
 
     /// <summary>Energy-based voice activity detection over 16-bit mono PCM chunks.</summary>
     internal sealed class VoiceActivity
     {
-        public int SilenceStopMs = 1200;      // stop after this much quiet once speech started
+        public int SilenceStopMs = 700;       // stop after this much quiet once speech started (was 1.2 s; snappier)
         public int NoSpeechGiveUpMs = 8000;   // give up if nobody talks
         public int MaxMs = 30000;
         public int TotalMs, SpeechMs, SilenceMs, PeakAbs;
@@ -342,7 +501,7 @@ namespace Bestie
             // cap the floor: if they start talking the instant they press the key, the first chunk
             // is speech, not room noise, and must not raise the bar above normal speech levels.
             if (noise > 500) noise = 500;
-            Threshold = Math.Max(350, noise * 3.0);
+            Threshold = Math.Max(180, noise * 2.5);   // some mics are quiet; don't mistake soft speech for silence
             if (rms > Threshold)
             {
                 speechRun += ms;
@@ -542,10 +701,10 @@ namespace Bestie
             {
                 if (vad.PeakAbs == 0 && vad.TotalMs >= 500)
                     error = "i only heard perfect silence. windows might be keeping desktop apps away from the mic (settings → privacy & security → microphone).";
-                else if (PushToTalk && reason == "stopped" && (vad.TotalMs < 400 || !vad.SpeechStarted))
-                    reason = "quiet";   // a click, or a hold without words: drop it without a fuss
-                else if (vad.SpeechStarted || (reason == "stopped" && vad.TotalMs >= 700 && vad.PeakAbs > 400))
-                    wav = VoiceWav.Build(pcm.ToArray(), SampleRate, 16, 1);
+                else if (PushToTalk && reason == "stopped" && (vad.TotalMs < 600 || vad.PeakAbs < 250))
+                    reason = "quiet";   // a click, or a hold in total silence: drop it without a fuss
+                else if (vad.SpeechStarted || (reason == "stopped" && vad.TotalMs >= 600 && vad.PeakAbs > 250))
+                    wav = VoiceWav.Build(Louder(pcm.ToArray(), vad.PeakAbs), SampleRate, 16, 1);   // a deliberate hold always gets heard; the transcriber decides
                 else if (reason == "stopped") reason = "short";
             }
             DebugLog.Write("assistant: mic done (" + reason + ", " + vad.TotalMs + " ms, speech " + vad.SpeechMs + " ms, peak " + vad.PeakAbs + ")");
@@ -555,6 +714,21 @@ namespace Bestie
                 try { f(this, wav, reason, error); }
                 catch (Exception ex) { DebugLog.Write("assistant: mic finished handler: " + ex); }
             }
+        }
+
+        /// <summary>Quiet mics make for bad transcripts: bring the loudest peak up to ~60% (at most 8x louder).</summary>
+        static byte[] Louder(byte[] pcm, int peak)
+        {
+            if (peak <= 0 || peak >= 20000) return pcm;
+            double gain = Math.Min(8.0, 20000.0 / peak);
+            for (int i = 0; i + 1 < pcm.Length; i += 2)
+            {
+                int s = (int)Math.Round((short)(pcm[i] | (pcm[i + 1] << 8)) * gain);
+                s = Math.Max(-32768, Math.Min(32767, s));
+                pcm[i] = (byte)(s & 0xFF);
+                pcm[i + 1] = (byte)((s >> 8) & 0xFF);
+            }
+            return pcm;
         }
 
         void Cleanup()
@@ -573,17 +747,75 @@ namespace Bestie
         }
     }
 
-    /// <summary>Local, free text-to-speech. Create/use on the UI thread so events come back there.</summary>
+    /// <summary>Local, free text-to-speech. Create/use on the UI thread so events come back there.
+    /// Begin / Enqueue (any number of sentences, SAPI queues them) / End; Finished once the queue drains after End.</summary>
     internal sealed class VoiceTts : IDisposable
     {
         SpeechSynthesizer synth;
-        Prompt current;
+        readonly List<Prompt> prompts = new List<Prompt>();
+        bool active, ended, startedRaised;
         bool disposed;
 
         public event Action Started;
         public event Action Finished;
 
-        public bool Speaking { get { return current != null; } }
+        public bool Speaking { get { return active; } }
+
+        public void Begin(string voice, int rate)
+        {
+            if (disposed) return;
+            Stop();
+            try
+            {
+                if (synth == null)
+                {
+                    synth = new SpeechSynthesizer();
+                    synth.SetOutputToDefaultAudioDevice();
+                    synth.SpeakCompleted += OnCompleted;
+                }
+                if (!string.IsNullOrEmpty(voice))
+                {
+                    try { synth.SelectVoice(voice); }
+                    catch (Exception ex) { DebugLog.Write("assistant: voice '" + voice + "' unavailable: " + ex.Message); }
+                }
+                synth.Rate = Math.Max(-10, Math.Min(10, rate));
+                synth.Volume = 100;
+                active = true;
+                ended = false;
+                startedRaised = false;
+            }
+            catch (Exception ex) { DebugLog.Write("assistant: tts: " + ex.Message); active = false; }
+        }
+
+        public void Enqueue(string text)
+        {
+            if (!active || synth == null || string.IsNullOrEmpty(text) || text.Trim().Length == 0) return;
+            try
+            {
+                prompts.Add(synth.SpeakAsync(text));
+                if (!startedRaised)
+                {
+                    startedRaised = true;
+                    var s = Started;
+                    if (s != null) s();
+                }
+            }
+            catch (Exception ex) { DebugLog.Write("assistant: tts: " + ex.Message); }
+        }
+
+        public void End()
+        {
+            if (!active) return;
+            ended = true;
+            if (prompts.Count == 0) Done();
+        }
+
+        void Done()
+        {
+            active = false;
+            var f = Finished;
+            if (f != null) { try { f(); } catch (Exception ex) { DebugLog.Write("assistant: tts finished: " + ex.Message); } }
+        }
 
         public static string[] InstalledVoices()
         {
@@ -601,58 +833,31 @@ namespace Bestie
 
         public void Speak(string text, string voice, int rate)
         {
-            if (disposed) return;
-            Stop();
-            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0) return;
-            try
-            {
-                if (synth == null)
-                {
-                    synth = new SpeechSynthesizer();
-                    synth.SetOutputToDefaultAudioDevice();
-                    synth.SpeakCompleted += OnCompleted;
-                }
-                if (!string.IsNullOrEmpty(voice))
-                {
-                    try { synth.SelectVoice(voice); }
-                    catch (Exception ex) { DebugLog.Write("assistant: voice '" + voice + "' unavailable: " + ex.Message); }
-                }
-                synth.Rate = Math.Max(-10, Math.Min(10, rate));
-                current = synth.SpeakAsync(text);
-                var s = Started;
-                if (s != null) s();
-            }
-            catch (Exception ex)
-            {
-                DebugLog.Write("assistant: tts: " + ex.Message);
-                current = null;
-                var f = Finished;
-                if (f != null) f();
-            }
+            Begin(voice, rate);
+            Enqueue(text);
+            End();
         }
 
         void OnCompleted(object sender, SpeakCompletedEventArgs e)
         {
-            if (e.Prompt != current) return;   // an older, cancelled prompt
-            current = null;
-            var f = Finished;
-            if (f != null) { try { f(); } catch (Exception ex) { DebugLog.Write("assistant: tts finished: " + ex.Message); } }
+            if (!prompts.Remove(e.Prompt)) return;   // an older, cancelled prompt
+            if (active && ended && prompts.Count == 0) Done();
         }
 
         public void Stop()
         {
-            if (synth == null || current == null) return;
-            current = null;
-            try { synth.SpeakAsyncCancelAll(); } catch { }
-            var f = Finished;
-            if (f != null) { try { f(); } catch { } }
+            if (!active) return;
+            prompts.Clear();
+            try { if (synth != null) synth.SpeakAsyncCancelAll(); } catch { }
+            Done();
         }
 
         public void Dispose()
         {
             if (disposed) return;
             disposed = true;
-            current = null;
+            active = false;
+            prompts.Clear();
             if (synth != null)
             {
                 try { synth.SpeakAsyncCancelAll(); } catch { }

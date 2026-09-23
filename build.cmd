@@ -19,8 +19,14 @@ set OPTS=/nologo /codepage:65001 /target:winexe /optimize+
 rem a running Bestie.exe can't be overwritten; opening it for append fails if it's in use
 if exist Bestie.exe (
   2>nul (call ) >> "Bestie.exe" || (
-    echo Bestie is running from this folder. say goodbye to it first ^(right-click it, "say goodbye"^).
-    exit /b 1
+    echo Bestie is running. asking it to save and step out for a sec...
+    "%~dp0Bestie.exe" --quit
+    rem wait ~4 s (ping works everywhere; "timeout" breaks when input is redirected)
+    ping -n 5 127.0.0.1 >nul
+    2>nul (call ) >> "Bestie.exe" || (
+      echo Bestie is still running. say goodbye to it first ^(right-click it, "say goodbye"^).
+      exit /b 1
+    )
   )
 )
 

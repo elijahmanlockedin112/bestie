@@ -33,6 +33,14 @@ namespace Bestie
                 return 0;
             }
 
+            // "Bestie.exe --quit" asks a running Bestie to say goodbye properly (it saves on the way out)
+            if (args.Length >= 1 && args[0] == "--quit")
+            {
+                EventWaitHandle quit;
+                if (EventWaitHandle.TryOpenExisting(@"Local\Bestie.Quit", out quit)) { quit.Set(); quit.Dispose(); }
+                return 0;
+            }
+
             bool fresh;
             using (var mutex = new Mutex(true, @"Local\Bestie.Creature", out fresh))
             {
@@ -43,8 +51,17 @@ namespace Bestie
 
                 var brain = Brain.Load(Home.State("brain.json"));
                 brain.Traits = Personality.Traits();   // the coded-in character, not the dice it hatched with
-                Application.Run(new CreatureWindow(brain));
+                var window = new CreatureWindow(brain);
+                var quitSignal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Bestie.Quit");
+                ThreadPool.RegisterWaitForSingleObject(quitSignal, (s, timedOut) =>
+                {
+                    try { window.BeginInvoke(new Action(window.Close)); } catch { }
+                }, null, -1, true);
+                Application.Run(window);
+                GC.KeepAlive(quitSignal);   // or the quit event could be collected (and never fire) while we run
                 brain.Save();
+                // everything is saved; don't let a straggling background thread (audio, sockets) keep the process around
+                Environment.Exit(0);
             }
             return 0;
         }
@@ -68,7 +85,7 @@ namespace Bestie
                 new object[] { "held", Pose.Held, Face.Surprised }, new object[] { "dizzy", Pose.Stand, Face.Dizzy },
                 new object[] { "bonk", Pose.Stand, Face.Squint }, new object[] { "sunbathe", Pose.Sunbathe, Face.Content },
                 new object[] { "sing", Pose.Sing, Face.Happy }, new object[] { "wave", Pose.Wave, Face.Happy },
-                new object[] { "think", Pose.Stand, Face.Think }, new object[] { "egg", Pose.Egg, Face.Normal },
+                new object[] { "listening", Pose.Stand, Face.Surprised }, new object[] { "egg", Pose.Egg, Face.Normal },
             };
             int cell = 150, cols = 8, rows = (poses.Length + cols - 1) / cols + 2;
             using (var bmp = new Bitmap(cell * cols, cell * rows))
@@ -82,7 +99,7 @@ namespace Bestie
                     c.Pose = (Pose)poses[i][1]; c.Face = (Face)poses[i][2];
                     c.Sunglasses = c.Pose == Pose.Sunbathe; c.WalkPhase = 1.1; c.LookX = 0.6; c.LookY = 0.2; c.Blush = c.Face == Face.Happy ? 1 : 0;
                     c.Talk = (string)poses[i][0] == "sing" ? 0.8 : 0; c.EggCrack = 2; c.EggWobble = 0.4;
-                    c.Rot = 0; c.Squash = 0;
+                    c.Rot = 0; c.Squash = 0; c.Halo = (string)poses[i][0] == "listening" ? 1 : 0;
                     Renderer.DrawCreature(g, c, x + cell / 2, y + cell - 25);
                     g.DrawString((string)poses[i][0], font, Brushes.DimGray, x + 6, y + 4);
                 }

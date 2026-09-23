@@ -34,7 +34,12 @@ namespace Bestie
         readonly ComboBox modelBox, effortBox, transcribeBox, voiceBox, engineBox, openAiVoiceBox, ttsModelBox;
         readonly CheckBox speakBox, screenBox, tabsBox, autoLookBox, nosyBox, speakNosyBox;
         readonly NumericUpDown rateBox, historyBox, nosyMinutesBox;
-        readonly TextBox skipBox;
+        readonly TextBox skipBox, gIdBox, gSecretBox;
+        readonly TrackBar gainBar;
+        readonly Label gainLabel, calStatus;
+        readonly CheckBox calWarnBox, autoMemoryBox, wakeBox;
+        readonly Button connectButton, disconnectButton;
+        bool calBusy;
         readonly HotkeyTextBox[] hotkeyBoxes = new HotkeyTextBox[3];
         readonly Label[] hotkeyLabels = new Label[3];
         readonly System.Windows.Forms.Timer browserTimer;
@@ -135,6 +140,17 @@ namespace Bestie
             voiceBox.SelectedIndex = vi >= 0 ? vi : 0;
             rateBox = Num(-10, 10, s.TtsRate, S(56));
             Row("", Lbl("windows", Ink, S(70)), voiceBox, Lbl("speed", Muted), rateBox);
+            gainBar = new TrackBar();
+            gainBar.Minimum = 100;
+            gainBar.Maximum = 400;
+            gainBar.SmallChange = 10;
+            gainBar.LargeChange = 20;
+            gainBar.TickFrequency = 50;
+            gainBar.Width = S(200);
+            gainBar.Value = Math.Max(100, Math.Min(400, s.VoiceGainPercent));
+            gainLabel = Lbl(gainBar.Value + "%", Muted);
+            gainBar.ValueChanged += delegate { gainLabel.Text = gainBar.Value + "%"; };
+            Row("", Lbl("loudness", Ink, S(70)), gainBar, gainLabel);
             Row("", Note("no key, or the big outside is down? i use the windows voice instead.", Muted));
 
             // --- hotkeys
@@ -160,6 +176,12 @@ namespace Bestie
             Row("", tabsBox);
             historyBox = Num(4, 200, s.MaxHistoryMessages, S(60));
             Row("memory", Lbl("keep the last", Ink), historyBox, Lbl("messages of a chat in my head", Ink));
+            autoMemoryBox = Check("remember things from our chats automatically", s.AutoMemory);
+            Row("", autoMemoryBox);
+            string cname = "bestie";
+            try { cname = owner.Host.CreatureName ?? cname; } catch { }
+            wakeBox = Check("listen for my wake word (hey " + cname.ToLowerInvariant() + ")", s.WakeWord);
+            Row("wake word", wakeBox);
 
             // --- nosy peeks
             nosyBox = Check("be nosy (peek at what i'm doing now and then)", s.BeNosy);
@@ -188,6 +210,37 @@ namespace Bestie
                 if (b != null) b.ForgetPairing();
                 browserStatus.Text = "forgot it. the next browser extension that says hi gets paired.";
             }));
+
+            // --- google calendar
+            gIdBox = new TextBox();
+            gIdBox.Width = S(300);
+            gIdBox.Text = s.GoogleClientId ?? "";
+            gIdBox.HandleCreated += delegate { SendMessage(gIdBox.Handle, 0x1501, new IntPtr(1), "google oauth client id"); };
+            var howTo = new LinkLabel();
+            howTo.AutoSize = true;
+            howTo.Font = small;
+            howTo.Text = "how do i get these?";
+            howTo.LinkColor = Warm;
+            howTo.Margin = new Padding(S(6), S(6), 0, 0);
+            howTo.LinkClicked += delegate { MessageBox.Show(this, AssistantCalendar.SetupSteps, "google calendar setup", MessageBoxButtons.OK, MessageBoxIcon.Information); };
+            Row("calendar", gIdBox, howTo);
+            gSecretBox = new TextBox();
+            gSecretBox.Width = S(300);
+            gSecretBox.UseSystemPasswordChar = true;
+            bool secretSaved = s.GoogleClientSecret.Length > 0;
+            gSecretBox.HandleCreated += delegate
+            {
+                SendMessage(gSecretBox.Handle, 0x1501, new IntPtr(1), secretSaved ? "client secret (saved; paste to replace)" : "client secret");
+            };
+            Row("", gSecretBox);
+            connectButton = Btn("connect google calendar…", delegate { OnConnectCalendar(); });
+            disconnectButton = Btn("disconnect", delegate { OnDisconnectCalendar(); });
+            Row("", connectButton, disconnectButton);
+            calStatus = Note(owner.Calendar.StatusText, Muted);
+            Row("", calStatus);
+            calWarnBox = Check("warn me before events", s.CalendarWarn);
+            Row("", calWarnBox);
+            RefreshCalendarButtons();
 
             // --- bottom row
             saveResult = Note("", Bad);
@@ -226,7 +279,12 @@ namespace Bestie
 
             browserTimer = new System.Windows.Forms.Timer();
             browserTimer.Interval = 2000;
-            browserTimer.Tick += delegate { if (!browserStatus.Text.StartsWith("forgot")) browserStatus.Text = BrowserStatusText(); };
+            browserTimer.Tick += delegate
+            {
+                if (!browserStatus.Text.StartsWith("forgot")) browserStatus.Text = BrowserStatusText();
+                if (!calBusy) { calStatus.Text = owner.Calendar.StatusText; RefreshCalendarButtons(); }
+            };
+            FormClosed += delegate { owner.ApplyVoiceGain(); };   // undo an unsaved loudness preview
             browserTimer.Start();
         }
 
@@ -494,7 +552,76 @@ namespace Bestie
             n.SpeakNosy = speakNosyBox.Checked;
             n.NosySkipList = string.Join(", ", skipBox.Text.Split(',', '\n', '\r', ';')
                 .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray());
+            n.VoiceGainPercent = gainBar.Value;
+            n.AutoMemory = autoMemoryBox.Checked;
+            n.WakeWord = wakeBox.Checked;
+            n.GoogleClientId = gIdBox.Text.Trim();
+            if (gSecretBox.Text.Trim().Length > 0) n.SetGoogleClientSecret(gSecretBox.Text);
+            n.CalendarWarn = calWarnBox.Checked;
             return n;
+        }
+
+        void RefreshCalendarButtons()
+        {
+            bool connected = owner.Calendar.IsConnected;
+            bool busy = calBusy || owner.Calendar.Connecting;
+            connectButton.Enabled = !busy;
+            connectButton.Text = connected ? "reconnect…" : "connect google calendar…";
+            disconnectButton.Enabled = connected && !busy;
+        }
+
+        void OnConnectCalendar()
+        {
+            string id = gIdBox.Text.Trim();
+            string secret = gSecretBox.Text.Trim().Length > 0 ? gSecretBox.Text.Trim() : s.GoogleClientSecret;
+            if (id.Length == 0)
+            {
+                calStatus.Text = "paste the client id first. (\"how do i get these?\" has the steps.)";
+                calStatus.ForeColor = Bad;
+                return;
+            }
+            calBusy = true;
+            calStatus.ForeColor = Muted;
+            calStatus.Text = "opening your browser… say yes there. (i'll wait 3 minutes.)";
+            RefreshCalendarButtons();
+            owner.Calendar.Connect(id, secret, delegate(bool ok, string message)
+            {
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        calBusy = false;
+                        if (ok) owner.RememberGoogleClient(id, secret);
+                        if (IsDisposed) return;
+                        calStatus.Text = ok ? owner.Calendar.StatusText + " bestie has your calendar now." : message;
+                        calStatus.ForeColor = ok ? Good : Bad;
+                        RefreshCalendarButtons();
+                    });
+                }
+                catch { calBusy = false; }
+            });
+        }
+
+        void OnDisconnectCalendar()
+        {
+            calBusy = true;
+            calStatus.ForeColor = Muted;
+            calStatus.Text = "disconnecting…";
+            RefreshCalendarButtons();
+            owner.Calendar.Disconnect(delegate(string message)
+            {
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        calBusy = false;
+                        if (IsDisposed) return;
+                        calStatus.Text = message;
+                        RefreshCalendarButtons();
+                    });
+                }
+                catch { calBusy = false; }
+            });
         }
 
         void OnTryVoice()
