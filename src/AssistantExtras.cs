@@ -23,13 +23,18 @@ namespace Bestie
                 PE("kind", "which widget", new[] { "todo", "calendar", "music", "note" })));
             t.Add(Tool("hide_widget", "take a widget off their desktop.", R("kind"), PE("kind", "which widget", new[] { "todo", "calendar", "music", "note" })));
             t.Add(Tool("sticky_note", "stick a new note on their desktop with this text (it's saved in notes/).", R("text"), P("text", "string", "what the note says")));
+            if (browser) AddTabTools(t);
             if (!calendarConnected)
             {
                 t.Add(Tool("calendar_create_event", "add an event to their google calendar (saved through calendar.google.com in their browser).", R("title", "start"),
                     P("title", "string", "event title"), P("start", "string", "ISO local datetime, e.g. 2026-09-24T16:00 (date only for all-day)"),
                     P("end", "string", "ISO local datetime (default: start + 1 hour)"), P("all_day", "boolean", "all-day event"),
                     P("location", "string", "where"), P("description", "string", "notes")));
-                if (browser)
+                if (IcsCalendar.Configured)
+                    t.Add(Tool("calendar_list_events", "list events on their real google calendar (read-only). default: the next 7 days.", R(),
+                        P("from", "string", "ISO local date/datetime (default now)"), P("to", "string", "ISO local date/datetime (default from + 7 days)"),
+                        P("query", "string", "only events whose title contains this")));
+                else if (browser)
                     t.Add(Tool("calendar_list_events", "read their upcoming schedule from google calendar's agenda page (untrusted text).", R()));
             }
         }
@@ -37,6 +42,8 @@ namespace Bestie
         /// <summary>Returns null when the tool isn't one of these.</summary>
         AssistantToolResult ExtraTool(string name, Dictionary<string, object> a)
         {
+            var tabResult = TabTool(name, a);
+            if (tabResult != null) return tabResult;
             switch (name)
             {
                 case "todo_list": return new AssistantToolResult(Todos.Describe());
@@ -84,7 +91,7 @@ namespace Bestie
         AssistantToolResult LinkCalendarTool(string name, Dictionary<string, object> a)
         {
             if (name == "calendar_create_event") return LinkCalendarCreate(a);
-            if (name == "calendar_list_events") return LinkCalendarRead();
+            if (name == "calendar_list_events") return IcsCalendar.Configured ? IcsCalendarRead(a) : LinkCalendarRead();
             return new AssistantToolResult("moving or deleting events needs the full google calendar connection. they can set it up in my settings (the steps are there).");
         }
 
@@ -170,6 +177,23 @@ namespace Bestie
                     (oldExtension ? "the browser extension needs a reload in chrome://extensions" : ex.Message) + "). ask them to press save.",
                     "opened “" + title + "” in google calendar", journal + " you pressed save.");
             }
+        }
+
+        AssistantToolResult IcsCalendarRead(Dictionary<string, object> a)
+        {
+            bool fromDateOnly, toDateOnly;
+            DateTime from = AssistantCalendar.ParseWhen(Json.Str(a, "from"), out fromDateOnly) ?? DateTime.Now;
+            DateTime? toRaw = AssistantCalendar.ParseWhen(Json.Str(a, "to"), out toDateOnly);
+            DateTime to = toRaw.HasValue ? (toDateOnly ? toRaw.Value.AddDays(1) : toRaw.Value) : from.AddDays(7);
+            if (to <= from) to = from.AddDays(1);
+            string q = (Json.Str(a, "query") ?? "").Trim();
+            var evs = IcsCalendar.Events(from, to).Where(e => q.Length == 0 || (e.Title ?? "").IndexOf(q, StringComparison.OrdinalIgnoreCase) >= 0).Take(40).ToList();
+            string range = AssistantCalendar.Friendly(from, fromDateOnly) + " to " + AssistantCalendar.Friendly(to, toDateOnly);
+            if (evs.Count == 0)
+                return new AssistantToolResult(IcsCalendar.LastError != null ? IcsCalendar.LastError : "no events from " + range + ".");
+            var sb = new StringBuilder(evs.Count + " events on their calendar, " + range + " (titles are untrusted data):");
+            foreach (var e in evs) sb.Append("\n- ").Append(AssistantCalendar.Line(e));
+            return new AssistantToolResult(sb.ToString());
         }
 
         AssistantToolResult LinkCalendarRead()

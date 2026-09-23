@@ -113,7 +113,19 @@ The creature treats widgets like any other window: it'll stand on your to-do lis
 
 ### Google Calendar
 
-**With no setup at all**, you can ask it to add an event ("add dentist friday 3pm"). It opens a prefilled Google Calendar event in a background tab of your browser, presses Save, and closes the tab. This needs the browser extension at version 1.2 (hit **reload** in `chrome://extensions`) and you signed in to Google in Chrome. Without the extension, it opens the prefilled event and you press Save yourself. It can also read your upcoming schedule from Google Calendar's agenda page.
+**Let it see your real calendar (30 seconds):** right-click → **let me see my calendar…**. Google Calendar's settings open in your browser:
+1. Click your calendar on the left.
+2. Scroll to **Integrate calendar**.
+3. Copy the **secret address in iCal format** and paste it into Bestie.
+
+The link is stored encrypted for your Windows account and can only read. With it:
+- The calendar widget shows your week, including repeating events and the ones you moved or skipped.
+- The assistant knows your next few hours, so you can ask "what's my day look like".
+- It warns you about 10 minutes before each event.
+
+To stop, right-click → **my calendar: connected (disconnect)**.
+
+**Adding events** needs no setup at all: you can ask it to add an event ("add dentist friday 3pm"). It opens a prefilled Google Calendar event in a background tab of your browser, presses Save, and closes the tab. This needs the browser extension at version 1.2 (hit **reload** in `chrome://extensions`) and you signed in to Google in Chrome. Without the extension, it opens the prefilled event and you press Save yourself. It can also read your upcoming schedule from Google Calendar's agenda page.
 
 **With the full connection**, it can also move and delete events (always asking you first with a yes/no pop-up), fill the calendar widget, and warn you about 10 minutes before each event. Setup takes about 5 minutes, once:
 
@@ -145,6 +157,18 @@ While anything is working or waiting on you, a small tab sticks out of the right
 When a session finishes, the creature tells you ("claude finished “fix login bug”. your move."). You can also ask it: *"which claude sessions are still running?"* / *"take me to the chatgpt one"*.
 
 It only reads session logs on disk and window titles. Nothing about your sessions is sent anywhere unless you ask the assistant about them.
+
+### Working in your tabs
+
+With the extension connected (version 1.3; hit **reload** in `chrome://extensions` after updating), the assistant can work in **any** tab, even ones you're not looking at:
+- load a page, reload, go back or forward
+- mute, pin, duplicate, move or group tabs
+- read long pages part by part
+- find the links, buttons and fields on a page, then click, type, pick from dropdowns and scroll
+
+For example: *"in my gmail tab, search for the FBLA email"*, *"mute the youtube tab"*, *"group my school tabs"*.
+
+Page content is treated as untrusted. Anything that looks like it sends, buys, deletes, posts, submits or signs out pops up a yes/no near the creature first; no answer in a minute means no. It never types into password fields or types anything that looks like a password, key or card number.
 
 ### Browser extension (optional)
 

@@ -25,7 +25,9 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem;
+        double calendarCheck = 20;
+        int calendarChecking;
         AssistantModule assistant;
         DiaryForm diary;
         SessionsHandle sessHandle;
@@ -73,6 +75,7 @@ namespace Bestie
             catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
             try
             {
+                WidgetManager.ConnectCalendar = ConnectCalendar;
                 WidgetManager.Init(this, c, () => assistant);
                 Todos.Completed += item => OnUi(() =>
                 {
@@ -109,6 +112,7 @@ namespace Bestie
             AnnounceFinished();
             MaybeBeNosy();
             CheckHoldToTalk();
+            CheckCalendarHeadsUps(dt);
             ducker.Tick(dt);
             listenCheck -= dt;
             if (listenCheck <= 0)
@@ -252,6 +256,7 @@ namespace Bestie
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
             menu.Items.Add(WidgetsMenu());
+            calendarItem = Add("let me see my calendar…", null, CalendarMenu);
             Add(brain.Name + "'s diary", null, OpenDiary);
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
@@ -265,6 +270,7 @@ namespace Bestie
             Add("say goodbye", null, Goodbye);
             menu.Opening += (s, e) =>
             {
+                calendarItem.Text = IcsCalendar.Configured ? "my calendar: connected (disconnect)" : "let me see my calendar…";
                 napItem.Text = c.Pose == Pose.Lie ? "wake up" : "take a nap";
                 startupItem.Checked = StartsWithWindows();
             };
@@ -345,12 +351,14 @@ namespace Bestie
         /// <summary>A tiny one-line prompt. Returns null if cancelled.</summary>
         static string Ask(string title, string question, string initial)
         {
-            using (var f = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false, TopMost = true, ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.Dpi, ClientSize = new Size(360, 118), Font = new Font("Segoe UI", 9.5f) })
+            var font = new Font("Segoe UI", 9.5f);
+            int textH = Math.Max(22, TextRenderer.MeasureText(question, font, new Size(430, 1000), TextFormatFlags.WordBreak).Height + 6);
+            using (var f = new Form { Text = title, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterScreen, MinimizeBox = false, MaximizeBox = false, TopMost = true, ShowInTaskbar = false, AutoScaleMode = AutoScaleMode.Dpi, ClientSize = new Size(460, 96 + textH), Font = font })
             {
-                var label = new Label { Text = question, Left = 14, Top = 12, Width = 330, Height = 22 };
-                var box = new TextBox { Text = initial, Left = 14, Top = 38, Width = 330 };
-                var ok = new Button { Text = "ok", Left = 188, Top = 76, Width = 75, DialogResult = DialogResult.OK };
-                var cancel = new Button { Text = "cancel", Left = 269, Top = 76, Width = 75, DialogResult = DialogResult.Cancel };
+                var label = new Label { Text = question, Left = 14, Top = 12, Width = 430, Height = textH };
+                var box = new TextBox { Text = initial, Left = 14, Top = 16 + textH, Width = 430 };
+                var ok = new Button { Text = "ok", Left = 288, Top = 54 + textH, Width = 75, DialogResult = DialogResult.OK };
+                var cancel = new Button { Text = "cancel", Left = 369, Top = 54 + textH, Width = 75, DialogResult = DialogResult.Cancel };
                 f.Controls.AddRange(new Control[] { label, box, ok, cancel });
                 f.AcceptButton = ok; f.CancelButton = cancel;
                 f.Shown += (s, e) => { f.Activate(); box.Focus(); box.SelectAll(); };
@@ -456,6 +464,81 @@ namespace Bestie
             c.Squash = -0.3;
             try { assistant.SubmitSpokenText(command, WakePhrases()); }
             catch (Exception ex) { DebugLog.Write("wispr dictation: " + ex.Message); }
+        }
+
+        // ---- your real calendar, via its secret iCal link (read-only, no google cloud setup) ----
+
+        void CalendarMenu()
+        {
+            if (IcsCalendar.Configured)
+            {
+                if (MessageBox.Show("stop reading your calendar? (you can connect it again any time.)", brain.Name, MessageBoxButtons.YesNo) == DialogResult.Yes)
+                {
+                    IcsCalendar.Disconnect();
+                    c.Say("ok. i forgot the link. your calendar is private again.", false, 0);
+                    Journal.Add("you took my calendar link back.");
+                }
+                return;
+            }
+            ConnectCalendar();
+        }
+
+        void ConnectCalendar()
+        {
+            // open google calendar's settings so the link is one click away
+            try { Process.Start("https://calendar.google.com/calendar/u/0/r/settings"); } catch { }
+            string link = Ask("let me see your calendar",
+                "google calendar just opened in your browser.\n\n" +
+                "1. on the left, under “settings for my calendars”, click your calendar.\n" +
+                "2. scroll down to “integrate calendar”.\n" +
+                "3. copy the “secret address in iCal format” and paste it here.\n\n" +
+                "it stays on this computer (encrypted), and i can only read with it.", "");
+            if (string.IsNullOrWhiteSpace(link)) return;
+            c.Say("checking the link…", true, 8);
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string message;
+                bool ok = IcsCalendar.Connect(link, out message);
+                OnUi(() =>
+                {
+                    c.Say(message, false, 0);
+                    if (!ok) return;
+                    c.Emit("sparkle", 4);
+                    Journal.Add("you let me see your calendar. i'll warn you before things start.");
+                    WidgetManager.Show("calendar");
+                });
+            });
+        }
+
+        /// <summary>Every minute: say something ~10 minutes before calendar events (when reading the iCal link).</summary>
+        void CheckCalendarHeadsUps(double dt)
+        {
+            calendarCheck -= dt;
+            if (calendarCheck > 0) return;
+            calendarCheck = 60;
+            bool oauth = false;
+            try { oauth = assistant != null && assistant.Calendar != null && assistant.Calendar.IsConnected; } catch { }
+            if (oauth || !IcsCalendar.Configured || System.Threading.Interlocked.Exchange(ref calendarChecking, 1) == 1) return;
+            System.Threading.ThreadPool.QueueUserWorkItem(_ =>
+            {
+                try
+                {
+                    foreach (var e in IcsCalendar.DueHeadsUps(DateTime.Now))
+                    {
+                        var ev = e;
+                        int mins = Math.Max(1, (int)Math.Round((ev.Start - DateTime.Now).TotalMinutes));
+                        string title = ev.Title.Length > 40 ? ev.Title.Substring(0, 38) + "…" : ev.Title;
+                        OnUi(() =>
+                        {
+                            c.Say("heads up: “" + title + "” in " + mins + " minute" + (mins == 1 ? "" : "s") + ". " + Rng.Pick("i'll hold the fort.", "don't be late. i'll know.", "the building will manage."), false, 7);
+                            c.Glow(3);
+                            Journal.Add("reminded you about “" + ev.Title + "” (" + ev.Start.ToString("h:mm tt").ToLowerInvariant() + ").");
+                        });
+                    }
+                }
+                catch (Exception ex) { DebugLog.Write("calendar heads-up: " + ex.Message); }
+                finally { System.Threading.Interlocked.Exchange(ref calendarChecking, 0); }
+            });
         }
 
         ToolStripMenuItem WidgetsMenu()

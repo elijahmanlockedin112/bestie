@@ -337,14 +337,16 @@ async function inject(tab, func, args = [], allFrames = false) {
 }
 
 // Runs inside the page. Must stay self-contained.
-function readPage(max) {
+function readPage(max, offset) {
   const root = document.body || document.documentElement;
   let text = (root && root.innerText) || "";
   text = text.split(/\r?\n/).map((line) => line.replace(/\s+/g, " ").trim()).filter(Boolean).join("\n");
-  const truncated = text.length > max;
+  const from = Math.max(0, offset || 0);
+  const truncated = text.length > from + max;
   return {
-    text: truncated ? text.slice(0, max) : text,
+    text: text.slice(from, from + max),
     truncated,
+    total: text.length,
     title: document.title,
     pdf: document.contentType === "application/pdf",
   };
@@ -410,14 +412,14 @@ const COMMANDS = {
     return { ok: true };
   },
 
-  async get_page_text({ tabId, maxChars = 12000 }) {
+  async get_page_text({ tabId, maxChars = 12000, offset = 0 }) {
     const tab = await currentTab(tabId);
     const max = clamp(Number(maxChars) || 12000, 100, 500000);
-    const [frame] = await inject(tab, readPage, [max]);
+    const [frame] = await inject(tab, readPage, [max, Math.max(0, Number(offset) || 0)]);
     const page = (frame && frame.result) || {};
     if (!page.text && (page.pdf || /\.pdf([?#]|$)/i.test(tab.url || "")))
       throw new Error("that's a pdf. i can't read pdfs from inside the browser yet");
-    return { title: tab.title || page.title || "", url: tab.url || "", text: page.text || "", truncated: !!page.truncated };
+    return { title: tab.title || page.title || "", url: tab.url || "", text: page.text || "", truncated: !!page.truncated, total: page.total || 0 };
   },
 
   async get_selection({ tabId }) {
@@ -434,6 +436,82 @@ const COMMANDS = {
     if (!text) throw new Error("search for what, though?");
     await chrome.search.query({ text: text.slice(0, 2000), disposition: "NEW_TAB" });
     return { ok: true };
+  },
+
+  // ---- working in any tab, including ones in the background --------------------------------
+
+  async navigate_tab({ tabId, url }) {
+    const tab = await findTab(tabId);
+    await chrome.tabs.update(tab.id, { url: safeUrl(url) });
+    return { ok: true };
+  },
+
+  async tab_action({ tabId, action }) {
+    const tab = await findTab(tabId);
+    switch (String(action || "")) {
+      case "reload": await chrome.tabs.reload(tab.id); break;
+      case "back": await chrome.tabs.goBack(tab.id).catch(() => { throw new Error("there's nowhere to go back to"); }); break;
+      case "forward": await chrome.tabs.goForward(tab.id).catch(() => { throw new Error("there's nowhere to go forward to"); }); break;
+      case "mute": await chrome.tabs.update(tab.id, { muted: true }); break;
+      case "unmute": await chrome.tabs.update(tab.id, { muted: false }); break;
+      case "pin": await chrome.tabs.update(tab.id, { pinned: true }); break;
+      case "unpin": await chrome.tabs.update(tab.id, { pinned: false }); break;
+      case "duplicate": { const t = await chrome.tabs.duplicate(tab.id); return { ok: true, tabId: t ? t.id : null }; }
+      default: throw new Error("i don't know the tab action \"" + action + "\"");
+    }
+    return { ok: true };
+  },
+
+  async move_tab({ tabId, index = -1, windowId }) {
+    const tab = await findTab(tabId);
+    const opts = { index: Number(index) };
+    if (windowId !== undefined && windowId !== null) opts.windowId = Number(windowId);
+    await chrome.tabs.move(tab.id, opts);
+    return { ok: true };
+  },
+
+  async group_tabs({ tabIds, title, color }) {
+    const ids = (tabIds || []).map(Number).filter((n) => n > 0);
+    if (ids.length === 0) throw new Error("group which tabs?");
+    const groupId = await chrome.tabs.group({ tabIds: ids });
+    const upd = {};
+    if (title) upd.title = String(title).slice(0, 60);
+    if (color && ["grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange"].includes(color)) upd.color = color;
+    if (Object.keys(upd).length) await chrome.tabGroups.update(groupId, upd);
+    return { groupId };
+  },
+
+  async ungroup_tabs({ tabIds }) {
+    await chrome.tabs.ungroup((tabIds || []).map(Number));
+    return { ok: true };
+  },
+
+  async find_in_tab({ tabId, query = "", max = 40 }) {
+    const tab = await currentTab(tabId);
+    const [frame] = await inject(tab, scanElements, [String(query || ""), clamp(Number(max) || 40, 1, 150)]);
+    return (frame && frame.result) || { elements: [] };
+  },
+
+  async click_in_tab({ tabId, ref }) {
+    const tab = await currentTab(tabId);
+    const [frame] = await inject(tab, clickRef, [String(ref || "")]);
+    const r = (frame && frame.result) || {};
+    if (!r.ok) throw new Error(r.error || "that click didn't work");
+    return r;
+  },
+
+  async type_in_tab({ tabId, ref, text, submit = false }) {
+    const tab = await currentTab(tabId);
+    const [frame] = await inject(tab, typeRef, [String(ref || ""), String(text == null ? "" : text), !!submit]);
+    const r = (frame && frame.result) || {};
+    if (!r.ok) throw new Error(r.error || "typing didn't work");
+    return r;
+  },
+
+  async scroll_tab({ tabId, direction = "down" }) {
+    const tab = await currentTab(tabId);
+    const [frame] = await inject(tab, scrollPage, [String(direction)]);
+    return (frame && frame.result) || { ok: true };
   },
 
   // Press "Save" on a prefilled Google Calendar event page (one bestie opened from a calendar link).
@@ -470,6 +548,108 @@ const COMMANDS = {
     throw new Error("the save button never showed up");
   },
 };
+
+// ---- page-side helpers for working in tabs. Each runs inside the page and must stay self-contained.
+
+// Lists the clickable/typeable things on the page, tagging each with a stable data-bestie-ref.
+// "risky" marks things that send, buy, delete, post, confirm or sign out, so the app can ask first.
+function scanElements(query, max) {
+  const q = (query || "").toLowerCase();
+  const RISKY = /\b(send|submit|buy|purchase|pay|checkout|check out|place order|order now|delete|remove|post|publish|tweet|reply|confirm|sign ?out|log ?out|unsubscribe|transfer|donate|book now|reserve|trash|discard|accept|agree|install)\b/i;
+  const shown = (el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;
+    const cs = getComputedStyle(el);
+    return cs.visibility !== "hidden" && cs.display !== "none" && cs.opacity !== "0";
+  };
+  const nodes = Array.from(document.querySelectorAll(
+    'a[href], button, input, select, textarea, summary, [role=button], [role=link], [role=checkbox], [role=tab], [role=menuitem], [role=option], [role=textbox], [contenteditable=""], [contenteditable=true]'));
+  let counter = window.__bestieRef || 0;
+  const out = [];
+  for (const el of nodes) {
+    if (!shown(el)) continue;
+    const tag = el.tagName.toLowerCase();
+    const type = (el.getAttribute("type") || "").toLowerCase();
+    if (tag === "input" && type === "hidden") continue;
+    let kind;
+    if (tag === "a") kind = "link";
+    else if (tag === "select") kind = "select";
+    else if (tag === "textarea" || el.isContentEditable || el.getAttribute("role") === "textbox") kind = "textbox";
+    else if (tag === "input") kind = ["checkbox", "radio"].includes(type) ? type : ["submit", "button", "reset", "image"].includes(type) ? "button" : "textbox";
+    else kind = el.getAttribute("role") || "button";
+    const label = (el.getAttribute("aria-label") || (kind === "textbox" ? "" : el.innerText) || el.getAttribute("placeholder") ||
+      el.getAttribute("title") || el.getAttribute("name") || (kind === "button" ? el.value : "") || "").replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!label && kind !== "textbox") continue;
+    if (q && !(label.toLowerCase().includes(q) || (el.getAttribute("href") || "").toLowerCase().includes(q))) continue;
+    let ref = el.getAttribute("data-bestie-ref");
+    if (!ref) { ref = "e" + (++counter); el.setAttribute("data-bestie-ref", ref); }
+    const item = { ref, kind, text: label };
+    if (tag === "a") item.href = String(el.href || "").slice(0, 200);
+    if (type === "password") item.password = true;
+    else if (kind === "textbox") item.value = String(el.value !== undefined ? el.value : el.innerText || "").slice(0, 80);
+    if (kind === "checkbox" || kind === "radio") item.checked = !!el.checked;
+    const hint = label + " " + (el.getAttribute("data-testid") || "") + " " + (el.id || "");
+    if (RISKY.test(hint) || (kind === "button" && el.form && (el.type === "submit" || tag === "input"))) item.risky = true;
+    out.push(item);
+    if (out.length >= max) break;
+  }
+  window.__bestieRef = counter;
+  return { title: document.title, url: location.href, count: out.length, elements: out };
+}
+
+function clickRef(ref) {
+  const el = document.querySelector('[data-bestie-ref="' + CSS.escape(ref) + '"]');
+  if (!el) return { ok: false, error: "that element isn't on the page anymore (it may have changed). use find_in_tab again" };
+  el.scrollIntoView({ block: "center", inline: "center" });
+  const label = (el.getAttribute("aria-label") || el.innerText || el.value || "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const opts = { bubbles: true, cancelable: true, view: window };
+  el.dispatchEvent(new MouseEvent("mousedown", opts));
+  el.dispatchEvent(new MouseEvent("mouseup", opts));
+  el.click();
+  return { ok: true, description: "clicked " + el.tagName.toLowerCase() + (label ? " “" + label + "”" : "") };
+}
+
+function typeRef(ref, text, submit) {
+  const el = document.querySelector('[data-bestie-ref="' + CSS.escape(ref) + '"]');
+  if (!el) return { ok: false, error: "that field isn't on the page anymore. use find_in_tab again" };
+  const type = (el.getAttribute("type") || "").toLowerCase();
+  if (type === "password" || type === "file") return { ok: false, error: "i don't type into password or file fields" };
+  el.scrollIntoView({ block: "center" });
+  el.focus();
+  if (el.tagName === "SELECT") {
+    const opt = Array.from(el.options).find((o) => o.text.trim().toLowerCase() === text.trim().toLowerCase() || o.value === text);
+    if (!opt) return { ok: false, error: "there's no option called " + text };
+    el.value = opt.value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  } else if (el.isContentEditable || el.getAttribute("role") === "textbox") {
+    document.execCommand("selectAll", false, null);
+    document.execCommand("insertText", false, text);
+  } else {
+    // the native setter + events, so react/vue/etc. notice the change
+    const proto = el.tagName === "TEXTAREA" ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, "value").set.call(el, text);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  if (submit) {
+    if (el.form && el.form.requestSubmit) el.form.requestSubmit();
+    else {
+      const k = { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true };
+      el.dispatchEvent(new KeyboardEvent("keydown", k));
+      el.dispatchEvent(new KeyboardEvent("keypress", k));
+      el.dispatchEvent(new KeyboardEvent("keyup", k));
+    }
+  }
+  return { ok: true };
+}
+
+function scrollPage(dir) {
+  const step = window.innerHeight * 0.85;
+  if (dir === "top") window.scrollTo(0, 0);
+  else if (dir === "bottom") window.scrollTo(0, document.documentElement.scrollHeight);
+  else window.scrollBy(0, dir === "up" ? -step : step);
+  return { ok: true, y: Math.round(window.scrollY), height: document.documentElement.scrollHeight };
+}
 
 // Runs inside calendar.google.com. Must stay self-contained.
 function pressCalendarSave() {

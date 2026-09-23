@@ -1,10 +1,10 @@
 {
   "manifest_version": 3,
   "name": "Bestie bridge",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "lets bestie (the little guy on your desktop) peek at your tabs when you ask. only talks to your own computer.",
   "minimum_chrome_version": "120",
-  "permissions": ["tabs", "scripting", "alarms", "search", "storage"],
+  "permissions": ["tabs", "tabGroups", "scripting", "alarms", "search", "storage"],
   "host_permissions": ["http://127.0.0.1:47823/*", "<all_urls>"],
   "background": { "service_worker": "background.js" },
   "action": {

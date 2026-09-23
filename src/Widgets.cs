@@ -35,6 +35,8 @@ namespace Bestie
         internal static Creature Creature { get { return creature; } }
         internal static AssistantModule Assistant { get { return assistant != null ? assistant() : null; } }
         internal static Color Accent { get { return accent; } }
+        /// <summary>Set by the app: the "let me see my calendar" flow (paste the secret iCal link).</summary>
+        public static Action ConnectCalendar;
 
         public static string Label(string kind)
         {
@@ -521,6 +523,12 @@ namespace Bestie
                     var cal = a.Calendar;
                     conn = cal != null && cal.IsConnected;
                     if (conn) evs = cal.ListEvents("primary", DateTime.Today, DateTime.Today.AddDays(7), null, 30, 15000);
+                    else if (IcsCalendar.Configured)
+                    {
+                        conn = true;
+                        evs = IcsCalendar.Events(DateTime.Today, DateTime.Today.AddDays(7));
+                        err = evs.Count == 0 ? IcsCalendar.LastError : null;
+                    }
                 }
                 catch (Exception ex) { err = ex.Message; }
                 try { rems = a.Reminders.Pending(); } catch { }
@@ -564,9 +572,9 @@ namespace Bestie
                 if (!connected)
                 {
                     var r = new RectangleF(area.X + 2 * k, y, area.Width - 4 * k, 80 * k);
-                    g.DrawString("your google calendar isn't connected, so i can't show it here. i can still add things: type below, or just ask me.", small, faint, r);
+                    g.DrawString("i can't see your google calendar yet. i can still add things: type below, or just ask me.", small, faint, r);
                     y += g.MeasureString("x", small, (int)r.Width).Height * 3 + 6 * k;
-                    string link = "connect it in settings →";
+                    string link = "let me see my calendar →";
                     var sz = g.MeasureString(link, font);
                     connectLink = new Rectangle((int)(area.X + 2 * k), (int)y, (int)sz.Width, (int)sz.Height);
                     g.DrawString(link, font, acc, connectLink.X, connectLink.Y);
@@ -617,7 +625,7 @@ namespace Bestie
 
         protected override void BodyClick(Point p, MouseButtons button)
         {
-            if (connectLink.Contains(p)) { var a = WidgetManager.Assistant; if (a != null) a.OpenSettings(); }
+            if (connectLink.Contains(p) && WidgetManager.ConnectCalendar != null) WidgetManager.ConnectCalendar();
         }
 
         protected override void OnMouseWheel(MouseEventArgs e) { scroll = Math.Max(0, scroll - e.Delta / 3); Invalidate(); base.OnMouseWheel(e); }
