@@ -16,6 +16,8 @@ namespace Bestie
         readonly Brain brain;
         readonly Creature c;
         readonly BubbleWindow bubble = new BubbleWindow();
+        readonly LaserWindow laser = new LaserWindow();
+        double laserUntil;   // show the laser a while after it hears its name
         readonly Timer timer = new Timer();
         readonly Stopwatch clock = Stopwatch.StartNew();
         Surface surf;
@@ -66,6 +68,8 @@ namespace Bestie
             base.OnLoad(e);
             Watchdog.Start(this);
             bubble.Show();
+            laser.Show();
+            Pointer.Ignore = CreatureBox;
             c.Begin();
             try { BrowserBridge.Start(BrowserBridge.DefaultPort); }
             catch (Exception ex) { DebugLog.Write("bridge failed to start: " + ex.Message); }
@@ -123,6 +127,8 @@ namespace Bestie
 
             Render();
             bubble.Update(c);
+            Pointer.Tick();
+            laser.Update(LaserOn(), dt, (float)c.S);
             if (sessHandle != null) sessHandle.Tick(dt);
             SettleFinished();
             AnnounceFinished();
@@ -145,7 +151,7 @@ namespace Bestie
             if (wakeCheck <= 0) { wakeCheck = 5; SyncWakeWord(); }
 
             topTimer += dt;
-            if (topTimer > 3) { topTimer = 0; KeepOnTop(); bubble.KeepOnTop(); }
+            if (topTimer > 3) { topTimer = 0; KeepOnTop(); bubble.KeepOnTop(); laser.KeepOnTop(); }
             trayTimer += dt;
             if (trayTimer > 2 && tray != null)
             {
@@ -336,6 +342,22 @@ namespace Bestie
         {
             if (assistant != null) assistant.OpenChat();
             else c.Say("my talking part didn't start. check .state\\debug.log?", false, 0);
+        }
+
+        /// <summary>The creature's box on screen, in physical pixels (pointing at it isn't pointing at something).</summary>
+        Rectangle CreatureBox()
+        {
+            int w = (int)(80 * c.S), h = (int)(130 * c.S);
+            return new Rectangle((int)c.X - w, (int)c.Y - h, w * 2, h + (int)(20 * c.S));
+        }
+
+        /// <summary>The laser shows while it's listening to you (or just heard its name), so you can point while you talk.</summary>
+        bool LaserOn()
+        {
+            if (holdTalking || c.Mode == Mode.Hidden) return false;
+            bool listening = c.Mood == "listening" || c.Mood == "followup" || Clock.T < laserUntil;
+            if (!listening || (assistant != null && assistant.IsBrainDumping)) return false;
+            return !CreatureBox().Contains(Control.MousePosition);
         }
 
         /// <summary>Someone launched Bestie again (the taskbar pin, the Start menu) while it's already here: come over.</summary>
@@ -652,7 +674,7 @@ namespace Bestie
             {
                 wake = new WakeWord(this);
                 wake.Busy = () => holdTalking || assistant == null || assistant.IsBusy;
-                wake.Perked += () => { c.Glow(3); c.Squash = -0.2; };   // halo on the instant it hears its name
+                wake.Perked += () => { c.Glow(3); c.Squash = -0.2; laserUntil = Clock.T + 6; };   // halo (and the laser) the instant it hears its name
                 wake.Heard += OnWakeHeard;
                 if (!wake.Start(new[] { brain.Name }.Concat(brain.WakeNames))) { wake.Dispose(); wake = null; wakeRetryAt = Clock.T + 120; }
             }

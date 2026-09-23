@@ -135,6 +135,15 @@ namespace Bestie
         /// layout describes them, e.g. "screen 1 (primary) 1920x1080, screen 2 2560x1440".</summary>
         public static List<string> CaptureAllScreens(int maxWidth, long quality, out string layout)
         {
+            string zoom;
+            return CaptureAllScreens(maxWidth, quality, out layout, null, out zoom);
+        }
+
+        /// <summary>Same, with the laser pointer drawn in (a ring where it settled, a line where it went) and a sharp
+        /// close-up of the spot it settled on (null if it's not on any screen).</summary>
+        public static List<string> CaptureAllScreens(int maxWidth, long quality, out string layout, PointerGesture pointer, out string zoomUrl)
+        {
+            zoomUrl = null;
             var urls = new List<string>();
             var desc = new List<string>();
             Screen[] screens = Screen.AllScreens.OrderBy(s => s.Bounds.Left).ThenBy(s => s.Bounds.Top).ToArray();
@@ -143,13 +152,50 @@ namespace Bestie
                 Rectangle b = screens[i].Bounds;
                 try
                 {
-                    using (Bitmap bmp = Capture(b)) urls.Add(ToJpegDataUrl(bmp, maxWidth, quality));
+                    using (Bitmap bmp = Capture(b))
+                    {
+                        if (pointer != null && pointer.Valid && pointer.Path.Any(p => b.Contains(p)))
+                        {
+                            float k = Math.Max(1f, b.Width / 1600f);   // stays visible after the downscale
+                            if (b.Contains(pointer.Focus))
+                            {
+                                // the close-up is cut before anything is drawn over it, and only gets small ticks around the
+                                // spot, so the words under the pointer stay readable
+                                Rectangle z = Around(b, pointer.Focus, 820, 520);
+                                using (Bitmap crop = bmp.Clone(new Rectangle(z.X - b.Left, z.Y - b.Top, z.Width, z.Height), bmp.PixelFormat))
+                                {
+                                    using (Graphics g = Graphics.FromImage(crop)) Pointer.MarkSpot(g, new Point(pointer.Focus.X - z.X, pointer.Focus.Y - z.Y), k);
+                                    zoomUrl = ToJpegDataUrl(crop, 820, 82);
+                                }
+                            }
+                            using (Graphics g = Graphics.FromImage(bmp)) Pointer.Annotate(g, b, pointer, k);
+                        }
+                        urls.Add(ToJpegDataUrl(bmp, maxWidth, quality));
+                    }
                     desc.Add("screen " + urls.Count + (screens[i].Primary ? " (primary)" : "") + " " + b.Width + "x" + b.Height);
                 }
                 catch (Exception ex) { DebugLog.Write("assistant: couldn't capture screen " + (i + 1) + ": " + ex.Message); }
             }
             layout = string.Join(", ", desc.ToArray());
             return urls;
+        }
+
+        /// <summary>A w x h box centered on p, kept inside `bounds`.</summary>
+        static Rectangle Around(Rectangle bounds, Point p, int w, int h)
+        {
+            w = Math.Min(w, bounds.Width); h = Math.Min(h, bounds.Height);
+            int x = Math.Max(bounds.Left, Math.Min(bounds.Right - w, p.X - w / 2));
+            int y = Math.Max(bounds.Top, Math.Min(bounds.Bottom - h, p.Y - h / 2));
+            return new Rectangle(x, y, w, h);
+        }
+
+        /// <summary>"screen 2" (numbered left to right, like the screenshots), or null.</summary>
+        public static string ScreenNameAt(Point p)
+        {
+            Screen[] screens = Screen.AllScreens.OrderBy(s => s.Bounds.Left).ThenBy(s => s.Bounds.Top).ToArray();
+            for (int i = 0; i < screens.Length; i++)
+                if (screens[i].Bounds.Contains(p)) return "screen " + (i + 1) + (screens.Length > 1 && screens[i].Primary ? " (primary)" : "");
+            return null;
         }
 
         /// <summary>Downscale to at most maxWidth and encode as a JPEG data URL.</summary>

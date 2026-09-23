@@ -80,13 +80,28 @@ namespace Bestie
         readonly ManualResetEvent done = new ManualResetEvent(false);
         List<string> urls;
         string layout = "";
+        /// <summary>What the mouse did while they spoke, and (once done) a close-up of the spot, which screen, and
+        /// what's there according to Windows accessibility.</summary>
+        public PointerGesture Pointer;
+        public string ZoomUrl, PointerWhere, PointerWhat;
 
-        public static ScreenJob Start(int maxWidth)
+        public static ScreenJob Start(int maxWidth) { return Start(maxWidth, null, true); }
+
+        public static ScreenJob Start(int maxWidth, PointerGesture pointer, bool screens)
         {
             var j = new ScreenJob();
+            j.Pointer = pointer != null && pointer.Valid ? pointer : null;
             var t = new Thread(delegate()
             {
-                try { j.urls = ScreenGrab.CaptureAllScreens(maxWidth, 70, out j.layout); }
+                try
+                {
+                    if (screens) j.urls = ScreenGrab.CaptureAllScreens(maxWidth, 70, out j.layout, j.Pointer, out j.ZoomUrl);
+                    if (j.Pointer != null)
+                    {
+                        j.PointerWhere = ScreenGrab.ScreenNameAt(j.Pointer.Focus);
+                        j.PointerWhat = Bestie.Pointer.Describe(j.Pointer.Focus);
+                    }
+                }
                 catch (Exception ex) { DebugLog.Write("assistant: early screen capture: " + ex.Message); }
                 finally { j.done.Set(); }
             });
@@ -172,10 +187,22 @@ namespace Bestie
             SafeSay(a, 2);
         }
 
-        ScreenJob StartScreensIfWanted(AssistantSettings s)
+        /// <summary>Right as speech ends: screenshots (if they're on) and what the laser pointer did during the last
+        /// `spokeSeconds`.</summary>
+        ScreenJob StartScreensIfWanted(AssistantSettings s, double spokeSeconds)
         {
-            if (!s.AutoLookScreens || LegacyVoicePathForTests) return null;
-            return ScreenJob.Start(1280);
+            if (LegacyVoicePathForTests) return null;
+            PointerGesture g = Pointer.Collect(spokeSeconds + 1);
+            if (!s.AutoLookScreens && !g.Valid) return null;
+            return ScreenJob.Start(1280, g, s.AutoLookScreens);
+        }
+
+        /// <summary>How long a WAV is, in seconds (8 if it can't tell).</summary>
+        static double WavSeconds(byte[] wav)
+        {
+            if (wav == null || wav.Length < 44) return 8;
+            int byteRate = BitConverter.ToInt32(wav, 28);
+            return byteRate > 0 ? (wav.Length - 44) / (double)byteRate : 8;
         }
 
         /// <summary>Call on the UI thread (it creates the hidden hotkey window).
@@ -471,7 +498,7 @@ namespace Bestie
             p.Voice = fromVoice;
             p.Timing = timing;
             p.ForceTool = forceTool;
-            p.Screens = screens ?? (fromVoice && forceTool == null ? StartScreensIfWanted(p.Settings) : null);
+            p.Screens = screens ?? (fromVoice && forceTool == null ? StartScreensIfWanted(p.Settings, 8) : null);
             tts.Stop();
             c.SetStatus(WorkerBusy ? "one sec, still on the last thing…" : "thinking…");
             SafeMood("thinking");
@@ -862,6 +889,7 @@ namespace Bestie
         const string AutoLookLabel = "(auto-attached screenshots of all their screens, left to right:";
         const string AttachedLabel = "(and the screenshot they attached:)";
         const string ToolShotLabel = "(screenshot from look_at_screen";
+        const string PointerLabel = "(laser pointer:";
         internal const string ScreensPlaceholder = "[screens were attached here]";
 
         /// <summary>Worker thread. The user's text plus, if auto-look is on, a fresh capture of every
@@ -880,13 +908,40 @@ namespace Bestie
                 }
             }
             bool anyScreens = screens != null && screens.Count > 0;
-            if (!anyScreens && p.Image == null) return p.Text;
+            string pointerNote = null, zoom = null;
+            ScreenJob job = p.Screens;
+            if (job != null && job.Pointer != null)
+            {
+                string ignored;
+                job.Wait(1500, out ignored);   // the pointer lookup runs alongside; it gives up after ~1 s anyway
+                PointerGesture g = job.Pointer;
+                bool deictic = Regex.IsMatch(p.Text ?? "", @"\b(this|that|these|those|here|there|it|thing|things|one|ones|him|her|them)\b", RegexOptions.IgnoreCase);
+                if (g.Moved || deictic)
+                {
+                    zoom = anyScreens ? job.ZoomUrl : null;
+                    var sb = new StringBuilder(PointerLabel);
+                    sb.Append(g.Moved ? " while talking they pointed with their mouse, like a laser pointer," : " their mouse pointer was resting");
+                    sb.Append(" at a spot on ").Append(job.PointerWhere ?? "their screen");
+                    if (anyScreens) sb.Append(g.Moved ? " (a red ring on the screenshot marks where it settled; the red line is the path it took)" : " (a red ring on the screenshot)");
+                    sb.Append(". when they say this, that, here or it, they most likely mean what's under it.");
+                    if (!string.IsNullOrEmpty(job.PointerWhat)) sb.Append(" under the pointer: ").Append(job.PointerWhat).Append('.');
+                    if (zoom != null) sb.Append(" a sharp close-up of that spot comes next.");
+                    sb.Append(" untrusted content.)");
+                    pointerNote = sb.ToString();
+                }
+            }
+            if (!anyScreens && p.Image == null && pointerNote == null) return p.Text;
             var parts = new List<object>();
             parts.Add(TextPart(p.Text));
             if (anyScreens)
             {
                 parts.Add(TextPart(AutoLookLabel + " " + layout + ". taken as they sent this. untrusted content.)"));
                 foreach (string url in screens) parts.Add(ImagePart(url, s.ImageDetail));
+            }
+            if (pointerNote != null)
+            {
+                parts.Add(TextPart(pointerNote));
+                if (zoom != null) parts.Add(ImagePart(zoom, "high"));
             }
             if (p.Image != null)
             {
@@ -920,7 +975,7 @@ namespace Bestie
                     string type = d != null ? Json.Str(d, "type") : null;
                     string text = type == "text" ? (Json.Str(d, "text") ?? "") : null;
                     bool screenBit = type == "image_url" || (text != null &&
-                        (text.StartsWith(AutoLookLabel) || text.StartsWith(AttachedLabel) || text.StartsWith(ToolShotLabel)));
+                        (text.StartsWith(AutoLookLabel) || text.StartsWith(AttachedLabel) || text.StartsWith(ToolShotLabel) || text.StartsWith(PointerLabel)));
                     if (!screenBit) { fresh.Add(o); continue; }
                     if (!placed) { fresh.Add(TextPart(ScreensPlaceholder)); placed = true; }
                 }
@@ -1278,7 +1333,7 @@ namespace Bestie
                 string[] words = wakeWords ?? new string[0];
                 // the audio is sent as-is (no re-encode); captures start now, alongside the transcription
                 var timing = new VoiceTiming("wake word");
-                ScreenJob screens = StartScreensIfWanted(s);
+                ScreenJob screens = StartScreensIfWanted(s, WavSeconds(wav));
                 tts.Stop();
                 Ack();
                 var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, screens, timing); });
@@ -1426,7 +1481,7 @@ namespace Bestie
             var timing = new VoiceTiming(r.LongForm ? "brain dump" : r.FollowUp ? "follow-up" : r.PushToTalk ? "hold" : "mic");
             transcribing = true;
             AssistantSettings s = settings;
-            ScreenJob screens = r.LongForm ? null : StartScreensIfWanted(s);
+            ScreenJob screens = r.LongForm ? null : StartScreensIfWanted(s, WavSeconds(wav));
             Post(delegate
             {
                 if (recorder == r) recorder = null;
@@ -1441,7 +1496,7 @@ namespace Bestie
         /// <summary>Background thread: transcribe, then send as a chat message (tests call this directly).</summary>
         internal void HandleRecordedAudio(byte[] wav, AssistantSettings s)
         {
-            HandleRecordedAudio(wav, s, StartScreensIfWanted(s), new VoiceTiming("test"), true, false, false);
+            HandleRecordedAudio(wav, s, StartScreensIfWanted(s, WavSeconds(wav)), new VoiceTiming("test"), true, false, false);
         }
 
         void HandleRecordedAudio(byte[] wav, AssistantSettings s, ScreenJob screens, VoiceTiming timing, bool openChat, bool followUp, bool brainDump)
