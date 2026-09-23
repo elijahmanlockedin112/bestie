@@ -1,0 +1,242 @@
+// AssistantSettings.cs - the assistant's settings (.state\settings.json). C# 5 only.
+// The OpenAI key is stored with DPAPI (CurrentUser) as base64, never as plaintext.
+// Falls back to the OPENAI_API_KEY environment variable when nothing is saved.
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
+using System.Text;
+
+namespace Bestie
+{
+    public sealed class AssistantSettings
+    {
+        // Defaults picked in Sep 2026 (developers.openai.com/api/docs/models + /pricing):
+        //  - gpt-6-luna: OpenAI's cheapest current tier ($0.10 in / $0.50 out per 1M), text+image in,
+        //    function calling. In Chat Completions it only does function calling with
+        //    reasoning_effort "none", which is also the fastest, so that's the default effort.
+        //  - gpt-transcribe: the recommended /audio/transcriptions model (~$0.0045/min).
+        //  - gpt-4o-mini-tts: the current steerable TTS model (takes `instructions`; $0.60/1M text in,
+        //    $12/1M audio out, roughly $0.015/min), cheaper per character than tts-1 ($15/1M chars).
+        public const string DefaultModel = "gpt-6-luna";
+        public const string DefaultTtsModel = "gpt-4o-mini-tts";
+        public const string DefaultOpenAiVoice = "ballad";
+        public const string DefaultReasoningEffort = "none";
+        public const string DefaultTranscribeModel = "gpt-transcribe";
+        public const string DefaultBaseUrl = "https://api.openai.com/v1";
+        public const string DefaultHotkeyChat = "Ctrl+Alt+B";
+        public const string DefaultHotkeyVoice = "Ctrl+Alt+V";
+
+        public static readonly string[] SuggestedModels = new string[] {
+            "gpt-6-luna", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
+        public static readonly string[] SuggestedTranscribeModels = new string[] {
+            "gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1" };
+        public static readonly string[] SuggestedTtsModels = new string[] { "gpt-4o-mini-tts", "tts-1", "tts-1-hd" };
+        // built-in /audio/speech voices (Sep 2026). quirky ones first.
+        public static readonly string[] OpenAiVoices = new string[] {
+            "ballad", "sage", "fable", "verse", "coral", "marin", "cedar", "alloy", "ash", "echo", "nova", "onyx", "shimmer" };
+        // "" means: don't send reasoning_effort at all.
+        public static readonly string[] ReasoningChoices = new string[] { "none", "minimal", "low", "medium", "high", "" };
+
+        static readonly byte[] Entropy = Encoding.UTF8.GetBytes("bestie/brain-key/v1");
+
+        public string ProtectedKey = "";        // DPAPI(CurrentUser) + base64
+        public string Model = DefaultModel;
+        public string ReasoningEffort = DefaultReasoningEffort;
+        public string TranscribeModel = DefaultTranscribeModel;
+        public string BaseUrl = DefaultBaseUrl;
+        public bool SpeakReplies = true;
+        public string VoiceEngine = "openai";   // "openai" (needs a key) | "windows" (System.Speech, free)
+        public string TtsModel = DefaultTtsModel;
+        public string OpenAiVoice = DefaultOpenAiVoice;
+        public string TtsVoice = "";            // installed SAPI voice name, "" = system default
+        public int TtsRate = 0;                 // -10..10 (windows voice)
+        public bool AutoLookScreens = true;     // attach every monitor to every message
+        public bool BeNosy = true;              // occasional peek + one remark (the creature schedules it)
+        public int NosyMinutes = 20;            // "about every N minutes"
+        public bool SpeakNosy = false;          // say peek remarks out loud (also needs SpeakReplies)
+        public string NosySkipList = DefaultNosySkipList;
+
+        public const string DefaultNosySkipList =
+            "1password, bitwarden, keepass, lastpass, dashlane, inprivate, incognito, private browsing, bank, banking, paypal, venmo, " +
+            "sign in, log in, login, password, checkout, payment, tax, medical, health";
+        public string HotkeyChat = DefaultHotkeyChat;
+        public string HotkeyVoice = DefaultHotkeyVoice;
+        public string HotkeyScreen = "";        // "" = off
+        public bool AllowScreenTool = true;
+        public bool AllowTabReading = true;
+        public int MaxHistoryMessages = 24;
+        public int MaxReplyTokens = 1200;
+        public string ImageDetail = "low";      // low | high | auto
+
+        string cachedKey;
+        bool cachedKeyValid;
+
+        public static string FilePath { get { return Home.State("settings.json"); } }
+
+        public static AssistantSettings Load()
+        {
+            var s = new AssistantSettings();
+            try
+            {
+                string path = FilePath;
+                if (!File.Exists(path)) return s;
+                Dictionary<string, object> d = Json.Obj(File.ReadAllText(path, Encoding.UTF8));
+                if (d == null) return s;
+                s.ProtectedKey = Json.Str(d, "apiKeyProtected") ?? "";
+                s.Model = NonEmpty(Json.Str(d, "model"), DefaultModel);
+                string effort = Json.Str(d, "reasoningEffort");
+                s.ReasoningEffort = effort == null ? DefaultReasoningEffort : effort.Trim();
+                s.TranscribeModel = NonEmpty(Json.Str(d, "transcribeModel"), DefaultTranscribeModel);
+                s.BaseUrl = NonEmpty(Json.Str(d, "baseUrl"), DefaultBaseUrl);
+                s.SpeakReplies = Json.Bool(d, "speakReplies", true);
+                s.VoiceEngine = (Json.Str(d, "voiceEngine") ?? "openai").Trim().ToLowerInvariant() == "windows" ? "windows" : "openai";
+                s.TtsModel = NonEmpty(Json.Str(d, "ttsModel"), DefaultTtsModel);
+                s.OpenAiVoice = NonEmpty(Json.Str(d, "openaiVoice"), DefaultOpenAiVoice);
+                s.AutoLookScreens = Json.Bool(d, "autoLookScreens", true);
+                s.BeNosy = Json.Bool(d, "beNosy", true);
+                s.NosyMinutes = Clamp((int)Json.Num(d, "nosyMinutes", 20), 5, 24 * 60);
+                s.SpeakNosy = Json.Bool(d, "speakNosy", false);
+                s.NosySkipList = Json.Str(d, "nosySkipList") ?? DefaultNosySkipList;
+                s.TtsVoice = Json.Str(d, "ttsVoice") ?? "";
+                s.TtsRate = Clamp((int)Json.Num(d, "ttsRate", 0), -10, 10);
+                string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
+                hk = Json.Str(d, "hotkeyVoice"); s.HotkeyVoice = hk == null ? DefaultHotkeyVoice : hk.Trim();
+                hk = Json.Str(d, "hotkeyScreen"); s.HotkeyScreen = hk == null ? "" : hk.Trim();
+                s.AllowScreenTool = Json.Bool(d, "allowScreenTool", true);
+                s.AllowTabReading = Json.Bool(d, "allowTabReading", true);
+                s.MaxHistoryMessages = Clamp((int)Json.Num(d, "maxHistoryMessages", 24), 4, 200);
+                s.MaxReplyTokens = Clamp((int)Json.Num(d, "maxReplyTokens", 1200), 64, 32000);
+                s.ImageDetail = NonEmpty(Json.Str(d, "imageDetail"), "low");
+            }
+            catch (Exception ex) { DebugLog.Write("assistant: settings load failed: " + ex.Message); }
+            return s;
+        }
+
+        public void Save()
+        {
+            var d = new Dictionary<string, object>();
+            d["apiKeyProtected"] = ProtectedKey ?? "";
+            d["model"] = Model ?? DefaultModel;
+            d["reasoningEffort"] = ReasoningEffort ?? "";
+            d["transcribeModel"] = TranscribeModel ?? DefaultTranscribeModel;
+            d["baseUrl"] = BaseUrl ?? DefaultBaseUrl;
+            d["speakReplies"] = SpeakReplies;
+            d["voiceEngine"] = VoiceEngine == "windows" ? "windows" : "openai";
+            d["ttsModel"] = TtsModel ?? DefaultTtsModel;
+            d["openaiVoice"] = OpenAiVoice ?? DefaultOpenAiVoice;
+            d["autoLookScreens"] = AutoLookScreens;
+            d["beNosy"] = BeNosy;
+            d["nosyMinutes"] = NosyMinutes;
+            d["speakNosy"] = SpeakNosy;
+            d["nosySkipList"] = NosySkipList ?? "";
+            d["ttsVoice"] = TtsVoice ?? "";
+            d["ttsRate"] = TtsRate;
+            d["hotkeyChat"] = HotkeyChat ?? "";
+            d["hotkeyVoice"] = HotkeyVoice ?? "";
+            d["hotkeyScreen"] = HotkeyScreen ?? "";
+            d["allowScreenTool"] = AllowScreenTool;
+            d["allowTabReading"] = AllowTabReading;
+            d["maxHistoryMessages"] = MaxHistoryMessages;
+            d["maxReplyTokens"] = MaxReplyTokens;
+            d["imageDetail"] = ImageDetail ?? "low";
+            string path = FilePath;
+            string tmp = path + ".tmp";
+            File.WriteAllText(tmp, Json.Write(d).Replace(",\"", ",\r\n  \"").Replace("{\"", "{\r\n  \"").TrimEnd('}') + "\r\n}\r\n",
+                new UTF8Encoding(false));
+            try
+            {
+                if (File.Exists(path)) File.Replace(tmp, path, null);
+                else File.Move(tmp, path);
+            }
+            catch
+            {
+                if (File.Exists(path)) File.Delete(path);
+                File.Move(tmp, path);
+            }
+        }
+
+        public AssistantSettings Clone() { return (AssistantSettings)MemberwiseClone(); }
+
+        // ------------------------------------------------------------------ the key
+
+        /// <summary>The key saved in settings (decrypted), or "".</summary>
+        public string SavedKey
+        {
+            get
+            {
+                if (!cachedKeyValid) { cachedKey = Unprotect(ProtectedKey); cachedKeyValid = true; }
+                return cachedKey ?? "";
+            }
+        }
+
+        /// <summary>The key to use: saved key, else OPENAI_API_KEY, else "".</summary>
+        public string ApiKey { get { string k = SavedKey; return k.Length > 0 ? k : EnvKey; } }
+
+        public bool HasKey { get { return ApiKey.Length > 0; } }
+
+        /// <summary>OpenAI voice if chosen and a key exists; otherwise the free windows voice.</summary>
+        public bool UseOpenAiVoice { get { return VoiceEngine != "windows" && HasKey; } }
+
+        /// <summary>"saved", "env" or "".</summary>
+        public string KeySource { get { if (SavedKey.Length > 0) return "saved"; if (EnvKey.Length > 0) return "env"; return ""; } }
+
+        /// <summary>Store a key (encrypted). Empty clears it.</summary>
+        public void SetKey(string key)
+        {
+            key = CleanKey(key);
+            ProtectedKey = key.Length == 0 ? "" : Protect(key);
+            cachedKey = key;
+            cachedKeyValid = true;
+        }
+
+        public static string CleanKey(string key)
+        {
+            if (key == null) return "";
+            key = key.Trim().Trim('"', '\'', '`').Trim();
+            if (key.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) key = key.Substring(7).Trim();
+            var sb = new StringBuilder(key.Length);
+            foreach (char c in key) if (!char.IsWhiteSpace(c) && !char.IsControl(c)) sb.Append(c);
+            return sb.ToString();
+        }
+
+        public static string EnvKey
+        {
+            get
+            {
+                string k = null;
+                try
+                {
+                    k = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+                    if (string.IsNullOrEmpty(k)) k = Environment.GetEnvironmentVariable("OPENAI_API_KEY", EnvironmentVariableTarget.User);
+                }
+                catch { }
+                return CleanKey(k);
+            }
+        }
+
+        public static string Protect(string plain)
+        {
+            byte[] enc = ProtectedData.Protect(Encoding.UTF8.GetBytes(plain), Entropy, DataProtectionScope.CurrentUser);
+            return Convert.ToBase64String(enc);
+        }
+
+        public static string Unprotect(string b64)
+        {
+            if (string.IsNullOrEmpty(b64)) return "";
+            try
+            {
+                byte[] plain = ProtectedData.Unprotect(Convert.FromBase64String(b64), Entropy, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(plain);
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Write("assistant: couldn't decrypt the saved key (" + ex.GetType().Name + "); ignoring it");
+                return "";
+            }
+        }
+
+        static string NonEmpty(string v, string fallback) { return string.IsNullOrEmpty(v) || v.Trim().Length == 0 ? fallback : v.Trim(); }
+        static int Clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
+    }
+}

@@ -1,0 +1,7 @@
+﻿# build output (build.cmd makes these)
+Bestie.exe
+bestie.ico
+*.pdb
+
+# local test scratch (harnesses, screenshots)
+.scratch/
