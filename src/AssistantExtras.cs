@@ -14,6 +14,10 @@ namespace Bestie
     {
         void AddExtraTools(List<object> t, bool browser, bool calendarConnected)
         {
+            t.Add(Tool("start_brain_dump", "they want to vent or empty their head (\"brain dump\", \"i need to get this out\") but haven't said it yet: "
+                + "after your reply you listen for up to 8 minutes, then it's organized into a notes page automatically.", R()));
+            t.Add(Tool("organize_brain_dump", "their latest message is a long, messy dump of thoughts, stress or tasks (or they ask you to organize what they just said): "
+                + "sort it into a beautiful notes page (to-dos, what's on their mind, ideas, questions, dates) and open it. uses their exact words; no arguments.", R()));
             t.Add(Tool("todo_list", "show the user's to-do list (numbered).", R()));
             t.Add(Tool("todo_add", "add one or more things to their to-do list.", R("items"),
                 P("items", "string", "the thing to add; several can be separated by newlines")));

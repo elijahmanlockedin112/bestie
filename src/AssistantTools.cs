@@ -177,6 +177,11 @@ namespace Bestie
                     case "list_ai_sessions": return ListAiSessions();
                     case "focus_ai_session": return FocusAiSession(a);
                     case "new_ai_chat": return NewAiChat(a, ctx);
+                    case "organize_brain_dump": return OrganizeBrainDump(s, ctx);
+                    case "start_brain_dump":
+                        module.QueueBrainDump();
+                        return new AssistantToolResult("ok: as soon as your reply finishes, i start listening for up to 8 minutes. reply with ONE short line "
+                            + "telling them to go ahead and let it all out, take their time, and click you (or just go quiet) when they're done.");
                     case "calendar_list_events":
                     case "calendar_create_event":
                     case "calendar_update_event":

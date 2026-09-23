@@ -152,6 +152,7 @@ namespace Bestie
             public bool Voice;            // spoken: lighter screens, reasoning "none", timing log
             public ScreenJob Screens;     // captures started when speech ended (in parallel with transcription)
             public VoiceTiming Timing;
+            public string ForceTool;      // the first round must call this tool (a brain dump goes straight to the organizer)
         }
 
         // tests: run a voice turn the old way (no streaming, no early capture) to compare timings
@@ -203,8 +204,11 @@ namespace Bestie
                 if (vt != null) vt.Finish(null);
                 if (disposed) return;
                 SafeMood(WorkerBusy ? "thinking" : "idle");
-                // they were talking to me: give them a moment to answer back. otherwise, anything waiting to be said
-                if (vt != null) RunOnUi(StartFollowUp); else RunOnUi(NextAnnouncement);
+                // a brain dump was asked for: listen now. they were talking to me: give them a moment to answer back.
+                // otherwise, anything waiting to be said
+                if (brainDumpNext) RunOnUi(StartBrainDumpRecording);
+                else if (vt != null) RunOnUi(StartFollowUp);
+                else RunOnUi(NextAnnouncement);
             };
             reminders = new AssistantReminders(Home.State("reminders.json"), OnReminderDue);
             calendar = new AssistantCalendar();
@@ -415,6 +419,21 @@ namespace Bestie
 
         internal void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing)
         {
+            SubmitUserMessage(text, fromVoice, screens, timing, null);
+        }
+
+        static Dictionary<string, object> ForcedTool(string name)
+        {
+            var fn = new Dictionary<string, object>();
+            fn["name"] = name;
+            var d = new Dictionary<string, object>();
+            d["type"] = "function";
+            d["function"] = fn;
+            return d;
+        }
+
+        void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing, string forceTool)
+        {
             if (disposed) return;
             text = (text ?? "").Trim();
             string image = pendingImage;
@@ -451,7 +470,8 @@ namespace Bestie
             p.Settings = settings.Clone();
             p.Voice = fromVoice;
             p.Timing = timing;
-            p.Screens = screens ?? (fromVoice ? StartScreensIfWanted(p.Settings) : null);
+            p.ForceTool = forceTool;
+            p.Screens = screens ?? (fromVoice && forceTool == null ? StartScreensIfWanted(p.Settings) : null);
             tts.Stop();
             c.SetStatus(WorkerBusy ? "one sec, still on the last thing…" : "thinking…");
             SafeMood("thinking");
@@ -571,7 +591,7 @@ namespace Bestie
                     if (toolDefs.Count > 0)
                     {
                         body["tools"] = toolDefs;
-                        body["tool_choice"] = last ? "none" : "auto";
+                        body["tool_choice"] = last ? (object)"none" : round == 0 && p.ForceTool != null ? (object)ForcedTool(p.ForceTool) : "auto";
                     }
                     body["max_completion_tokens"] = s.MaxReplyTokens;
                     if (!string.IsNullOrEmpty(effort)) body["reasoning_effort"] = effort;
@@ -952,6 +972,7 @@ namespace Bestie
                 sb.Append("- google calendar isn't connected, but you can still add events (calendar_create_event saves it through google calendar in their browser) and read their schedule (calendar_list_events reads the agenda page). if they want you to always see it, tell them to right-click you → \"let me see my calendar\" (they paste their calendar's secret iCal link; 30 seconds). say the exact day, date and time when you add something.\n");
             if (bridge != null)
                 sb.Append("- you can work in any browser tab, even ones they're not looking at: list_tabs → find_in_tab (links/buttons/fields with refs) → click_in_tab / type_in_tab / scroll_tab, plus navigate_tab and tab_action. risky clicks and submits pop up a yes/no for them. never type passwords or payment details.\n");
+            sb.Append("- brain dumps: when they want to vent or get everything out of their head, call start_brain_dump. if their message already is a long, messy dump, call organize_brain_dump. afterwards, offer to put the to-dos on their list.\n");
             sb.Append("- they have a to-do list (todo_* tools) and desktop widgets (show_widget / hide_widget: to-do, calendar, now playing, sticky notes). use them when they ask to add, finish or see things, or want something pinned on their desktop.\n");
             sb.Append("- you can list their claude and chatgpt sessions, bring one to the front, or open a new chat.\n")
               .Append("SAFETY (always)\n")
@@ -1008,6 +1029,7 @@ namespace Bestie
                 SafeMood(more ? "thinking" : "idle");
                 if (timing != null) timing.Finish("not spoken");
             }
+            if (!more && brainDumpNext && !tts.Speaking) StartBrainDumpRecording();
         }
 
         /// <summary>UI thread: say something went wrong, in the creature's voice.</summary>
@@ -1129,6 +1151,64 @@ namespace Bestie
             recorder = r;
             OpenAIClient.Prewarm(s.BaseUrl, s.ApiKey, s.Model);
             SafeMood("followup");
+        }
+
+        // ------------------------------------------------------------------ brain dumps
+
+        volatile bool brainDumpNext;   // start listening for a brain dump once it's done talking
+        const string BrainDumpPrefix = "(brain dump) ";
+
+        /// <summary>True while it's recording a brain dump.</summary>
+        public bool IsBrainDumping { get { VoiceRecorder r = recorder; return r != null && r.LongForm && r.IsRecording; } }
+
+        /// <summary>Worker thread (the start_brain_dump tool): listen as soon as the reply has been said.</summary>
+        internal void QueueBrainDump() { brainDumpNext = true; }
+
+        /// <summary>The menu's "brain dump": say go, then listen for up to 8 minutes. Pressed again while it's
+        /// listening: that's everything, organize it. Any thread.</summary>
+        public void StartBrainDump()
+        {
+            RunOnUi(delegate
+            {
+                if (disposed) return;
+                if (!settings.HasKey) { SafeSay(NoKeyLine, 0); return; }
+                if (recorder != null && recorder.LongForm) { if (recorder.IsRecording) recorder.RequestStop(); return; }
+                if (recorder != null && recorder.FollowUp) { recorder.Abort(); recorder = null; }
+                if (recorder != null || transcribing) return;
+                string line = Rng.Pick("go. empty your head. i'll sort it out.", "ok. say all of it. i'm listening.", "go ahead. all of it. take your time.");
+                brainDumpNext = true;
+                SafeSay(line, 0);
+                if (settings.SpeakReplies) tts.Speak(Speakable(line), settings);   // listening starts when it's done saying that
+                if (!tts.Speaking) StartBrainDumpRecording();
+            });
+        }
+
+        /// <summary>UI thread.</summary>
+        void StartBrainDumpRecording()
+        {
+            brainDumpNext = false;
+            AssistantSettings s = settings;
+            if (disposed || !s.HasKey || recorder != null || transcribing) return;
+            var r = new VoiceRecorder();
+            r.LongForm = true;
+            r.Finished += OnRecorderFinished;
+            string err;
+            if (!r.Start(out err)) { ShowProblem(err ?? "i couldn't open the microphone."); return; }
+            recorder = r;
+            SafeMood("listening");
+            SafeSay("i'm listening. take your time. (click me when you're done.)", VoiceRecorder.LongFormMaxMs / 1000.0);
+            SetChatStatus("listening to your brain dump… click the creature or go quiet to finish");
+            DebugLog.Write("assistant: brain dump started");
+        }
+
+        /// <summary>UI thread: the whole dump, transcribed. It goes to the model with the organizer forced, so the
+        /// reply (and any "yes, put those on my list") stays in the conversation.</summary>
+        void SubmitBrainDump(string text, VoiceTiming timing)
+        {
+            text = (text ?? "").Trim();
+            if (text.Length == 0) { ShowProblem("i didn't catch any of that. try again?"); return; }
+            SafeSay(Rng.Pick("got all of it. sorting…", "ok. untangling…", "got it. folding it up neatly…"), 0);
+            SubmitUserMessage(BrainDumpPrefix + text, true, null, timing, "organize_brain_dump");
         }
 
         /// <summary>Close the listen-for-an-answer window now, if it's open (they're talking to something else). Any thread.</summary>
@@ -1343,10 +1423,10 @@ namespace Bestie
                 return;
             }
             // speech just ended: say "hm." right away, start the screen captures in parallel with transcription
-            var timing = new VoiceTiming(r.FollowUp ? "follow-up" : r.PushToTalk ? "hold" : "mic");
+            var timing = new VoiceTiming(r.LongForm ? "brain dump" : r.FollowUp ? "follow-up" : r.PushToTalk ? "hold" : "mic");
             transcribing = true;
             AssistantSettings s = settings;
-            ScreenJob screens = StartScreensIfWanted(s);
+            ScreenJob screens = r.LongForm ? null : StartScreensIfWanted(s);
             Post(delegate
             {
                 if (recorder == r) recorder = null;
@@ -1355,21 +1435,21 @@ namespace Bestie
                 SafeMood("thinking");
                 Ack();
             });
-            HandleRecordedAudio(wav, s, screens, timing, !r.FollowUp, r.FollowUp);
+            HandleRecordedAudio(wav, s, screens, timing, !r.FollowUp && !r.LongForm, r.FollowUp, r.LongForm);
         }
 
         /// <summary>Background thread: transcribe, then send as a chat message (tests call this directly).</summary>
         internal void HandleRecordedAudio(byte[] wav, AssistantSettings s)
         {
-            HandleRecordedAudio(wav, s, StartScreensIfWanted(s), new VoiceTiming("test"), true, false);
+            HandleRecordedAudio(wav, s, StartScreensIfWanted(s), new VoiceTiming("test"), true, false, false);
         }
 
-        void HandleRecordedAudio(byte[] wav, AssistantSettings s, ScreenJob screens, VoiceTiming timing, bool openChat, bool followUp)
+        void HandleRecordedAudio(byte[] wav, AssistantSettings s, ScreenJob screens, VoiceTiming timing, bool openChat, bool followUp, bool brainDump)
         {
             transcribing = true;
             try
             {
-                string text = TranscribeAudio(wav, s);
+                string text = TranscribeAudio(wav, s, brainDump ? 240000 : TranscribeTimeoutMs);
                 timing.Mark("transcript");
                 if (followUp && NoiseTranscript(text))
                 {
@@ -1386,6 +1466,7 @@ namespace Bestie
                     return;
                 }
                 transcribing = false;
+                if (brainDump) { Post(delegate { SubmitBrainDump(text, timing); }); return; }
                 Post(delegate { if (openChat) OpenChatCore(); SubmitUserMessage(text, true, screens, timing); });
             }
             catch (OpenAIException ex)
@@ -1408,21 +1489,23 @@ namespace Bestie
             return t.Length < 2 || t == "you" || t == "thanks for watching" || t == "thank you for watching" || t == "bye";
         }
 
-        string TranscribeAudio(byte[] wav, AssistantSettings s)
+        string TranscribeAudio(byte[] wav, AssistantSettings s) { return TranscribeAudio(wav, s, TranscribeTimeoutMs); }
+
+        string TranscribeAudio(byte[] wav, AssistantSettings s, int timeoutMs)
         {
             var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
             activeClient = client;
             string model = string.IsNullOrEmpty(s.TranscribeModel) ? AssistantSettings.DefaultTranscribeModel : s.TranscribeModel;
             try
             {
-                return client.Transcribe(wav, "speech.wav", "audio/wav", model, TranscribeTimeoutMs);
+                return client.Transcribe(wav, "speech.wav", "audio/wav", model, timeoutMs);
             }
             catch (OpenAIException ex)
             {
                 bool modelProblem = ex.Status == 404 || (ex.Status == 400 && (ex.ApiMessage ?? "").ToLowerInvariant().Contains("model"));
                 if (!modelProblem || model == "whisper-1") throw;
                 DebugLog.Write("assistant: transcription model " + model + " refused (" + ex.Message + "), trying whisper-1");
-                return client.Transcribe(wav, "speech.wav", "audio/wav", "whisper-1", TranscribeTimeoutMs);
+                return client.Transcribe(wav, "speech.wav", "audio/wav", "whisper-1", timeoutMs);
             }
             finally { if (activeClient == client) activeClient = null; }
         }

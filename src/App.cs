@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem;
         double calendarCheck = 20;
         int calendarChecking;
         AssistantModule assistant;
@@ -242,6 +242,7 @@ namespace Bestie
                 try { if (assistant != null && assistant.IsListening) assistant.StopListening(send); } catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
             }
             else if (dragging) c.Release();
+            else if (send && assistant != null && assistant.IsBrainDumping) assistant.StopListening(true);   // a click while it listens to a brain dump: that's everything
             else if (send) c.Pet();
             mouseDown = dragging = holdTalking = false;
         }
@@ -274,6 +275,8 @@ namespace Bestie
             Add("talk to " + brain.Name + "…", "Ctrl+Alt+B", OpenChat);
             Add("say it out loud", "Ctrl+Alt+V", () => { if (assistant != null) assistant.ToggleVoice(); });
             Add("look at my screen & ask…", null, () => { if (assistant != null) assistant.ShareScreenAndAsk(); });
+            brainDumpItem = Add("brain dump…", null, () => { if (assistant != null) assistant.StartBrainDump(); });
+            Add("my brain dumps", null, OpenBrainDumps);
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
             menu.Items.Add(WidgetsMenu());
@@ -297,6 +300,7 @@ namespace Bestie
                 calendarItem.Text = cals == 0 ? "let me see my calendar…" : "add another calendar… (" + cals + " connected)";
                 forgetCalendarsItem.Visible = cals > 0;
                 napItem.Text = c.Pose == Pose.Lie ? "wake up" : "take a nap";
+                brainDumpItem.Text = assistant != null && assistant.IsBrainDumping ? "that's everything (organize it)" : "brain dump…";
                 startupItem.Checked = StartsWithWindows();
             };
         }
@@ -332,6 +336,16 @@ namespace Bestie
         {
             if (assistant != null) assistant.OpenChat();
             else c.Say("my talking part didn't start. check .state\\debug.log?", false, 0);
+        }
+
+        void OpenBrainDumps()
+        {
+            try
+            {
+                BrainDump.WriteIndex();
+                Process.Start(new ProcessStartInfo(BrainDump.IndexPath) { UseShellExecute = true });
+            }
+            catch (Exception ex) { DebugLog.Write("brain dumps: " + ex.Message); c.Say("couldn't open them. they're in my folder, under notes\\brain dumps.", false, 0); }
         }
 
         void OpenDiary()

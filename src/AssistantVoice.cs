@@ -566,6 +566,9 @@ namespace Bestie
         public bool FollowUp;
         /// <summary>If &gt; 0: give up after this long without speech (instead of the usual 8 s).</summary>
         public int NoSpeechMs;
+        /// <summary>A brain dump: minutes long, and pauses to think don't end it.</summary>
+        public bool LongForm;
+        public const int LongFormMaxMs = 8 * 60 * 1000;
         IntPtr handle;
         IntPtr[] headers, buffers;
         int hdrSize, flagsOffset, bytesOffset;
@@ -646,6 +649,7 @@ namespace Bestie
             var pcm = new MemoryStream();
             var vad = VoiceActivity.Create(PushToTalk);
             if (NoSpeechMs > 0) vad.NoSpeechGiveUpMs = NoSpeechMs;
+            if (LongForm) { vad.SilenceStopMs = 7000; vad.NoSpeechGiveUpMs = 20000; vad.MaxMs = LongFormMaxMs; }
             var chunk = new byte[BufferBytes];
             string reason = "stopped", error = null;
             int next = 0;
