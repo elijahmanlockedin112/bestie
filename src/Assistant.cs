@@ -109,13 +109,15 @@ namespace Bestie
         const int MaxToolRounds = 6;
         const int ChatTimeoutMs = 90000;
         const int TranscribeTimeoutMs = 60000;
-        const int MemoryPromptChars = 6000;
+        const int MemoryPromptChars = 12000;
         internal const string NoKeyLine ="i don't have a brain key yet. paste an openai key in settings and i'll get smarter. it stays on this computer.";
 
         readonly ICreatureHost host;
         readonly Control ui;
         readonly AssistantTools tools;
         readonly AssistantReminders reminders;
+        readonly Queue<string> announcements = new Queue<string>();   // UI thread only
+        const int FollowUpMs = 4000;   // how long it waits for an answer after speaking
         readonly AssistantSpeaker tts;
         readonly AssistantCalendar calendar;
         readonly List<ManualResetEvent> openAsks = new List<ManualResetEvent>();
@@ -199,7 +201,10 @@ namespace Bestie
                 VoiceTiming vt = speechTiming;
                 speechTiming = null;
                 if (vt != null) vt.Finish(null);
-                if (!disposed) SafeMood(WorkerBusy ? "thinking" : "idle");
+                if (disposed) return;
+                SafeMood(WorkerBusy ? "thinking" : "idle");
+                // they were talking to me: give them a moment to answer back. otherwise, anything waiting to be said
+                if (vt != null) RunOnUi(StartFollowUp); else RunOnUi(NextAnnouncement);
             };
             reminders = new AssistantReminders(Home.State("reminders.json"), OnReminderDue);
             calendar = new AssistantCalendar();
@@ -932,7 +937,7 @@ namespace Bestie
             sb.Append(Personality.Prompt(name).TrimEnd()).Append("\n\n");
             sb.Append("HOW YOU WORK\n")
               .Append("- you're also their personal assistant. use tools instead of guessing. after doing something, say briefly what you did.\n")
-              .Append("- when they share a lasting fact or preference about themselves (name, people, pets, work, likes, routines, plans), call remember on your own with a short fact. never remember passwords, keys or card numbers.\n");
+              .Append("- your memory is how you get to know them, and it's still thin, so be generous with it. whenever you learn anything about them (name, people, pets, school, classes, clubs, projects, deadlines and events, what they're into, music, games, shows, routines, opinions, how they like answers), call remember right away without asking, once per fact, several times if there are several. a dated near-term fact is fine (\"has a robotics competition sat 2026-10-03\"). use write_note for longer things (plans, lists, ideas they're working on). never remember passwords, keys or card numbers.\n");
             if (s.AutoLookScreens)
                 sb.Append("- each of their messages arrives with fresh low-res screenshots of all their screens (they turned this on so you can see what they mean). use them when relevant; don't narrate them unless it helps. look_at_screen gets a fresh look mid-task.\n");
             else
@@ -1086,6 +1091,7 @@ namespace Bestie
         /// <summary>UI thread. Opens the mic; never opens or focuses the chat window.</summary>
         void StartRecording(bool pushToTalk)
         {
+            if (recorder != null && recorder.FollowUp) { recorder.Abort(); recorder = null; }   // they chose to talk properly
             if (disposed || recorder != null || transcribing) return;
             if (!settings.HasKey) { SafeSay(NoKeyLine, 0); return; }
             RememberUserWindow();
@@ -1105,6 +1111,55 @@ namespace Bestie
             if (chat != null && !chat.IsDisposed) chat.SetListening(true);
             SetChatStatus(pushToTalk ? "listening… let go when you're done" : "listening… press 🎤 again to stop");
             if (chat == null || chat.IsDisposed || !chat.Visible) SafeSay("i'm listening…", pushToTalk ? 1.5 : 2.5);
+        }
+
+        /// <summary>Right after a spoken answer to something they said: keep listening a few seconds so they can
+        /// answer back without the wake word. Silence closes it quietly. UI thread.</summary>
+        void StartFollowUp()
+        {
+            AssistantSettings s = settings;
+            if (disposed || !s.FollowUp || !s.HasKey || recorder != null || transcribing || WorkerBusy || tts.Speaking) { NextAnnouncement(); return; }
+            if (announcements.Count > 0) { NextAnnouncement(); return; }   // a reminder is waiting: that comes first
+            var r = new VoiceRecorder();
+            r.FollowUp = true;
+            r.NoSpeechMs = FollowUpMs;
+            r.Finished += OnRecorderFinished;
+            string err;
+            if (!r.Start(out err)) { DebugLog.Write("assistant: follow-up mic: " + err); return; }
+            recorder = r;
+            OpenAIClient.Prewarm(s.BaseUrl, s.ApiKey, s.Model);
+            SafeMood("followup");
+        }
+
+        // ------------------------------------------------------------------ announcements
+
+        /// <summary>Something it says on its own (a reminder, a heads-up, a finished claude session): shown in the
+        /// bubble and read out loud, after whatever it's saying or doing right now. Any thread.</summary>
+        public void Announce(string line)
+        {
+            if (string.IsNullOrWhiteSpace(line)) return;
+            RunOnUi(delegate
+            {
+                if (disposed) return;
+                if (announcements.Count < 8) announcements.Enqueue(line);
+                NextAnnouncement();
+            });
+        }
+
+        /// <summary>UI thread. Says the next waiting announcement if it's free (called again when speech ends,
+        /// a follow-up closes, and every ~15 s).</summary>
+        void NextAnnouncement()
+        {
+            if (disposed || announcements.Count == 0) return;
+            if (tts.Speaking || recorder != null || transcribing || WorkerBusy) return;
+            string line = announcements.Dequeue();
+            SafeSay(line, 0);
+            AssistantSettings s = settings;
+            if (s.SpeakReplies)
+            {
+                tts.Speak(Speakable(line), s);
+                DebugLog.Write("assistant: said a notice out loud");
+            }
         }
 
         // ------------------------------------------------------------------ wake word
@@ -1240,6 +1295,17 @@ namespace Bestie
         void OnRecorderFinished(VoiceRecorder r, byte[] wav, string reason, string error)
         {
             if (disposed || reason == "aborted") return;
+            if (r.FollowUp && (wav == null || error != null || reason == "quiet"))
+            {
+                // nobody answered back: close the window without a fuss
+                Post(delegate
+                {
+                    if (recorder == r) recorder = null;
+                    SafeMood(WorkerBusy ? "thinking" : "idle");
+                    NextAnnouncement();
+                });
+                return;
+            }
             if (reason == "quiet")
             {
                 // a click or a silent hold: never leave them with nothing, but keep it tiny
@@ -1264,7 +1330,7 @@ namespace Bestie
                 return;
             }
             // speech just ended: say "hm." right away, start the screen captures in parallel with transcription
-            var timing = new VoiceTiming(r.PushToTalk ? "hold" : "mic");
+            var timing = new VoiceTiming(r.FollowUp ? "follow-up" : r.PushToTalk ? "hold" : "mic");
             transcribing = true;
             AssistantSettings s = settings;
             ScreenJob screens = StartScreensIfWanted(s);
@@ -1276,22 +1342,30 @@ namespace Bestie
                 SafeMood("thinking");
                 Ack();
             });
-            HandleRecordedAudio(wav, s, screens, timing, true);
+            HandleRecordedAudio(wav, s, screens, timing, !r.FollowUp, r.FollowUp);
         }
 
         /// <summary>Background thread: transcribe, then send as a chat message (tests call this directly).</summary>
         internal void HandleRecordedAudio(byte[] wav, AssistantSettings s)
         {
-            HandleRecordedAudio(wav, s, StartScreensIfWanted(s), new VoiceTiming("test"), true);
+            HandleRecordedAudio(wav, s, StartScreensIfWanted(s), new VoiceTiming("test"), true, false);
         }
 
-        void HandleRecordedAudio(byte[] wav, AssistantSettings s, ScreenJob screens, VoiceTiming timing, bool openChat)
+        void HandleRecordedAudio(byte[] wav, AssistantSettings s, ScreenJob screens, VoiceTiming timing, bool openChat, bool followUp)
         {
             transcribing = true;
             try
             {
                 string text = TranscribeAudio(wav, s);
                 timing.Mark("transcript");
+                if (followUp && NoiseTranscript(text))
+                {
+                    // a follow-up that was only background noise: drop it quietly
+                    timing.Finish("nothing heard");
+                    transcribing = false;
+                    Post(delegate { SafeMood(WorkerBusy ? "thinking" : "idle"); NextAnnouncement(); });
+                    return;
+                }
                 if (string.IsNullOrEmpty(text) || text.Trim().Length == 0)
                 {
                     timing.Finish("nothing heard");
@@ -1312,6 +1386,13 @@ namespace Bestie
                 Post(delegate { ShowProblem("my ears glitched. try again?"); });
             }
             finally { transcribing = false; }
+        }
+
+        /// <summary>What the transcriber tends to "hear" in room noise.</summary>
+        static bool NoiseTranscript(string text)
+        {
+            string t = new string((text ?? "").ToLowerInvariant().Where(ch => char.IsLetterOrDigit(ch) || ch == ' ').ToArray()).Trim();
+            return t.Length < 2 || t == "you" || t == "thanks for watching" || t == "thank you for watching" || t == "bye";
         }
 
         string TranscribeAudio(byte[] wav, AssistantSettings s)
@@ -1686,16 +1767,12 @@ namespace Bestie
                     string title = OpenAIClient.Trunc(e.Title, 50);
                     string line = "heads up: “" + title + "” in " + (mins == 1 ? "a minute" : mins + " minutes") + ". i'll hold the fort.";
                     Journal.Add("i warned you that “" + title + "” was coming up.");
-                    Post(delegate
-                    {
-                        SafeSay(line, 12);
-                        AssistantSettings now = settings;
-                        if (now.SpeakReplies && !tts.Speaking && !WorkerBusy) tts.Speak(Speakable(line), now);
-                    });
+                    Announce(line);
                 }
             }
             string notice = calendar.TakeBrokenNotice();
             if (notice != null) Post(delegate { SafeSay(notice, 8); });
+            Post(NextAnnouncement);   // anything that's been waiting for a quiet moment
         }
 
         // ================================================================== reminders
@@ -1706,12 +1783,12 @@ namespace Bestie
             if (disposed) return;
             Journal.Add("i reminded you: " + r.Text);
             string line = (late ? "i was asleep when this was due, but you asked me to remind you: " : "reminder, as requested: ") + r.Text;
+            DebugLog.Write("assistant: reminder " + r.Id + " is due");
             Post(delegate
             {
-                SafeSay(line, 12);
                 if (chat != null && !chat.IsDisposed) chat.AppendCreature(line);
                 AssistantMemory.AppendChatNote("reminder: " + r.Text);
-                if (settings.SpeakReplies) tts.Speak(Speakable(line), settings);
+                Announce(line);
             });
         }
     }

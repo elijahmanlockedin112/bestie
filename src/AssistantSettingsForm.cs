@@ -37,7 +37,7 @@ namespace Bestie
         readonly TextBox skipBox, gIdBox, gSecretBox;
         readonly TrackBar gainBar;
         readonly Label gainLabel, calStatus;
-        readonly CheckBox calWarnBox, autoMemoryBox, wakeBox;
+        readonly CheckBox calWarnBox, autoMemoryBox, wakeBox, followUpBox;
         readonly Button connectButton, disconnectButton;
         bool calBusy;
         readonly HotkeyTextBox[] hotkeyBoxes = new HotkeyTextBox[3];
@@ -182,6 +182,8 @@ namespace Bestie
             try { cname = owner.Host.CreatureName ?? cname; } catch { }
             wakeBox = Check("listen for my wake word (hey " + cname.ToLowerInvariant() + ")", s.WakeWord);
             Row("wake word", wakeBox);
+            followUpBox = Check("after i answer out loud, keep listening a few seconds so you can reply", s.FollowUp);
+            Row("", followUpBox);
 
             // --- nosy peeks
             nosyBox = Check("be nosy (peek at what i'm doing now and then)", s.BeNosy);
@@ -555,6 +557,7 @@ namespace Bestie
             n.VoiceGainPercent = gainBar.Value;
             n.AutoMemory = autoMemoryBox.Checked;
             n.WakeWord = wakeBox.Checked;
+            n.FollowUp = followUpBox.Checked;
             n.GoogleClientId = gIdBox.Text.Trim();
             if (gSecretBox.Text.Trim().Length > 0) n.SetGoogleClientSecret(gSecretBox.Text);
             n.CalendarWarn = calWarnBox.Checked;

@@ -62,6 +62,7 @@ namespace Bestie
         public int VoiceGainPercent = 240;      // openai voice loudness, 100..400 (PcmStreamPlayer.Gain)
         public bool AutoMemory = true;          // "remember things from our chats automatically"
         public bool WakeWord = true;            // "listen for my wake word (hey <name>)"
+        public bool FollowUp = true;            // after a spoken answer, keep listening a few seconds (no wake word needed)
 
         public const string DefaultNosySkipList =
             "1password, bitwarden, keepass, lastpass, dashlane, inprivate, incognito, private browsing, bank, banking, paypal, venmo, " +
@@ -110,6 +111,7 @@ namespace Bestie
                 s.VoiceGainPercent = Clamp((int)Json.Num(d, "voiceGainPercent", 240), 100, 400);
                 s.AutoMemory = Json.Bool(d, "autoMemory", true);
                 s.WakeWord = Json.Bool(d, "wakeWord", true);
+                s.FollowUp = Json.Bool(d, "followUp", true);
                 s.TtsVoice = Json.Str(d, "ttsVoice") ?? "";
                 s.TtsRate = Clamp((int)Json.Num(d, "ttsRate", 0), -10, 10);
                 string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
@@ -148,6 +150,7 @@ namespace Bestie
             d["voiceGainPercent"] = VoiceGainPercent;
             d["autoMemory"] = AutoMemory;
             d["wakeWord"] = WakeWord;
+            d["followUp"] = FollowUp;
             d["ttsVoice"] = TtsVoice ?? "";
             d["ttsRate"] = TtsRate;
             d["hotkeyChat"] = HotkeyChat ?? "";

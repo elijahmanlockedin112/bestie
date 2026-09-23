@@ -557,7 +557,7 @@ namespace Bestie
                         string title = ev.Title.Length > 40 ? ev.Title.Substring(0, 38) + "…" : ev.Title;
                         OnUi(() =>
                         {
-                            c.Say("heads up: “" + title + "” in " + mins + " minute" + (mins == 1 ? "" : "s") + ". " + Rng.Pick("i'll hold the fort.", "don't be late. i'll know.", "the building will manage."), false, 7);
+                            Announce("heads up: “" + title + "” in " + mins + " minute" + (mins == 1 ? "" : "s") + ". " + Rng.Pick("i'll hold the fort.", "don't be late. i'll know.", "the building will manage."));
                             c.Glow(3);
                             Journal.Add("reminded you about “" + ev.Title + "” (" + ev.Start.ToString("h:mm tt").ToLowerInvariant() + ").");
                         });
@@ -697,15 +697,23 @@ namespace Bestie
             {
                 var s = finished[0];
                 string title = s.Title.Length > 40 ? s.Title.Substring(0, 38) + "\u2026" : s.Title;
-                c.Say(s.Provider + " finished \u201c" + title + "\u201d. " + Rng.Pick("your move.", "it's waiting on you.", "tenant's done."), false, 0);
+                Announce(s.Provider + " finished \u201c" + title + "\u201d. " + Rng.Pick("your move.", "it's waiting on you.", "tenant's done."));
             }
             else
             {
                 int claude = finished.Count(x => x.Provider == "claude"), gpt = finished.Count - claude;
-                c.Say(finished.Count + " sessions just finished (" + (claude > 0 ? claude + " claude" : "") + (claude > 0 && gpt > 0 ? ", " : "") + (gpt > 0 ? gpt + " chatgpt" : "") + "). your move.", false, 0);
+                Announce(finished.Count + " sessions just finished (" + (claude > 0 ? claude + " claude" : "") + (claude > 0 && gpt > 0 ? ", " : "") + (gpt > 0 ? gpt + " chatgpt" : "") + "). your move.");
             }
             c.Emit("sparkle", 3);
             finished.Clear();
+        }
+
+        /// <summary>Something it tells you on its own (a claude session finished, a class is coming up): in the bubble
+        /// and out loud, after whatever it's saying now.</summary>
+        void Announce(string line)
+        {
+            if (assistant != null) assistant.Announce(line);
+            else c.Say(line, false, 0);
         }
 
         // ---- ICreatureHost ----
@@ -734,12 +742,12 @@ namespace Bestie
             return sb.ToString();
         }
 
-        public void Say(string text, double seconds) { c.Say(text, false, seconds); }
+        public void Say(string text, double seconds) { c.Say(text, false, seconds, true); }
         public void SetMood(string mood)
         {
             c.SetMood(mood);
             // everything else gets quieter while it talks or listens, and comes back when it's done
-            if (mood == "talking" || mood == "listening") ducker.Duck();
+            if (mood == "talking" || mood == "listening" || mood == "followup") ducker.Duck();
             else if (mood == "idle") ducker.Restore();
         }
         public bool DoTrick(string trick) { return c.DoTrick(trick); }

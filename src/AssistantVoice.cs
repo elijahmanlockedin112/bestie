@@ -562,6 +562,10 @@ namespace Bestie
         /// <summary>Set before Start: hold-to-talk (no silence auto-stop, 60 s cap; a too-short or
         /// speechless recording ends quietly with reason "quiet").</summary>
         public bool PushToTalk;
+        /// <summary>The few seconds right after it answered: no wake word needed, and silence closes it quietly.</summary>
+        public bool FollowUp;
+        /// <summary>If &gt; 0: give up after this long without speech (instead of the usual 8 s).</summary>
+        public int NoSpeechMs;
         IntPtr handle;
         IntPtr[] headers, buffers;
         int hdrSize, flagsOffset, bytesOffset;
@@ -641,6 +645,7 @@ namespace Bestie
         {
             var pcm = new MemoryStream();
             var vad = VoiceActivity.Create(PushToTalk);
+            if (NoSpeechMs > 0) vad.NoSpeechGiveUpMs = NoSpeechMs;
             var chunk = new byte[BufferBytes];
             string reason = "stopped", error = null;
             int next = 0;

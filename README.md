@@ -85,6 +85,9 @@ Paste an OpenAI API key into **settings** (right-click → settings…). The key
     - You can turn it off in settings.
   - Click and hold the creature, talk, and let go.
   - Press **Ctrl+Alt+V** and talk. It stops listening when you stop talking, or when you press the keys again.
+  - Right after it answers out loud, it keeps listening for about 4 seconds (its halo glows), so you can reply without the wake word. If you say nothing, it stops quietly. Turn this off in settings.
+- **While it talks,** it stands still and keeps what it's saying on screen until the voice finishes.
+- **Reminders, calendar heads-ups and finished Claude or ChatGPT sessions are read out loud.** If it's already talking or listening, it waits its turn instead of cutting in.
 - **Memory:** when you tell it things worth keeping, it writes them to `Documents\Bestie\memory\about-you.md`. That's a plain file you can read and edit. It can also keep notes in `notes\`, set reminders, search its memory and journal, open apps from your Start menu, open folders, and do tricks.
 - **About me (private):** right-click it → **about me (private)…** and write whatever you want it to know: who you are, what you're into, how you like answers. It keeps this in mind with every answer. It's saved encrypted in `.state\about-me.dat` and never copied into its log, memory folder, notes or chats. There's no length limit, but it's sent with every question, so a very long one costs a little more per question (the box shows roughly how many tokens). To remove it, clear the box and save.
 - **Costs:** it only calls the API when you talk to it, show it your screen or use voice. The creature's everyday life costs nothing. The model is set in settings and defaults to a cheap, fast one.
@@ -205,7 +208,7 @@ The creature's own life, its brain and its journal stay local.
 
 ```
 brain.md   a readable copy of everything it has learned (updated every couple of minutes)
-memory\    what it knows about you: about-you.md, conversations.md (edit freely; it reads these)
+memory\    what it knows about you: about-you.md, conversations.md, noticed.md (edit freely; it reads these)
 journal\   what it noticed each day, written the moment it happens
 notes\     notes you asked it to keep
 chats\     transcripts of your conversations, written as you talk
@@ -214,7 +217,9 @@ chats\     transcripts of your conversations, written as you talk
 
 It saves constantly. The journal and chat transcripts are appended as things happen, and the brain is saved every 15 seconds and right away when it learns something big.
 
-About a minute and a half after a conversation goes quiet, one small AI call reads it and writes down anything lasting about you (people, school, projects, preferences) in `memory\about-you.md`, plus a one-line summary in `memory\conversations.md`. You'll see *"(wrote that down. i'll remember.)"* when it does. It reads both files before every conversation, so it remembers across days. Passwords, keys and card numbers are never stored. Anything it hasn't processed yet waits in `.state\memory-pending.txt`, so quitting doesn't lose it.
+About a minute after a conversation goes quiet, one small AI call reads it and writes down anything it learned about you (people, school, projects, events, what you're into, preferences) in `memory\about-you.md`, plus a one-line summary in `memory\conversations.md`. You'll see *"(wrote that down. i'll remember.)"* when it does. It reads both files before every conversation, so it remembers across days. Passwords, keys and card numbers are never stored. Anything it hasn't processed yet waits in `.state\memory-pending.txt`, so quitting doesn't lose it.
+
+Once a day it also reads its own journal (what it saw you doing: apps, sites, music, what you asked for) and keeps `memory\noticed.md` up to date with patterns, like what you work on and when, and what you're into lately. That's one small AI call a day, and the journal text goes along with it.
 
 To start over with a brand-new egg, say goodbye to it and delete `.state\brain.json`.
 

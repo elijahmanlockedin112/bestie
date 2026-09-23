@@ -81,9 +81,15 @@ namespace Bestie
         public bool BubbleThought;
         public double BubbleUntil, BubbleStart, TalkUntil;
         double lastMusing;
+        // something it wanted to say while it was talking out loud; shown once it's done
+        string afterTalk;
+        double afterTalkSeconds;
 
-        // mood set by the assistant: idle, thinking, listening, talking
+        // mood set by the assistant: idle, thinking, listening, talking, followup (waiting a moment for an answer)
         public string Mood = "idle";
+
+        /// <summary>Talking out loud, or waiting right after for them to answer back.</summary>
+        public bool Speaking { get { return Mood == "talking" || Mood == "followup"; } }
         /// <summary>You're dictating somewhere (with Wispr Flow): it stops, leans in and cups an ear.</summary>
         public bool ListenAlong;
         /// <summary>0..1: the angel-halo glow that says "i'm listening to you".</summary>
@@ -768,9 +774,16 @@ namespace Bestie
         // speech & particles
         // =====================================================================
 
-        public Wait Say(string text, bool thought, double seconds)
+        /// <summary>priority: the assistant's words (always shown). Anything else said while it's talking out loud
+        /// waits until it's done, so the words being spoken stay readable.</summary>
+        public Wait Say(string text, bool thought, double seconds, bool priority = false)
         {
             if (string.IsNullOrEmpty(text)) return null;
+            if (!priority && Speaking && BubbleText != null && !BubbleThought)
+            {
+                if (!thought) { afterTalk = text; afterTalkSeconds = seconds; }
+                return null;
+            }
             double dur = seconds > 0 ? seconds : Math.Max(2.2, Math.Min(9, 1.6 + 0.055 * text.Length));
             BubbleText = text;
             BubbleThought = thought;
@@ -836,7 +849,7 @@ namespace Bestie
 
             Blush = Math.Max(0, Blush - dt * 0.35);
             // halo: full while it's listening to you, softer while it thinks, then fades
-            double haloTarget = Clock.T < haloUntil || Mood == "listening" ? 1 : Mood == "thinking" ? 0.55 : 0;
+            double haloTarget = Clock.T < haloUntil || Mood == "listening" ? 1 : Mood == "followup" ? 0.8 : Mood == "thinking" ? 0.55 : 0;
             Halo += (haloTarget - Halo) * Math.Min(1, dt * (haloTarget > Halo ? 14 : 2.5));
             EggWobble = Math.Max(0, EggWobble - dt * 1.2);
             double moved = Math.Abs(X - lastAnimX) + Math.Abs(Y - lastAnimY);
@@ -848,7 +861,7 @@ namespace Bestie
             double hx = X, hy = Y - BodyH * 0.6;
             double cdx = cursorX - hx, cdy = cursorY - hy, cd = Math.Sqrt(cdx * cdx + cdy * cdy);
             double ox, oy;
-            if (Mood == "listening" || Mood == "thinking") { lookTX = Facing * 0.3; lookTY = -0.8; }
+            if (Mood == "listening" || Mood == "thinking" || Mood == "followup") { lookTX = Facing * 0.3; lookTY = -0.8; }
             else if (LookOverride(out ox, out oy)) { lookTX = ox; lookTY = oy; }
             else if (!Clock.Simulated && cd < 380 * S && cd > 1 && Mode != Mode.Held) { lookTX = cdx / cd; lookTY = cdy / cd; }
             else if (Math.Abs(VX) > 1) { lookTX = Math.Sign(VX); lookTY = 0.1; }
@@ -874,7 +887,15 @@ namespace Bestie
             }
             if (Particles.Count > 60) Particles.RemoveRange(0, Particles.Count - 60);
 
+            // the spoken words stay up as long as the voice goes (and a moment after), however long that is
+            if (Speaking && BubbleText != null && !BubbleThought) BubbleUntil = Math.Max(BubbleUntil, Clock.T + 2.5);
             if (BubbleText != null && Clock.T > BubbleUntil) BubbleText = null;
+            if (afterTalk != null && BubbleText == null && !Speaking)
+            {
+                string t = afterTalk;
+                afterTalk = null;
+                Say(t, false, afterTalkSeconds);
+            }
         }
 
         /// <summary>Screen-space box that contains the body (used for hit tests and window placement).</summary>

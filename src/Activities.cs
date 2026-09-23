@@ -18,6 +18,7 @@ namespace Bestie
         IEnumerable<Wait> pending;
         string pendingCtx;
         bool abortPending;
+        bool currentRequested;   // the running activity was asked for (a trick, come here...), not one it picked itself
         double idleGap = 1, energy = 1;
         string prevCtx = "start";
         public string CurrentAct;
@@ -55,7 +56,7 @@ namespace Bestie
         void KillCurrent()
         {
             if (current != null) { try { current.Dispose(); } catch { } }
-            current = null; wait = null; CurrentAct = null; ritualRunning = null;
+            current = null; wait = null; CurrentAct = null; ritualRunning = null; currentRequested = false;
             history.Clear();   // traditions are unbroken runs
             ResetPose();
             if (Mode == Mode.Ground) StopWalking();
@@ -73,6 +74,7 @@ namespace Bestie
             {
                 KillCurrent();
                 current = pending.GetEnumerator();
+                currentRequested = true;
                 if (pendingCtx != null) prevCtx = pendingCtx;
                 pending = null; pendingCtx = null;
                 abortPending = false;
@@ -81,6 +83,8 @@ namespace Bestie
             if (Mode == Mode.Held || Mode == Mode.Hidden) return;
             if (Mode == Mode.Air && !expectingAir) return;
             if (Mood == "listening" || Mood == "thinking" || (ListenAlong && Pose != Pose.Lie)) { if (Mode == Mode.Ground) StopWalking(); return; }
+            // while it talks out loud it stays put and faces you (a trick you asked for can keep going)
+            if (Speaking && !currentRequested) { if (Mode == Mode.Ground) StopWalking(); return; }
             if (Pose != Pose.Lie) energy = Math.Max(0, energy - dt * 0.0006);
 
             if (current == null)
@@ -94,6 +98,7 @@ namespace Bestie
                 }
                 if (idleGap > 0) return;
                 current = ChooseNext().GetEnumerator();
+                currentRequested = false;
                 wait = null;
             }
 
@@ -1187,7 +1192,14 @@ namespace Bestie
         {
             mood = string.IsNullOrEmpty(mood) ? "idle" : mood;
             if (mood == Mood) return;
+            bool wasSpeaking = Speaking;
             Mood = mood;
+            if (Speaking && !currentRequested)
+            {
+                if (current != null) AbortActivity();
+                if (Mode == Mode.Ground) StopWalking();
+            }
+            else if (wasSpeaking && mood == "idle") idleGap = Math.Max(idleGap, Rng.Range(2.5, 5));   // don't dash off mid-thought
             if (mood == "thinking" || mood == "listening")
             {
                 if (prevCtx != "chat") AbortActivity();
