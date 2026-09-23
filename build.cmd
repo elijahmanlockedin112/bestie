@@ -16,9 +16,12 @@ if not exist "%SPEECH%" set SPEECH=%WINDIR%\Microsoft.NET\assembly\GAC_MSIL\Syst
 set REFS=/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/r:%SPEECH%" /r:System.Security.dll
 set OPTS=/nologo /codepage:65001 /target:winexe /optimize+
 
-tasklist /fi "imagename eq Bestie.exe" 2>nul | find /i "Bestie.exe" >nul && (
-  echo Bestie is running. say goodbye to it first ^(right-click it, "say goodbye"^).
-  exit /b 1
+rem a running Bestie.exe can't be overwritten; opening it for append fails if it's in use
+if exist Bestie.exe (
+  2>nul (call ) >> "Bestie.exe" || (
+    echo Bestie is running from this folder. say goodbye to it first ^(right-click it, "say goodbye"^).
+    exit /b 1
+  )
 )
 
 "%CSC%" %OPTS% %REFS% /out:Bestie.exe src\*.cs || exit /b 1
