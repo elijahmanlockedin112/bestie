@@ -34,6 +34,9 @@ namespace Bestie
         SessionsPanel sessPanel;
         SessionsHotkey sessHotkey;
         readonly List<AiSession> finished = new List<AiSession>();
+        // sessions that just finished a turn, waiting to see if they really stopped (id -> when)
+        readonly Dictionary<string, KeyValuePair<AiSession, double>> maybeFinished = new Dictionary<string, KeyValuePair<AiSession, double>>();
+        const double FinishSettleSeconds = 20;
         double lastAnnounce = -100, nextPeekAt = 6 * 60;
         readonly bool trace = Environment.GetEnvironmentVariable("BESTIE_TRACE") == "1";
         WakeWord wake;
@@ -121,6 +124,7 @@ namespace Bestie
             Render();
             bubble.Update(c);
             if (sessHandle != null) sessHandle.Tick(dt);
+            SettleFinished();
             AnnounceFinished();
             MaybeBeNosy();
             CheckHoldToTalk();
@@ -683,9 +687,26 @@ namespace Bestie
 
         void SessionChanged(AiSession s, string before)
         {
-            if (s.Kind == "app" || before != "working" || s.Status == "working") return;
-            finished.Add(s);
-            Journal.Add(s.Provider + " finished \u201c" + s.Title + "\u201d (" + s.Where + ").");
+            // only a real end of turn counts. "idle" just means nothing was written for a while (a long command,
+            // a permission prompt), and a turn that picks right back up (a queued message, a background task) isn't done.
+            if (s.Status != "waiting") { maybeFinished.Remove(s.Id); return; }
+            if (s.Kind == "app" || before != "working") return;
+            maybeFinished[s.Id] = new KeyValuePair<AiSession, double>(s, Clock.T);
+        }
+
+        /// <summary>Every tick: sessions that have stayed finished long enough are really finished.</summary>
+        void SettleFinished()
+        {
+            if (maybeFinished.Count == 0) return;
+            foreach (var kv in maybeFinished.Where(kv => Clock.T - kv.Value.Value >= FinishSettleSeconds).ToList())
+            {
+                maybeFinished.Remove(kv.Key);
+                var s = kv.Value.Key;
+                var now = AiSessions.Snapshot().FirstOrDefault(x => x.Id == s.Id);
+                if (now == null || now.Status != "waiting") continue;
+                finished.Add(now);
+                Journal.Add(now.Provider + " finished \u201c" + now.Title + "\u201d (" + now.Where + ").");
+            }
         }
 
         /// <summary>Tell the user when AI sessions finish, but not in a flood.</summary>

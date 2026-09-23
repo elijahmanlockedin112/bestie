@@ -169,8 +169,27 @@ namespace Bestie
             if (old != null) { cf.Title = old.Title; cf.Cwd = old.Cwd; cf.Entry = old.Entry; }
 
             string custom = null, agent = null;
+            // sessions full of screenshots have single lines of half a megabyte or more, so the last few hundred KB
+            // can hold no complete message at all. look further back until one turns up (instead of calling it idle).
+            foreach (int tail in new[] { 384 * 1024, 4 * 1024 * 1024, 16 * 1024 * 1024 })
+            {
+                ScanCodeTail(path, tail, cf, ref custom, ref agent);
+                if (cf.Known || fi.Length <= tail) break;
+            }
+            if (!cf.Known && old != null && old.Known)
+            {
+                // still nothing readable: nothing we can see changed, so keep what we knew
+                cf.Known = true; cf.TurnDone = old.TurnDone; cf.StatusTime = old.StatusTime;
+            }
+            cf.Title = Clean(custom ?? agent ?? cf.Title);
+            if (cf.Title == null || cf.Cwd == null) ReadCodeHead(path, cf);
+            return cf;
+        }
+
+        static void ScanCodeTail(string path, int bytes, CodeFile cf, ref string custom, ref string agent)
+        {
             bool statusFound = false;
-            foreach (var line in TailLines(path, 384 * 1024).Reverse())
+            foreach (var line in TailLines(path, bytes).Reverse())
             {
                 bool statusLine = line.Contains("\"type\":\"assistant\"") || line.Contains("\"type\":\"user\"") || line.Contains("\"type\":\"system\"");
                 bool titleLine = line.StartsWith("{\"type\":\"custom-title\"") || line.StartsWith("{\"type\":\"agent-name\"") || line.Contains("\"type\":\"custom-title\"") || line.Contains("\"type\":\"agent-name\"");
@@ -198,9 +217,6 @@ namespace Bestie
                     else cf.TurnDone = line.Contains("[Request interrupted by user");
                 }
             }
-            cf.Title = Clean(custom ?? agent ?? cf.Title);
-            if (cf.Title == null || cf.Cwd == null) ReadCodeHead(path, cf);
-            return cf;
         }
 
         static void ReadCodeHead(string path, CodeFile cf)
@@ -344,13 +360,18 @@ namespace Bestie
                 }
                 if (cf.Title == null && cf.Cwd != null) cf.Title = Path.GetFileName(cf.Cwd.TrimEnd('\\', '/'));
             }
-            foreach (var line in TailLines(path, 256 * 1024).Reverse())
+            foreach (int tail in new[] { 256 * 1024, 4 * 1024 * 1024 })
             {
-                if (!line.Contains("\"task_started\"") && !line.Contains("\"task_complete\"") && !line.Contains("\"turn_aborted\"")) continue;
-                cf.Known = true;
-                cf.TurnDone = !line.Contains("\"task_started\"");
-                break;
+                foreach (var line in TailLines(path, tail).Reverse())
+                {
+                    if (!line.Contains("\"task_started\"") && !line.Contains("\"task_complete\"") && !line.Contains("\"turn_aborted\"")) continue;
+                    cf.Known = true;
+                    cf.TurnDone = !line.Contains("\"task_started\"");
+                    break;
+                }
+                if (cf.Known || fi.Length <= tail) break;
             }
+            if (!cf.Known && old != null && old.Known) { cf.Known = true; cf.TurnDone = old.TurnDone; }
             return cf;
         }
 
