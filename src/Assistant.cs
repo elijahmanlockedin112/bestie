@@ -442,6 +442,7 @@ namespace Bestie
             p.Text = text;
             p.Image = image;
             p.Ctx = CaptureContext();
+            p.Ctx.UserText = text ?? "";
             p.Settings = settings.Clone();
             p.Voice = fromVoice;
             p.Timing = timing;
@@ -965,7 +966,10 @@ namespace Bestie
             sb.Append("\n\n## browser\n");
             if (bridge != null) sb.Append(AssistantTools.BrowserSummary(bridge, 30, 2500));
             else sb.Append("not connected (the bestie browser extension isn't loaded), so you can open links and searches but can't see or read tabs.");
-            sb.Append("\n\nnow: ").Append(DateTime.Now.ToString("dddd yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture).ToLowerInvariant()).Append(" (local time)");
+            DateTime now = DateTime.Now;
+            sb.Append("\n\nnow: ").Append(now.ToString("dddd yyyy-MM-dd", CultureInfo.InvariantCulture).ToLowerInvariant())
+              .Append(", ").Append(When.Clock(now)).Append(" (local time). tomorrow is ")
+              .Append(now.AddDays(1).ToString("dddd yyyy-MM-dd", CultureInfo.InvariantCulture).ToLowerInvariant()).Append(".");
             return sb.ToString();
         }
 

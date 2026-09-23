@@ -30,6 +30,8 @@ namespace Bestie
         public string Personality = "";
         public string Desktop = "";
         public string[] Tricks = new string[0];
+        /// <summary>What they just said or typed (tools use it to sanity-check the model's choice).</summary>
+        public string UserText = "";
     }
 
     internal sealed partial class AssistantTools
@@ -98,7 +100,8 @@ namespace Bestie
             t.Add(Tool("read_journal", "read your own observation journal for a day.", R(),
                 P("date", "string", "yyyy-mm-dd, 'today' or 'yesterday' (default today)")));
             t.Add(Tool("search_memory", "search memory, notes, journal and past chats.", R("query"), P("query", "string", "text to find")));
-            t.Add(Tool("open_url", "open an http(s) link in the user's browser.", R("url"), P("url", "string", "the link")));
+            t.Add(Tool("open_url", "open a website or link in a new tab of the user's browser. use this for 'open youtube', 'pull up gmail', etc.", R("url"),
+                P("url", "string", "the link, e.g. https://www.youtube.com (a bare site name like 'youtube' also works)")));
             t.Add(Tool("web_search", "open a web search in the user's browser.", R("query"), P("query", "string", "search words")));
             if (browser)
             {
@@ -117,8 +120,12 @@ namespace Bestie
             t.Add(Tool("open_app", "launch an app from the start menu by name (no arguments).", R("name"), P("name", "string", "app name, e.g. 'spotify'")));
             t.Add(Tool("open_folder", "open one of your folders in explorer.", R("which"),
                 PE("which", "which folder", new[] { "root", "memory", "notes", "journal", "chats" })));
-            t.Add(Tool("set_reminder", "remind the user later with a bubble and your voice.", R("minutes", "text"),
-                P("minutes", "number", "minutes from now"), P("text", "string", "what to remind them of")));
+            t.Add(Tool("set_reminder", "remind the user later with a bubble and your voice. for a clock time pass time (and date) exactly as they said it; "
+                + "i work out when that is. never convert a clock time to minutes yourself. use minutes only for 'in 10 minutes' / 'in 2 hours'.", R("text"),
+                P("text", "string", "what to remind them of"),
+                P("time", "string", "clock time as they said it: '6:45 am', '6:45 pm', '18:45', 'noon'. keep their am/pm; leave it off if they didn't say"),
+                P("date", "string", "optional: 'today', 'tomorrow', a weekday like 'friday', or yyyy-mm-dd. omit for the next time that clock time comes around"),
+                P("minutes", "number", "only for relative reminders: minutes from now (2 hours = 120)")));
             t.Add(Tool("list_reminders", "list pending reminders.", R()));
             t.Add(Tool("cancel_reminder", "cancel a reminder.", R("match"), P("match", "string", "reminder id or part of its text")));
             bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
@@ -126,7 +133,7 @@ namespace Bestie
             AddExtraTools(t, browser, calendarConnected);
             t.Add(Tool("list_ai_sessions","list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
             t.Add(Tool("focus_ai_session", "bring one of those sessions to the front.", R("id"), P("id", "string", "session id from list_ai_sessions")));
-            t.Add(Tool("new_ai_chat", "open a fresh claude or chatgpt chat in the browser.", R("provider"),
+            t.Add(Tool("new_ai_chat", "start a brand-new claude or chatgpt conversation. only when they name claude or chatgpt; never for other websites (that's open_url).", R("provider"),
                 PE("provider", "which one", new[] { "claude", "chatgpt" })));
             if (ctx != null && ctx.Tricks != null && ctx.Tricks.Length > 0)
                 t.Add(Tool("do_trick", "do one of your little tricks on the desktop.", R("name"), PE("name", "trick", ctx.Tricks)));
@@ -169,7 +176,7 @@ namespace Bestie
                     case "do_trick": return DoTrick(a, ctx);
                     case "list_ai_sessions": return ListAiSessions();
                     case "focus_ai_session": return FocusAiSession(a);
-                    case "new_ai_chat": return NewAiChat(a);
+                    case "new_ai_chat": return NewAiChat(a, ctx);
                     case "calendar_list_events":
                     case "calendar_create_event":
                     case "calendar_update_event":
@@ -226,10 +233,26 @@ namespace Bestie
 
         // ------------------------------------------------------------------ browser
 
+        /// <summary>Bare site names people say out loud ("open youtube") and where they live.</summary>
+        static readonly Dictionary<string, string> KnownSites = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "youtube", "https://www.youtube.com/" }, { "yt", "https://www.youtube.com/" }, { "gmail", "https://mail.google.com/" },
+            { "google", "https://www.google.com/" }, { "calendar", "https://calendar.google.com/" }, { "google calendar", "https://calendar.google.com/" },
+            { "drive", "https://drive.google.com/" }, { "google drive", "https://drive.google.com/" }, { "docs", "https://docs.google.com/" },
+            { "google docs", "https://docs.google.com/" }, { "classroom", "https://classroom.google.com/" }, { "google classroom", "https://classroom.google.com/" },
+            { "spotify", "https://open.spotify.com/" }, { "netflix", "https://www.netflix.com/" }, { "github", "https://github.com/" },
+            { "reddit", "https://www.reddit.com/" }, { "chatgpt", "https://chatgpt.com/" }, { "claude", "https://claude.ai/" },
+            { "amazon", "https://www.amazon.com/" }, { "instagram", "https://www.instagram.com/" }, { "tiktok", "https://www.tiktok.com/" },
+            { "twitter", "https://x.com/" }, { "x", "https://x.com/" }, { "twitch", "https://www.twitch.tv/" }, { "discord", "https://discord.com/app" },
+            { "wikipedia", "https://en.wikipedia.org/" }, { "maps", "https://maps.google.com/" }, { "google maps", "https://maps.google.com/" },
+        };
+
         public static string NormalizeUrl(string raw)
         {
             string s = (raw ?? "").Trim().Trim('<', '>', '"', '\'', '`');
             if (s.Length == 0 || s.Length > 2048) return null;
+            string known;
+            if (KnownSites.TryGetValue(s.TrimEnd('.', '/').Trim(), out known)) return known;
             foreach (char c in s) if (char.IsWhiteSpace(c) || char.IsControl(c)) return null;
             if (s.IndexOf("://", StringComparison.Ordinal) < 0)
             {
@@ -523,25 +546,33 @@ namespace Bestie
 
         static string WhenText(DateTime dueUtc)
         {
-            DateTime local = dueUtc.ToLocalTime();
-            string t = local.ToString("HH:mm", CultureInfo.InvariantCulture);
-            if (local.Date == DateTime.Now.Date) return t;
-            if (local.Date == DateTime.Now.Date.AddDays(1)) return "tomorrow " + t;
-            return local.ToString("ddd MMM d", CultureInfo.InvariantCulture).ToLowerInvariant() + " " + t;
+            return When.Describe(dueUtc.ToLocalTime(), DateTime.Now);
         }
 
         AssistantToolResult SetReminder(Dictionary<string, object> a)
         {
-            double minutes = Json.Num(a, "minutes", -1);
             string text = AssistantMemory.OneLine(Json.Str(a, "text"));
             if (text.Length == 0) return new AssistantToolResult("remind them of what?");
             if (text.Length > 300) text = text.Substring(0, 300);
-            if (double.IsNaN(minutes) || minutes <= 0 || minutes > 60 * 24 * 14)
-                return new AssistantToolResult("minutes has to be more than 0 and at most two weeks (20160).");
-            AssistantReminder r = module.Reminders.Add(minutes, text);
+            string time = (Json.Str(a, "time") ?? "").Trim(), date = (Json.Str(a, "date") ?? "").Trim();
+            double minutes = Json.Num(a, "minutes", -1);
+            DateTime now = DateTime.Now, due;
+            string assumed = null;
+            if (time.Length > 0 || date.Length > 0)
+            {
+                string err;
+                DateTime? at = When.Parse(date, time, now, out err, out assumed);
+                if (at == null) return new AssistantToolResult("not set: " + err);
+                due = at.Value;
+            }
+            else if (!double.IsNaN(minutes) && minutes > 0) due = now.AddMinutes(minutes);
+            else return new AssistantToolResult("not set: give a time (like \"6:45 pm\") or minutes from now.");
+            if (due > now.AddDays(60)) return new AssistantToolResult("not set: i only keep reminders up to two months out.");
+            AssistantReminder r = module.Reminders.Add(due.ToUniversalTime(), text);
             string when = WhenText(r.DueUtc);
-            return new AssistantToolResult("reminder " + r.Id + " set for " + when + " (local time).",
-                "reminder at " + when + ": " + text, "you asked me to remind you at " + when + ": " + text);
+            return new AssistantToolResult("reminder " + r.Id + " set for " + when + " (" + When.Until(due, now) + "). tell them the time exactly like that."
+                    + (assumed != null ? " " + assumed + " mention that." : ""),
+                "reminder " + when + ": " + text, "you asked me to remind you " + when + ": " + text);
         }
 
         AssistantToolResult ListReminders()
@@ -621,10 +652,16 @@ namespace Bestie
                 "brought up the " + label, "you asked me to bring up a " + label + ". i did.");
         }
 
-        AssistantToolResult NewAiChat(Dictionary<string, object> a)
+        AssistantToolResult NewAiChat(Dictionary<string, object> a, AssistantTurnContext ctx)
         {
             string p = (Json.Str(a, "provider") ?? "").Trim().ToLowerInvariant();
             if (p != "claude" && p != "chatgpt") return new AssistantToolResult("provider has to be claude or chatgpt.");
+            // the cheap model sometimes grabs this for "open youtube"; only allow it when they mentioned an ai chat
+            string said = " " + (ctx != null ? ctx.UserText ?? "" : "").ToLowerInvariant() + " ";
+            if (said.Trim().Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(said,
+                    @"chat ?gpt|\bgpt|claude|clod|clawed|\bai\b|a\.i\.|openai|\bchat|codex"))
+                return new AssistantToolResult("not done: they didn't ask for a claude or chatgpt chat. to open a website use open_url "
+                    + "(e.g. https://www.youtube.com), or focus_tab if it's already open.");
             bool ok;
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("ai-new " + p); ok = true; }
             else ok = AiSessions.OpenNew(p);
@@ -826,11 +863,11 @@ namespace Bestie
             }
         }
 
-        public AssistantReminder Add(double minutes, string text)
+        public AssistantReminder Add(DateTime dueUtc, string text)
         {
             var r = new AssistantReminder();
             r.CreatedUtc = DateTime.UtcNow;
-            r.DueUtc = r.CreatedUtc.AddMinutes(minutes);
+            r.DueUtc = dueUtc;
             r.Text = text;
             lock (gate)
             {
