@@ -12,7 +12,6 @@ namespace Bestie
     /// the log, the memory folder, notes or chats, and only ever sent to the AI as part of its instructions.</summary>
     public static class AboutMe
     {
-        public const int MaxChars = 8000;
         static readonly byte[] Entropy = Encoding.UTF8.GetBytes("bestie about-me v1");
         static readonly object gate = new object();
         static string cached;
@@ -45,7 +44,6 @@ namespace Bestie
         public static void Save(string text)
         {
             text = (text ?? "").Replace("\r\n", "\n").Trim();
-            if (text.Length > MaxChars) text = text.Substring(0, MaxChars);
             lock (gate)
             {
                 if (text.Length == 0) { if (File.Exists(StorePath)) File.Delete(StorePath); }
@@ -94,11 +92,11 @@ namespace Bestie
             box = new TextBox
             {
                 Left = 14, Top = 110, Width = 532, Height = 276, Multiline = true, AcceptsReturn = true, WordWrap = true,
-                ScrollBars = ScrollBars.Vertical, MaxLength = AboutMe.MaxChars, Font = new Font("Segoe UI", 10f),
+                ScrollBars = ScrollBars.Vertical, MaxLength = 0, Font = new Font("Segoe UI", 10f),
                 Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right,
                 Text = AboutMe.Text.Replace("\n", "\r\n"),
             };
-            count = new Label { Left = 14, Top = 400, Width = 200, Height = 22, ForeColor = SystemColors.GrayText, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
+            count = new Label { Left = 14, Top = 400, Width = 360, Height = 22, ForeColor = SystemColors.GrayText, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
             var save = new Button { Text = "save", Left = 390, Top = 396, Width = 75, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, DialogResult = DialogResult.OK };
             var cancel = new Button { Text = "cancel", Left = 471, Top = 396, Width = 75, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, DialogResult = DialogResult.Cancel };
             Controls.AddRange(new Control[] { intro, privacy, box, count, save, cancel });
@@ -110,7 +108,8 @@ namespace Bestie
 
         void UpdateCount()
         {
-            count.Text = box.TextLength + " / " + AboutMe.MaxChars;
+            // no limit, but it rides along with every question, so show roughly what that costs in tokens (~4 characters each)
+            count.Text = box.TextLength.ToString("N0") + " characters (~" + ((box.TextLength + 3) / 4).ToString("N0") + " tokens per question)";
         }
 
         public string Result { get { return box.Text; } }
