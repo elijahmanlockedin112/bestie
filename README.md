@@ -86,6 +86,7 @@ Paste an OpenAI API key into **settings** (right-click → settings…). The key
   - Click and hold the creature, talk, and let go.
   - Press **Ctrl+Alt+V** and talk. It stops listening when you stop talking, or when you press the keys again.
 - **Memory:** when you tell it things worth keeping, it writes them to `Documents\Bestie\memory\about-you.md`. That's a plain file you can read and edit. It can also keep notes in `notes\`, set reminders, search its memory and journal, open apps from your Start menu, open folders, and do tricks.
+- **About me (private):** right-click it → **about me (private)…** and write whatever you want it to know: who you are, what you're into, how you like answers. It keeps this in mind with every answer. It's saved encrypted in `.state\about-me.dat` and never copied into its log, memory folder, notes or chats. To remove it, clear the box and save.
 - **Costs:** it only calls the API when you talk to it, show it your screen or use voice. The creature's everyday life costs nothing. The model is set in settings and defaults to a cheap, fast one.
 
 ### Wispr Flow
@@ -187,6 +188,7 @@ Nothing, until you talk to it. When you do, OpenAI receives:
 
 - your message
 - the contents of `memory\`
+- your private "about me" text, if you wrote one
 - a short description of your desktop: window titles and which one is focused
 - your tab titles and URLs, if the extension is connected
 - a low-detail screenshot of each monitor with every question (turn that off in settings)

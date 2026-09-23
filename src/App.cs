@@ -277,6 +277,7 @@ namespace Bestie
             menu.Items.Add(new ToolStripSeparator());
             Add("rename…", null, Rename);
             Add("wake words…", null, EditWakeWords);
+            Add("about me (private)…", null, EditAboutMe);
             if (Wispr.Installed) menu.Items.Add(WisprMenu());
             Add("settings…", null, () => { if (assistant != null) assistant.OpenSettings(); });
             startupItem = Add("live here (start with windows)", null, ToggleStartup);
@@ -361,6 +362,20 @@ namespace Bestie
             if (wake != null) { wake.Dispose(); wake = null; }
             wakeCheck = 0;
             c.Say(brain.WakeNames.Count == 0 ? "ok. just \u201chey " + brain.Name.ToLowerInvariant() + "\u201d then." : "ok. i answer to " + string.Join(", ", new[] { brain.Name.ToLowerInvariant() }.Concat(brain.WakeNames)) + ".", false, 0);
+        }
+
+        void EditAboutMe()
+        {
+            string before = AboutMe.Text;
+            using (var f = new AboutMeForm(brain.Name))
+            {
+                if (f.ShowDialog() != DialogResult.OK) return;
+                string text = f.Result.Replace("\r\n", "\n").Trim();
+                if (text == before) return;
+                AboutMe.Save(text);
+                c.Say(text.Length == 0 ? "ok. wiped. we're strangers again. (not really.)"
+                    : Rng.Pick("got it. i'll keep that in mind.", "noted. privately. in my little vault.", "ok. i know you a bit better now."), false, 0);
+            }
         }
 
         /// <summary>A tiny one-line prompt. Returns null if cancelled.</summary>
