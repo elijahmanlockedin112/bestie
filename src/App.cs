@@ -338,6 +338,15 @@ namespace Bestie
             else c.Say("my talking part didn't start. check .state\\debug.log?", false, 0);
         }
 
+        /// <summary>Someone launched Bestie again (the taskbar pin, the Start menu) while it's already here: come over.</summary>
+        public void ComeSayHi()
+        {
+            if (leaveAt >= 0) return;
+            c.Summon(Control.MousePosition.X);
+            c.Glow(1.5);
+            c.Say(Rng.Pick("i'm here! i was already here.", "you rang?", "hi. still here. always here.", "coming, coming."), false, 0);
+        }
+
         void OpenBrainDumps()
         {
             try

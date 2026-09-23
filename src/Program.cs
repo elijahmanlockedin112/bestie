@@ -4,6 +4,8 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -53,7 +55,13 @@ namespace Bestie
             bool fresh;
             using (var mutex = new Mutex(true, @"Local\Bestie.Creature", out fresh))
             {
-                if (!fresh) return 0;   // already living here
+                if (!fresh)
+                {
+                    // already living here: launching it again (say, from the taskbar) calls it over instead
+                    EventWaitHandle hello;
+                    if (EventWaitHandle.TryOpenExisting(@"Local\Bestie.Hello", out hello)) { hello.Set(); hello.Dispose(); }
+                    return 0;
+                }
                 Application.ThreadException += (s, e) => DebugLog.Write("ui thread: " + e.Exception);
                 AppDomain.CurrentDomain.UnhandledException += (s, e) => DebugLog.Write("fatal: " + e.ExceptionObject);
                 Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
@@ -66,13 +74,55 @@ namespace Bestie
                 {
                     try { window.BeginInvoke(new Action(window.Close)); } catch { }
                 }, null, -1, true);
+                var helloSignal = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\Bestie.Hello");
+                ThreadPool.RegisterWaitForSingleObject(helloSignal, (s, timedOut) =>
+                {
+                    try { window.BeginInvoke(new Action(window.ComeSayHi)); } catch { }
+                }, null, -1, false);
+                ThreadPool.QueueUserWorkItem(_ => StartMenu.Ensure());
                 Application.Run(window);
                 GC.KeepAlive(quitSignal);   // or the quit event could be collected (and never fire) while we run
+                GC.KeepAlive(helloSignal);
                 brain.Save();
                 // everything is saved; don't let a straggling background thread (audio, sockets) keep the process around
                 Environment.Exit(0);
             }
             return 0;
+        }
+    }
+
+    /// <summary>Keeps a Start menu shortcut pointing at this Bestie.exe, so it's easy to find and to pin
+    /// (Windows doesn't let apps pin themselves: Start, type "bestie", right-click, Pin to taskbar).</summary>
+    static class StartMenu
+    {
+        public static string LinkPath { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Bestie.lnk"); } }
+
+        public static void Ensure()
+        {
+            try
+            {
+                string exe = Application.ExecutablePath;
+                Type t = Type.GetTypeFromProgID("WScript.Shell");
+                if (t == null) return;
+                object shell = Activator.CreateInstance(t);
+                try
+                {
+                    bool had = File.Exists(LinkPath);
+                    object link = t.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { LinkPath });
+                    Type lt = link.GetType();
+                    string current = lt.InvokeMember("TargetPath", BindingFlags.GetProperty, null, link, null) as string;
+                    if (had && string.Equals(current, exe, StringComparison.OrdinalIgnoreCase)) return;
+                    lt.InvokeMember("TargetPath", BindingFlags.SetProperty, null, link, new object[] { exe });
+                    lt.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, link, new object[] { Path.GetDirectoryName(exe) });
+                    lt.InvokeMember("IconLocation", BindingFlags.SetProperty, null, link, new object[] { exe + ",0" });
+                    lt.InvokeMember("Description", BindingFlags.SetProperty, null, link, new object[] { "a little weirdo who lives on your screen" });
+                    lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+                    Marshal.ReleaseComObject(link);
+                    DebugLog.Write("start menu: " + (had ? "pointed the Bestie shortcut at " : "added a Bestie shortcut for ") + exe);
+                }
+                finally { Marshal.ReleaseComObject(shell); }
+            }
+            catch (Exception ex) { DebugLog.Write("start menu shortcut: " + ex.Message); }
         }
     }
 
