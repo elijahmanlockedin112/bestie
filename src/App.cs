@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem;
         double calendarCheck = 20;
         int calendarChecking;
         AssistantModule assistant;
@@ -76,6 +76,18 @@ namespace Bestie
             try
             {
                 WidgetManager.ConnectCalendar = ConnectCalendar;
+                WidgetManager.Presented += r =>
+                {
+                    // the creature points at the widget that just came forward
+                    double cx = r.Left + r.Width / 2.0, cy = r.Top + r.Height / 2.0;
+                    var wm = c.World.MonAt(cx, cy);
+                    var cm = c.CurrentMon;
+                    string spot = "";
+                    if (wm != null)
+                        spot = (cy < (wm.Work.Top + wm.Work.Bottom) / 2.0 ? "top" : "bottom") + " " + (cx < (wm.Work.Left + wm.Work.Right) / 2.0 ? "left" : "right");
+                    string line = wm != null && cm != null && wm.Index != cm.Index ? "it's on your other screen, " + spot + "." : Rng.Pick("there it is. ", "there. ", "put it ") + spot + ".";
+                    c.PointAt(cx, cy, line);
+                };
                 WidgetManager.Init(this, c, () => assistant);
                 Todos.Completed += item => OnUi(() =>
                 {
@@ -256,7 +268,8 @@ namespace Bestie
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
             menu.Items.Add(WidgetsMenu());
-            calendarItem = Add("let me see my calendar…", null, CalendarMenu);
+            calendarItem = Add("let me see my calendar…", null, ConnectCalendar);
+            forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
             Add(brain.Name + "'s diary", null, OpenDiary);
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
@@ -270,7 +283,9 @@ namespace Bestie
             Add("say goodbye", null, Goodbye);
             menu.Opening += (s, e) =>
             {
-                calendarItem.Text = IcsCalendar.Configured ? "my calendar: connected (disconnect)" : "let me see my calendar…";
+                int cals = IcsCalendar.Count;
+                calendarItem.Text = cals == 0 ? "let me see my calendar…" : "add another calendar… (" + cals + " connected)";
+                forgetCalendarsItem.Visible = cals > 0;
                 napItem.Text = c.Pose == Pose.Lie ? "wake up" : "take a nap";
                 startupItem.Checked = StartsWithWindows();
             };
@@ -468,31 +483,28 @@ namespace Bestie
 
         // ---- your real calendar, via its secret iCal link (read-only, no google cloud setup) ----
 
-        void CalendarMenu()
+        void ForgetCalendars()
         {
-            if (IcsCalendar.Configured)
-            {
-                if (MessageBox.Show("stop reading your calendar? (you can connect it again any time.)", brain.Name, MessageBoxButtons.YesNo) == DialogResult.Yes)
-                {
-                    IcsCalendar.Disconnect();
-                    c.Say("ok. i forgot the link. your calendar is private again.", false, 0);
-                    Journal.Add("you took my calendar link back.");
-                }
-                return;
-            }
-            ConnectCalendar();
+            if (MessageBox.Show("stop reading your " + (IcsCalendar.Count == 1 ? "calendar" : IcsCalendar.Count + " calendars") + "? (you can connect them again any time.)", brain.Name, MessageBoxButtons.YesNo) != DialogResult.Yes) return;
+            IcsCalendar.Disconnect();
+            c.Say("ok. i forgot the links. your calendar is private again.", false, 0);
+            Journal.Add("you took my calendar links back.");
         }
 
         void ConnectCalendar()
         {
             // open google calendar's settings so the link is one click away
             try { Process.Start("https://calendar.google.com/calendar/u/0/r/settings"); } catch { }
-            string link = Ask("let me see your calendar",
-                "google calendar just opened in your browser.\n\n" +
-                "1. on the left, under “settings for my calendars”, click your calendar.\n" +
+            bool more = IcsCalendar.Configured;
+            string link = Ask(more ? "add another calendar" : "let me see your calendar",
+                "google calendar just opened in your browser. every calendar has its own secret link, so do this once per calendar:\n\n" +
+                "1. on the left, click the calendar (under “settings for my calendars”).\n" +
                 "2. scroll down to “integrate calendar”.\n" +
                 "3. copy the “secret address in iCal format” and paste it here.\n\n" +
-                "it stays on this computer (encrypted), and i can only read with it.", "");
+                "a calendar that comes from another account (like a school one) only shows its secret address when you're signed in to google calendar AS that account. " +
+                "if it's not there, the school turned it off, and i'll read it through your browser instead.\n\n" +
+                "links stay on this computer (encrypted), and i can only read with them." +
+                (more ? "\n\nalready reading: " + string.Join(", ", IcsCalendar.Names) + "." : ""), "");
             if (string.IsNullOrWhiteSpace(link)) return;
             c.Say("checking the link…", true, 8);
             System.Threading.ThreadPool.QueueUserWorkItem(_ =>
@@ -559,6 +571,10 @@ namespace Bestie
             allNotes.Click += (s, e) => WidgetManager.ShowNotes();
             root.DropDownItems.Add(newNote);
             root.DropDownItems.Add(allNotes);
+            root.DropDownItems.Add(new ToolStripSeparator());
+            var putAway = new ToolStripMenuItem("put away all widgets");
+            putAway.Click += (s, e) => WidgetManager.HideAll();
+            root.DropDownItems.Add(putAway);
             return root;
         }
 

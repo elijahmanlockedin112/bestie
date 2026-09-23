@@ -1127,6 +1127,14 @@ namespace Bestie
             AbortActivity();
         }
 
+        /// <summary>Look at a spot on the screen and say something about it ("there it is. top right.").</summary>
+        public void PointAt(double x, double y, string line)
+        {
+            LookAt(x, y, 3.5);
+            if (Mode == Mode.Ground && Pose != Pose.Lie) { Facing = x >= X ? 1 : -1; Squash = -0.2; }
+            if (!string.IsNullOrEmpty(line)) Say(line, false, 2.8);
+        }
+
         public void Summon(double x)
         {
             if (Mode == Mode.Held || Mode == Mode.Egg || Mode == Mode.Hidden) return;

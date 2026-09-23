@@ -15,29 +15,57 @@ namespace Bestie
     /// Repeating events (daily/weekly/monthly/yearly, with exceptions) are expanded locally.</summary>
     internal static class IcsCalendar
     {
+        sealed class Feed
+        {
+            public string Url, Name;
+            public List<VEvent> Parsed;
+            public DateTime FetchedUtc = DateTime.MinValue;
+        }
+
         static readonly object gate = new object();
-        static string url;
+        static readonly List<Feed> feeds = new List<Feed>();
         static bool loaded;
-        static List<VEvent> parsed;
-        static DateTime fetchedUtc = DateTime.MinValue;
         static string lastError;
         static readonly HashSet<string> warned = new HashSet<string>();
 
-        static string StorePath { get { return Home.State("calendar-ical.dat"); } }
+        // one encrypted file with every link, one per line (the old single-link file is picked up once)
+        static string StorePath { get { return Home.State("calendars-ical.dat"); } }
+        static string OldStorePath { get { return Home.State("calendar-ical.dat"); } }
 
-        public static bool Configured { get { Load(); return !string.IsNullOrEmpty(url); } }
+        public static bool Configured { get { Load(); lock (gate) return feeds.Count > 0; } }
+        public static int Count { get { Load(); lock (gate) return feeds.Count; } }
         public static string LastError { get { return lastError; } }
+        public static List<string> Names { get { Load(); lock (gate) return feeds.Select(f => f.Name ?? "a calendar").ToList(); } }
 
         static void Load()
         {
             if (loaded) return;
-            loaded = true;
-            try
+            lock (gate)
             {
-                if (File.Exists(StorePath))
-                    url = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(StorePath), null, DataProtectionScope.CurrentUser));
+                if (loaded) return;
+                loaded = true;
+                foreach (string path in new[] { StorePath, OldStorePath })
+                {
+                    try
+                    {
+                        if (!File.Exists(path)) continue;
+                        string text = Encoding.UTF8.GetString(ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser));
+                        foreach (string line in text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0))
+                        {
+                            string[] parts = line.Split('\t');
+                            if (!feeds.Any(f => f.Url == parts[0])) feeds.Add(new Feed { Url = parts[0], Name = parts.Length > 1 ? parts[1] : null });
+                        }
+                    }
+                    catch (Exception ex) { DebugLog.Write("calendar links: couldn't read them back (" + ex.Message + ")"); }
+                }
             }
-            catch (Exception ex) { DebugLog.Write("calendar link: couldn't read it back (" + ex.Message + ")"); }
+        }
+
+        static void SaveLocked()
+        {
+            string text = string.Join("\n", feeds.Select(f => f.Url + "\t" + (f.Name ?? "")));
+            File.WriteAllBytes(StorePath, ProtectedData.Protect(Encoding.UTF8.GetBytes(text), null, DataProtectionScope.CurrentUser));
+            try { if (File.Exists(OldStorePath)) File.Delete(OldStorePath); } catch { }
         }
 
         public static bool LooksLikeIcalLink(string s)
@@ -46,9 +74,16 @@ namespace Bestie
             return Uri.TryCreate((s ?? "").Trim(), UriKind.Absolute, out u) && u.Scheme == "https" && (u.AbsolutePath.EndsWith(".ics") || u.Host.EndsWith("calendar.google.com"));
         }
 
-        /// <summary>Check the link works (downloads it once), then save it. Any thread; blocks for the download.</summary>
+        static string CalName(string ics)
+        {
+            var m = Regex.Match(ics, @"^X-WR-CALNAME:(.*)$", RegexOptions.Multiline);
+            return m.Success ? Unescape(m.Groups[1].Value.Trim()) : null;
+        }
+
+        /// <summary>Check a link works (downloads it once), then add it to the calendars it reads. Any thread; blocks.</summary>
         public static bool Connect(string link, out string message)
         {
+            Load();
             link = (link ?? "").Trim().Trim('"', '\'', '<', '>');
             if (link.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase)) link = "https://" + link.Substring(9);
             if (!LooksLikeIcalLink(link)) { message = "that doesn't look like a calendar link. it should start with https://calendar.google.com/calendar/ical/ and end in .ics"; return false; }
@@ -57,13 +92,18 @@ namespace Bestie
                 string ics = Download(link);
                 if (!ics.Contains("BEGIN:VCALENDAR")) { message = "that link didn't give me a calendar. make sure it's the SECRET address in iCal format."; return false; }
                 var evs = Parse(ics);
+                string name = CalName(ics) ?? "calendar " + (Count + 1);
                 lock (gate)
                 {
-                    url = link; loaded = true; parsed = evs; fetchedUtc = DateTime.UtcNow; lastError = null;
-                    File.WriteAllBytes(StorePath, ProtectedData.Protect(Encoding.UTF8.GetBytes(link), null, DataProtectionScope.CurrentUser));
+                    var existing = feeds.FirstOrDefault(f => f.Url == link);
+                    if (existing == null) feeds.Add(existing = new Feed { Url = link });
+                    existing.Name = name; existing.Parsed = evs; existing.FetchedUtc = DateTime.UtcNow;
+                    lastError = null;
+                    SaveLocked();
                 }
-                int soon = Expand(evs, DateTime.Today, DateTime.Today.AddDays(7)).Count;
-                message = "connected. i can see your calendar now (" + soon + " event" + (soon == 1 ? "" : "s") + " this week).";
+                int soon = Expand(evs, DateTime.Today, DateTime.Today.AddDays(7), name).Count;
+                message = "connected \u201c" + name + "\u201d (" + soon + " event" + (soon == 1 ? "" : "s") + " this week)." +
+                    (Count > 1 ? " i'm reading " + Count + " calendars now." : "");
                 return true;
             }
             catch (WebException ex)
@@ -77,8 +117,9 @@ namespace Bestie
 
         public static void Disconnect()
         {
-            lock (gate) { url = null; parsed = null; fetchedUtc = DateTime.MinValue; }
+            lock (gate) { feeds.Clear(); loaded = true; }
             try { File.Delete(StorePath); } catch { }
+            try { File.Delete(OldStorePath); } catch { }
         }
 
         static string Download(string link)
@@ -94,33 +135,39 @@ namespace Bestie
                 return sr.ReadToEnd();
         }
 
-        /// <summary>Events between two local times. Refetches at most every 10 minutes; blocking (call off the UI thread).</summary>
+        /// <summary>Events from every connected calendar between two local times. Each feed refetches at most every
+        /// 10 minutes; blocking (call off the UI thread).</summary>
         public static List<CalEvent> Events(DateTime from, DateTime to)
         {
             Load();
-            string link;
-            lock (gate) link = url;
-            if (string.IsNullOrEmpty(link)) return new List<CalEvent>();
-            List<VEvent> evs;
-            lock (gate) evs = parsed;
-            if (evs == null || (DateTime.UtcNow - fetchedUtc).TotalMinutes > 10)
+            List<Feed> list;
+            lock (gate) list = feeds.ToList();
+            var result = new List<CalEvent>();
+            string problem = null;
+            foreach (var f in list)
             {
-                try
+                List<VEvent> evs;
+                lock (gate) evs = f.Parsed;
+                if (evs == null || (DateTime.UtcNow - f.FetchedUtc).TotalMinutes > 10)
                 {
-                    var fresh = Parse(Download(link));
-                    lock (gate) { parsed = evs = fresh; fetchedUtc = DateTime.UtcNow; lastError = null; }
+                    try
+                    {
+                        string ics = Download(f.Url);
+                        var fresh = Parse(ics);
+                        lock (gate) { f.Parsed = evs = fresh; f.FetchedUtc = DateTime.UtcNow; if (f.Name == null) f.Name = CalName(ics); }
+                    }
+                    catch (Exception ex)
+                    {
+                        problem = "couldn't refresh \u201c" + (f.Name ?? "a calendar") + "\u201d (" + ex.Message + ")";
+                        DebugLog.Write("calendar link: " + problem);
+                        lock (gate) f.FetchedUtc = DateTime.UtcNow.AddMinutes(-8);   // try again in ~2 min
+                    }
                 }
-                catch (Exception ex)
-                {
-                    lastError = "couldn't refresh the calendar (" + ex.Message + ")";
-                    DebugLog.Write("calendar link: " + lastError);
-                    lock (gate) { fetchedUtc = DateTime.UtcNow.AddMinutes(-8); }   // try again in ~2 min
-                    if (evs == null) return new List<CalEvent>();
-                }
+                if (evs != null) result.AddRange(Expand(evs, from, to, f.Name));
             }
-            return Expand(evs, from, to);
+            lastError = problem;
+            return result.OrderBy(e => e.Start).ToList();
         }
-
         /// <summary>One line for the assistant: the next ~12 hours.</summary>
         public static string ContextLine()
         {
@@ -281,7 +328,7 @@ namespace Bestie
 
         static readonly string[] DayCodes = { "SU", "MO", "TU", "WE", "TH", "FR", "SA" };
 
-        static List<CalEvent> Expand(List<VEvent> all, DateTime from, DateTime to)
+        static List<CalEvent> Expand(List<VEvent> all, DateTime from, DateTime to, string calendar)
         {
             var result = new List<CalEvent>();
             // moved/edited single occurrences of a repeating event, keyed by uid + original start
@@ -294,7 +341,7 @@ namespace Bestie
                 if (e.RecurrenceId.HasValue) continue;
                 if (string.IsNullOrEmpty(e.Rrule))
                 {
-                    if (!e.Cancelled && e.End > from && e.Start < to) result.Add(ToCal(e, e.Start));
+                    if (!e.Cancelled && e.End > from && e.Start < to) result.Add(ToCal(e, e.Start, calendar));
                     continue;
                 }
                 foreach (DateTime start in Occurrences(e, from, to))
@@ -302,22 +349,22 @@ namespace Bestie
                     if (e.ExDates.Any(x => Key(x) == Key(start))) continue;
                     VEvent moved;
                     if (e.Uid != null && overrides.TryGetValue(e.Uid + "@" + Key(start), out moved)) continue;   // shown below, where it moved to
-                    result.Add(ToCal(e, start));
+                    result.Add(ToCal(e, start, calendar));
                 }
             }
             foreach (var o in overrides.Values)
-                if (!o.Cancelled && o.End > from && o.Start < to) result.Add(ToCal(o, o.Start));
+                if (!o.Cancelled && o.End > from && o.Start < to) result.Add(ToCal(o, o.Start, calendar));
             return result.OrderBy(x => x.Start).ToList();
         }
 
         static string Key(DateTime t) { return t.ToString("yyyyMMddHHmm", CultureInfo.InvariantCulture); }
 
-        static CalEvent ToCal(VEvent e, DateTime start)
+        static CalEvent ToCal(VEvent e, DateTime start, string calendar)
         {
             return new CalEvent
             {
                 Id = (e.Uid ?? "event") + (string.IsNullOrEmpty(e.Rrule) ? "" : "_" + Key(start)),
-                CalendarId = "primary", Title = string.IsNullOrEmpty(e.Summary) ? "(busy)" : e.Summary,
+                CalendarId = calendar ?? "primary", Title = string.IsNullOrEmpty(e.Summary) ? "(busy)" : e.Summary,
                 Location = e.Location, Description = e.Description, Start = start, End = start + e.Duration, AllDay = e.AllDay
             };
         }

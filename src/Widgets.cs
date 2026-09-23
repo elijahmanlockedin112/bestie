@@ -55,15 +55,44 @@ namespace Bestie
             catch (Exception ex) { DebugLog.Write("widgets: couldn't read layout: " + ex.Message); }
             saveTimer = new System.Windows.Forms.Timer { Interval = 800 };
             saveTimer.Tick += (s, e) => { saveTimer.Stop(); SaveNow(); };
-            foreach (var st in states.Where(s => s.Open).ToList()) Open(st);
+            starting = true;   // widgets that were open last time come back quietly, where they were
+            try { foreach (var st in states.Where(s => s.Open).ToList()) Open(st); }
+            finally { starting = false; }
         }
 
         public static bool IsOpen(string kind) { return open.Values.Any(w => w.State.Kind == kind && w.Visible); }
 
+        /// <summary>Raised (UI thread) when a widget is called up: where it is on screen, so the creature can point at it.</summary>
+        public static event Action<Rectangle> Presented;
+
+        /// <summary>From the menu: show it (or, if it's already open somewhere behind things, bring it forward).</summary>
         public static void Toggle(string kind)
         {
             if (kind == "note") { NewNote(null); return; }
-            if (IsOpen(kind)) Hide(kind); else Show(kind);
+            Show(kind);
+        }
+
+        public static void HideAll()
+        {
+            foreach (var w in open.Values.ToList()) w.Close();
+        }
+
+        /// <summary>Windows won't let a background app steal the front, but a window that was topmost for a
+        /// moment ends up above every normal window. Then a little flash so it's easy to spot.</summary>
+        static void Present(WidgetForm w)
+        {
+            if (w.WindowState == FormWindowState.Minimized) w.WindowState = FormWindowState.Normal;
+            if (!Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(w.Bounds)))
+            {
+                var d = DefaultBounds(w.State.Kind, w.DeviceDpi / 96f);
+                w.Location = d.Location;
+            }
+            w.TopMost = true;
+            if (!w.State.Pinned) w.TopMost = false;   // HWND_NOTOPMOST: top of all normal windows
+            Native.SetForegroundWindowSafe(w.Handle);
+            w.Flash();
+            var p = Presented;
+            if (p != null) try { p(w.Bounds); } catch { }
         }
 
         public static void Show(string kind)
@@ -120,7 +149,7 @@ namespace Bestie
         static void Open(WidgetState st)
         {
             WidgetForm w;
-            if (open.TryGetValue(st.Id, out w) && !w.IsDisposed) { w.Show(); w.Activate(); return; }
+            if (open.TryGetValue(st.Id, out w) && !w.IsDisposed) { w.Show(); Present(w); return; }
             switch (st.Kind)
             {
                 case "todo": w = new TodoWidget(st); break;
@@ -136,7 +165,10 @@ namespace Bestie
                 if (!closingAll) { st.Open = false; SaveSoon(); }
             };
             w.Show();
+            if (!starting) Present(w);
         }
+
+        static bool starting;
 
         internal static void Forget(WidgetState st) { states.Remove(st); SaveSoon(); }
 
@@ -191,6 +223,20 @@ namespace Bestie
         protected int HeaderH { get { return (int)(34 * k); } }
         protected int Pad { get { return (int)(10 * k); } }
         protected Point Hover = new Point(-1, -1);
+        double flash;
+        System.Windows.Forms.Timer flashTimer;
+
+        /// <summary>A short glowing border, so a widget that just came forward is easy to spot.</summary>
+        public void Flash()
+        {
+            flash = 1;
+            if (flashTimer == null)
+            {
+                flashTimer = new System.Windows.Forms.Timer { Interval = 30 };
+                flashTimer.Tick += (s, e) => { flash -= 0.03; if (flash <= 0) { flash = 0; flashTimer.Stop(); } Invalidate(); };
+            }
+            flashTimer.Start();
+        }
 
         protected abstract string Title { get; }
         protected virtual string Subtitle { get { return null; } }
@@ -268,6 +314,12 @@ namespace Bestie
             g.SmoothingMode = SmoothingMode.AntiAlias;
             g.TextRenderingHint = TextRenderingHint.ClearTypeGridFit;
             using (var edge = new Pen(Color.FromArgb(40, 0, 0, 0), 1)) g.DrawRectangle(edge, 0, 0, Width - 1, Height - 1);
+            if (flash > 0)
+            {
+                // pulses twice while it fades
+                int a = (int)(220 * flash * (0.6 + 0.4 * Math.Abs(Math.Cos(flash * Math.PI * 2))));
+                using (var glow = new Pen(Color.FromArgb(a, WidgetManager.Accent), 4 * k)) g.DrawRectangle(glow, 2 * k, 2 * k, Width - 4 * k, Height - 4 * k);
+            }
 
             // header
             using (var b = new SolidBrush(WidgetManager.Accent))
@@ -546,6 +598,15 @@ namespace Bestie
             });
         }
 
+        bool multiCal { get { return events.Select(e => e.CalendarId).Distinct().Count() > 1; } }
+
+        static Color CalColor(string name)
+        {
+            int h = 7;
+            foreach (char ch in name ?? "") h = h * 31 + ch;
+            return Renderer.Hsl(Math.Abs(h) % 360, 0.55, 0.5, 255);
+        }
+
         static string DayName(DateTime d)
         {
             if (d.Date == DateTime.Today) return "today";
@@ -601,6 +662,8 @@ namespace Bestie
                         using (var tb = new SolidBrush(past ? Faint : Ink))
                         {
                             g.DrawString(when, timeFont, past ? faint : acc, area.X + 4 * k, y + 1 * k);
+                            if (multiCal)   // a dot per calendar when more than one is connected
+                                using (var dot = new SolidBrush(CalColor(e.CalendarId))) g.FillEllipse(dot, area.X + 62 * k, y + 7 * k, 6 * k, 6 * k);
                             Ellipsize(g, e.Title ?? "(no title)", font, tb, new RectangleF(area.X + 70 * k, y - 2 * k, area.Width - 72 * k, 22 * k));
                         }
                         y += 22 * k;
