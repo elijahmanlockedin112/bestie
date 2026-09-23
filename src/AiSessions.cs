@@ -48,7 +48,7 @@ namespace Bestie
 
         public static void Start()
         {
-            if (timer == null) timer = new Timer(_ => Scan(), null, 800, 3000);
+            if (timer == null) timer = new Timer(_ => Scan(), null, 800, 4000);
         }
 
         public static void Stop()

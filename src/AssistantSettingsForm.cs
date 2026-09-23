@@ -3,6 +3,7 @@ using System;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -28,11 +29,12 @@ namespace Bestie
         readonly TextBox keyBox, baseUrlBox;
         readonly Label keyHint, testResult, browserStatus, saveResult;
         readonly Button testButton;
-        static readonly string[] EngineLabels = { "openai voice (sounds real, about a cent a minute)", "windows voice (free, a bit robotic)" };
+        static readonly string[] EngineLabels = { "openai voice (sounds real, ~1.5¢ a minute of talking)", "windows voice (free, a bit robotic)" };
 
         readonly ComboBox modelBox, effortBox, transcribeBox, voiceBox, engineBox, openAiVoiceBox, ttsModelBox;
-        readonly CheckBox speakBox, screenBox, tabsBox, autoLookBox;
-        readonly NumericUpDown rateBox, historyBox;
+        readonly CheckBox speakBox, screenBox, tabsBox, autoLookBox, nosyBox, speakNosyBox;
+        readonly NumericUpDown rateBox, historyBox, nosyMinutesBox;
+        readonly TextBox skipBox;
         readonly HotkeyTextBox[] hotkeyBoxes = new HotkeyTextBox[3];
         readonly Label[] hotkeyLabels = new Label[3];
         readonly System.Windows.Forms.Timer browserTimer;
@@ -43,7 +45,8 @@ namespace Bestie
 
         int S(double px) { return (int)Math.Round(px * scale); }
 
-        public AssistantSettingsForm(AssistantModule owner, AssistantSettings settings, float scale)
+        /// <summary>area: work area of the monitor it opens on (the form scrolls if it wouldn't fit).</summary>
+        public AssistantSettingsForm(AssistantModule owner, AssistantSettings settings, float scale, Rectangle area)
         {
             this.owner = owner;
             s = settings;
@@ -62,17 +65,18 @@ namespace Bestie
             BackColor = Cream;
             ForeColor = Ink;
             Font = font;
-            AutoSize = true;
-            AutoSizeMode = AutoSizeMode.GrowAndShrink;
-            Padding = new Padding(S(14));
+            AutoSize = false;
 
+            var scroller = new Panel();
+            scroller.Dock = DockStyle.Fill;
+            scroller.AutoScroll = true;
             table = new TableLayoutPanel();
             table.AutoSize = true;
             table.AutoSizeMode = AutoSizeMode.GrowAndShrink;
             table.ColumnCount = 2;
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             table.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            table.Dock = DockStyle.Fill;
+            table.Location = new Point(S(14), S(10));
 
             // --- brain key
             keyBox = new TextBox();
@@ -157,6 +161,24 @@ namespace Bestie
             historyBox = Num(4, 200, s.MaxHistoryMessages, S(60));
             Row("memory", Lbl("keep the last", Ink), historyBox, Lbl("messages of a chat in my head", Ink));
 
+            // --- nosy peeks
+            nosyBox = Check("be nosy (peek at what i'm doing now and then)", s.BeNosy);
+            Row("nosy", nosyBox);
+            nosyMinutesBox = Num(5, 240, s.NosyMinutes, S(60));
+            Row("", Lbl("about every", Ink), nosyMinutesBox, Lbl("minutes", Ink));
+            speakNosyBox = Check("say nosy remarks out loud", s.SpeakNosy);
+            Row("", speakNosyBox);
+            skipBox = new TextBox();
+            skipBox.Multiline = true;
+            skipBox.AcceptsReturn = false;
+            skipBox.WordWrap = true;
+            skipBox.ScrollBars = ScrollBars.Vertical;
+            skipBox.Width = S(420);
+            skipBox.Height = S(58);
+            skipBox.Font = small;
+            skipBox.Text = s.NosySkipList ?? "";
+            Row("", Stack(Note("never peek when the window or app mentions any of these (comma-separated):", Muted), skipBox));
+
             // --- browser
             browserStatus = Note(BrowserStatusText(), Muted);
             Row("browser", browserStatus);
@@ -190,8 +212,17 @@ namespace Bestie
             table.SetColumnSpan(bottom, 2);
             AcceptButton = save;
 
-            Controls.Add(table);
+            scroller.Controls.Add(table);
+            Controls.Add(scroller);
             ResumeLayout(true);
+
+            // fit the content, but never taller than the monitor (then it scrolls)
+            Size pref = table.GetPreferredSize(Size.Empty);
+            int maxH = (area.Height > 0 ? area.Height : Screen.PrimaryScreen.WorkingArea.Height) - S(40);
+            int h = Math.Min(pref.Height + S(24), maxH);
+            int w = pref.Width + S(28) + (pref.Height + S(24) > maxH ? SystemInformation.VerticalScrollBarWidth : 0);
+            ClientSize = new Size(w, h);
+            scroller.AutoScrollMargin = new Size(S(14), S(14));
 
             browserTimer = new System.Windows.Forms.Timer();
             browserTimer.Interval = 2000;
@@ -458,6 +489,11 @@ namespace Bestie
             n.AllowScreenTool = screenBox.Checked;
             n.AllowTabReading = tabsBox.Checked;
             n.MaxHistoryMessages = (int)historyBox.Value;
+            n.BeNosy = nosyBox.Checked;
+            n.NosyMinutes = (int)nosyMinutesBox.Value;
+            n.SpeakNosy = speakNosyBox.Checked;
+            n.NosySkipList = string.Join(", ", skipBox.Text.Split(',', '\n', '\r', ';')
+                .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray());
             return n;
         }
 

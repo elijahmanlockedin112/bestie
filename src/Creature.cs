@@ -649,7 +649,7 @@ namespace Bestie
             }
 
             musicCheck -= dt;
-            if (musicCheck <= 0) { musicCheck = 3; CheckMusic(); }
+            if (musicCheck <= 0) { musicCheck = 5; CheckMusic(); }
 
             fgCheck -= dt;
             if (fgCheck <= 0)

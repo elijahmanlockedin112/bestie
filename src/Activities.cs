@@ -1118,6 +1118,14 @@ namespace Bestie
             yield return Pause(asked ? 5 : 2);
         }
 
+        /// <summary>Someone's pressing on it: stop in place (so it doesn't walk out from under the cursor).</summary>
+        public void Freeze()
+        {
+            if (Mode != Mode.Ground) return;
+            StopWalking();
+            AbortActivity();
+        }
+
         public void Summon(double x)
         {
             if (Mode == Mode.Held || Mode == Mode.Egg || Mode == Mode.Hidden) return;

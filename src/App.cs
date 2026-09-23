@@ -20,7 +20,8 @@ namespace Bestie
         readonly Stopwatch clock = Stopwatch.StartNew();
         Surface surf;
         double surfScale, lastT, topTimer, trayTimer, leaveAt = -1;
-        bool mouseDown, dragging;
+        bool mouseDown, dragging, holdTalking;
+        double downTime;
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
@@ -78,11 +79,16 @@ namespace Bestie
                 if (now - leaveAt > 3.3) { Close(); return; }
             }
 
+            // 60 fps only when things move quickly (held, flying, climbing); 30 fps is plenty for waddling and breathing
+            int interval = c.Mode == Mode.Held || c.Mode == Mode.Air || c.Mode == Mode.Wall || c.Mode == Mode.Ceiling || c.Mode == Mode.Egg ? 15 : 33;
+            if (timer.Interval != interval) timer.Interval = interval;
+
             Render();
             bubble.Update(c);
             if (sessHandle != null) sessHandle.Tick(dt);
             AnnounceFinished();
             MaybeBeNosy();
+            CheckHoldToTalk();
 
             topTimer += dt;
             if (topTimer > 3) { topTimer = 0; KeepOnTop(); bubble.KeepOnTop(); }
@@ -118,30 +124,55 @@ namespace Bestie
 
         // ---- mouse ----
 
+        // quick click = pet, click and drag = pick up, click and hold still = talk to it (push-to-talk)
+        const double HoldToTalkSeconds = 0.45;
+
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left) { mouseDown = true; dragging = false; downAt = Control.MousePosition; }
+            if (e.Button == MouseButtons.Left) { mouseDown = true; dragging = holdTalking = false; downAt = Control.MousePosition; downTime = Clock.T; c.Freeze(); }
             else if (e.Button == MouseButtons.Right) ShowMenu();
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
-            if (!mouseDown || dragging) return;
+            if (!mouseDown || dragging || holdTalking) return;
             var p = Control.MousePosition;
             if (Math.Abs(p.X - downAt.X) + Math.Abs(p.Y - downAt.Y) > 6) { dragging = true; c.Grab(p.X, p.Y); }
+        }
+
+        /// <summary>Called every tick: a press that stays put long enough turns into listening.</summary>
+        void CheckHoldToTalk()
+        {
+            if (!mouseDown || dragging || holdTalking || Clock.T - downTime < HoldToTalkSeconds) return;
+            holdTalking = true;
+            c.Squash = -0.25;
+            c.Emit("what", 1);
+            try { if (assistant != null) assistant.StartListening(true); else c.Say("my ears aren't plugged in. (the talking part didn't start.)", false, 0); }
+            catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
+        }
+
+        void EndPress(bool send)
+        {
+            if (holdTalking)
+            {
+                try { if (assistant != null && assistant.IsListening) assistant.StopListening(send); } catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
+            }
+            else if (dragging) c.Release();
+            else if (send) c.Pet();
+            mouseDown = dragging = holdTalking = false;
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || !mouseDown) return;
-            if (dragging) c.Release(); else c.Pet();
-            mouseDown = dragging = false;
+            EndPress(true);
         }
 
         protected override void OnMouseCaptureChanged(EventArgs e)
         {
             base.OnMouseCaptureChanged(e);
-            if (dragging && !Capture) { c.Release(); mouseDown = dragging = false; }
+            // lost the mouse mid-press (e.g. a dialog popped up): let go, but still send what was said
+            if (mouseDown && !Capture) EndPress(holdTalking);
         }
 
         protected override void OnMouseDoubleClick(MouseEventArgs e)

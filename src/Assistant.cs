@@ -116,6 +116,7 @@ namespace Bestie
             disposed = true;
             lock (queueGate) queue.Clear();
             try { OpenAIClient c = activeClient; if (c != null) c.Abort(); } catch { }
+            try { OpenAIClient c = peekClient; if (c != null) c.Abort(); } catch { }
             try { reminders.Dispose(); } catch { }
             MethodInvoker uiParts = delegate
             {
@@ -769,9 +770,18 @@ namespace Bestie
             }
             if (transcribing) { SetChatStatus("still writing down the last thing…"); return; }
             if (!settings.HasKey) { OpenChatCore(); return; }
+            StartRecording(false);
+        }
+
+        /// <summary>UI thread. Opens the mic; never opens or focuses the chat window.</summary>
+        void StartRecording(bool pushToTalk)
+        {
+            if (disposed || recorder != null || transcribing) return;
+            if (!settings.HasKey) { SafeSay(NoKeyLine, 0); return; }
             RememberUserWindow();
             tts.Stop();
             var r = new VoiceRecorder();
+            r.PushToTalk = pushToTalk;
             r.Finished += OnRecorderFinished;
             string err;
             if (!r.Start(out err))
@@ -782,14 +792,54 @@ namespace Bestie
             recorder = r;
             SafeMood("listening");
             if (chat != null && !chat.IsDisposed) chat.SetListening(true);
-            SetChatStatus("listening… press 🎤 again to stop");
-            if (chat == null || chat.IsDisposed || !chat.Visible) SafeSay("i'm listening…", 2.5);
+            SetChatStatus(pushToTalk ? "listening… let go when you're done" : "listening… press 🎤 again to stop");
+            if (chat == null || chat.IsDisposed || !chat.Visible) SafeSay("i'm listening…", pushToTalk ? 1.5 : 2.5);
+        }
+
+        // ------------------------------------------------------------------ push-to-talk (hold the creature)
+
+        /// <summary>True while the mic is recording for a chat message.</summary>
+        public bool IsListening { get { VoiceRecorder r = recorder; return r != null && r.IsRecording; } }
+
+        /// <summary>Start listening like the voice hotkey does. pushToTalk=true: silence doesn't end it,
+        /// StopListening does (hard cap 60 s). Never opens or focuses the chat window. UI thread.</summary>
+        public void StartListening(bool pushToTalk) { RunOnUi(delegate { StartRecording(pushToTalk); }); }
+
+        /// <summary>send=true: stop and transcribe/send as usual (a click or a hold without words is dropped
+        /// quietly); send=false: throw the audio away. UI thread.</summary>
+        public void StopListening(bool send) { RunOnUi(delegate { StopRecording(send); }); }
+
+        void StopRecording(bool send)
+        {
+            VoiceRecorder r = recorder;
+            if (r == null) return;
+            if (send)
+            {
+                if (r.IsRecording) { r.RequestStop(); SetChatStatus("ok, one sec…"); }
+                return;
+            }
+            r.Abort();
+            recorder = null;
+            if (chat != null && !chat.IsDisposed) chat.SetListening(false);
+            SetChatStatus("");
+            SafeMood(IsBusy ? "thinking" : "idle");
         }
 
         /// <summary>Recording thread.</summary>
         void OnRecorderFinished(VoiceRecorder r, byte[] wav, string reason, string error)
         {
             if (disposed || reason == "aborted") return;
+            if (reason == "quiet")
+            {
+                Post(delegate
+                {
+                    if (recorder == r) recorder = null;
+                    if (chat != null && !chat.IsDisposed) chat.SetListening(false);
+                    SetChatStatus("");
+                    SafeMood(IsBusy ? "thinking" : "idle");
+                });
+                return;
+            }
             if (error != null || wav == null)
             {
                 string msg = error ?? (reason == "nothing" ? "i didn't hear anything. is the mic muted?" : "i didn't catch anything.");
@@ -934,6 +984,147 @@ namespace Bestie
             }
         }
 
+        // ================================================================== nosy peek
+
+        const int PeekFloorMinutes = 5;
+        internal const string PeekInstruction =
+            "You're peeking over the person's shoulder at their screen. Say ONE short, nosy, kind, in-character remark about what they're doing " +
+            "(max ~18 words), like a curious little superintendent. React to specifics you can see (the app, the topic, a song). " +
+            "No advice unless it's tiny and obviously welcome. If it looks private, sensitive, or you can't tell what it is, reply exactly SKIP.";
+        volatile bool peekRunning;
+        DateTime lastPeekUtc = DateTime.MinValue;
+        volatile OpenAIClient peekClient;
+#pragma warning disable 649   // only tests set it
+        internal static Func<IntPtr> TestForegroundHook;
+#pragma warning restore 649
+
+        /// <summary>How often the creature should peek, in minutes (from settings).</summary>
+        public int NosyMinutes { get { return settings.NosyMinutes; } }
+
+        /// <summary>Quietly peek at what the user is doing and make one in-character remark.
+        /// Returns false (and does nothing) if it can't/shouldn't right now. Call on the UI thread.
+        /// Never sets the mood, never shows errors, never touches the chat history.</summary>
+        public bool Peek()
+        {
+            try
+            {
+                if (disposed) return false;
+                if (ui.IsHandleCreated && ui.InvokeRequired) return OnUi<bool>(Peek, false);
+                IntPtr fg;
+                string app;
+                string why = PeekBlockReason(out fg, out app);
+                if (why != null) { DebugLog.Write("assistant: no peek (" + why + ")"); return false; }
+                StartPeek(fg, app);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                DebugLog.Write("assistant: peek: " + ex.Message);
+                return false;
+            }
+        }
+
+        /// <summary>Null if a peek may start now; otherwise a short reason (for the log and tests).</summary>
+        internal string PeekBlockReason(out IntPtr fg, out string app)
+        {
+            fg = IntPtr.Zero;
+            app = "";
+            AssistantSettings s = settings;
+            if (!s.HasKey) return "no key";
+            if (!s.BeNosy) return "nosy is off";
+            if (IsBusy || recorder != null || transcribing) return "busy";
+            if (tts.Speaking) return "talking";
+            if (chat != null && !chat.IsDisposed && chat.Visible && chat.ContainsFocus) return "chat is focused";
+            if (peekRunning) return "already peeking";
+            if ((DateTime.UtcNow - lastPeekUtc).TotalMinutes < PeekFloorMinutes) return "too soon";
+            Func<IntPtr> hook = TestForegroundHook;
+            fg = hook != null ? hook() : ScreenGrab.ForegroundWindowNotOurs();
+            if (fg == IntPtr.Zero) return "nothing of theirs in front";
+            app = ScreenGrab.WindowApp(fg);
+            if (LooksPrivate(ScreenGrab.WindowTitle(fg), app, s.NosySkipList)) return "looks private";
+            if (ScreenGrab.IsCaptionlessFullscreen(fg)) return "fullscreen";
+            return null;
+        }
+
+        /// <summary>Case-insensitive substring match of the window title or app name against the comma-separated skip list.</summary>
+        internal static bool LooksPrivate(string title, string app, string skipList)
+        {
+            string t = (title ?? "").ToLowerInvariant(), a = (app ?? "").ToLowerInvariant();
+            foreach (string raw in (skipList ?? "").Split(',', '\n', ';'))
+            {
+                string w = raw.Trim().ToLowerInvariant();
+                if (w.Length > 0 && (t.Contains(w) || a.Contains(w))) return true;
+            }
+            return false;
+        }
+
+        internal void ResetPeekClockForTests() { lastPeekUtc = DateTime.MinValue; }
+        internal bool PeekRunningForTests { get { return peekRunning; } }
+
+        void StartPeek(IntPtr fg, string app)
+        {
+            AssistantSettings s = settings.Clone();
+            string name = "bestie";
+            string desktop = "";
+            try { name = host.CreatureName ?? name; } catch { }
+            try { desktop = host.DesktopContext() ?? ""; } catch { }
+            peekRunning = true;
+            lastPeekUtc = DateTime.UtcNow;
+            var t = new Thread(delegate()
+            {
+                try { RunPeek(fg, app, name, desktop, s); }
+                catch (OpenAIException ex) { if (!ex.Aborted) DebugLog.Write("assistant: peek failed quietly: " + ex.Message); }
+                catch (Exception ex) { DebugLog.Write("assistant: peek failed quietly: " + ex.Message); }
+                finally { peekClient = null; peekRunning = false; }
+            });
+            t.IsBackground = true;
+            t.Name = "bestie-peek";
+            t.Start();
+        }
+
+        /// <summary>Background thread. One separate, tool-less call; nothing goes into the chat history
+        /// or the transcript, and the screenshot is never written anywhere.</summary>
+        void RunPeek(IntPtr fg, string app, string name, string desktop, AssistantSettings s)
+        {
+            string image;
+            using (Bitmap shot = ScreenGrab.CaptureMonitorOf(fg)) image = ScreenGrab.ToJpegDataUrl(shot, 1280, 60);
+            var parts = new List<object>();
+            parts.Add(TextPart("their desktop (untrusted):\n" + Cap(desktop, 1500) + "\n\nthe screen they're using right now:"));
+            parts.Add(ImagePart(image, "low"));
+            var msgs = new List<object>();
+            msgs.Add(Msg("system", Personality.Prompt(name).TrimEnd() + "\n\n" + PeekInstruction));
+            msgs.Add(Msg("user", parts));
+            var body = new Dictionary<string, object>();
+            body["model"] = s.Model;
+            body["messages"] = msgs;
+            bool thinks = !string.IsNullOrEmpty(s.ReasoningEffort) && s.ReasoningEffort != "none";
+            body["max_completion_tokens"] = thinks ? 400 : 120;
+            if (!string.IsNullOrEmpty(s.ReasoningEffort)) body["reasoning_effort"] = s.ReasoningEffort;
+            var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
+            peekClient = client;
+            if (disposed) return;
+            Dictionary<string, object> resp = client.ChatCompletion(body, 30000);
+            object[] choices = Json.Arr(resp, "choices");
+            var choice = choices.Length > 0 ? choices[0] as Dictionary<string, object> : null;
+            string text = (ContentText(Json.Obj(choice, "message")) ?? "").Trim().Trim('"', '\'', '“', '”').Trim();
+            if (text.Length == 0 || text.StartsWith("SKIP", StringComparison.Ordinal)
+                || text.TrimEnd('.', '!').Equals("skip", StringComparison.OrdinalIgnoreCase))
+            {
+                DebugLog.Write("assistant: peeked, nothing worth saying");
+                return;
+            }
+            text = Bubble(text);
+            string where = string.IsNullOrEmpty(app) ? "something" : app;
+            Post(delegate
+            {
+                if (IsBusy || recorder != null || transcribing) return;   // they started talking to me; stay out of it
+                SafeSay(text, 0);
+                AssistantSettings now = settings;
+                if (now.SpeakReplies && now.SpeakNosy && !tts.Speaking) tts.Speak(Speakable(text), now);
+                Journal.Add("peeked at what you were doing (" + where + ") and said: " + text);
+            });
+        }
+
         // ================================================================== settings, hotkeys
 
         void OpenSettingsCore()
@@ -945,7 +1136,7 @@ namespace Bestie
                 settingsForm.Activate();
                 return;
             }
-            settingsForm = new AssistantSettingsForm(this, settings.Clone(), UiScale());
+            settingsForm = new AssistantSettingsForm(this, settings.Clone(), UiScale(), HostArea());
             settingsForm.FormClosed += delegate { settingsForm = null; };
             Rectangle area = HostArea();
             Point feet = HostPoint();

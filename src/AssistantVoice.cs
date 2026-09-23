@@ -309,6 +309,19 @@ namespace Bestie
         double noise = -1;
         int speechRun;
 
+        /// <summary>pushToTalk: silence never ends it and nobody-talking never gives up; only the 60 s cap does.</summary>
+        public static VoiceActivity Create(bool pushToTalk)
+        {
+            var v = new VoiceActivity();
+            if (pushToTalk)
+            {
+                v.SilenceStopMs = int.MaxValue;
+                v.NoSpeechGiveUpMs = int.MaxValue;
+                v.MaxMs = 60000;
+            }
+            return v;
+        }
+
         public void Feed(byte[] buf, int count)
         {
             int samples = count / 2;
@@ -387,6 +400,9 @@ namespace Bestie
         public event Action<VoiceRecorder, byte[], string, string> Finished;
 
         volatile bool stopRequested, abortRequested, recording;
+        /// <summary>Set before Start: hold-to-talk (no silence auto-stop, 60 s cap; a too-short or
+        /// speechless recording ends quietly with reason "quiet").</summary>
+        public bool PushToTalk;
         IntPtr handle;
         IntPtr[] headers, buffers;
         int hdrSize, flagsOffset, bytesOffset;
@@ -465,7 +481,7 @@ namespace Bestie
         void Loop()
         {
             var pcm = new MemoryStream();
-            var vad = new VoiceActivity();
+            var vad = VoiceActivity.Create(PushToTalk);
             var chunk = new byte[BufferBytes];
             string reason = "stopped", error = null;
             int next = 0;
@@ -526,6 +542,8 @@ namespace Bestie
             {
                 if (vad.PeakAbs == 0 && vad.TotalMs >= 500)
                     error = "i only heard perfect silence. windows might be keeping desktop apps away from the mic (settings → privacy & security → microphone).";
+                else if (PushToTalk && reason == "stopped" && (vad.TotalMs < 400 || !vad.SpeechStarted))
+                    reason = "quiet";   // a click, or a hold without words: drop it without a fuss
                 else if (vad.SpeechStarted || (reason == "stopped" && vad.TotalMs >= 700 && vad.PeakAbs > 400))
                     wav = VoiceWav.Build(pcm.ToArray(), SampleRate, 16, 1);
                 else if (reason == "stopped") reason = "short";

@@ -48,6 +48,7 @@ To bring it back each time you log in, right-click the creature and pick **live 
 | do this | and it… |
 |---|---|
 | click it | gets petted (hearts, blushing). Don't pet it while it naps; it just smiles in its sleep. |
+| click and **hold** it (don't move) | it listens. Talk while you hold, let go to send. Push-to-talk, basically. |
 | drag it | gets carried. Let go while moving fast and you've thrown it. Bold ones love that, cautious ones hold a grudge. |
 | double-click it | opens a chat |
 | right-click it (or the tray icon) | shows the menu: chat, voice, look at your screen, its **diary**, its folder, *come here*, nap, settings, goodbye |
@@ -68,9 +69,14 @@ To bring it back each time you log in, right-click the creature and pick **live 
 
 Paste an OpenAI API key into **settings** (right-click → settings…). The key is encrypted for your Windows account with DPAPI and stays on this computer. You can also set `OPENAI_API_KEY`.
 
-- **Chat:** double-click the creature, or press **Ctrl+Alt+B**. Replies show up in its speech bubble, and it reads them aloud with the free Windows voice (you can turn that off).
-- **Voice:** press **Ctrl+Alt+V** and talk. It stops listening when you stop talking, or when you press the keys again. Your speech is transcribed by OpenAI.
-- **Screen:** *look at my screen & ask…* sends a screenshot with your next message. It can also look by itself during a conversation when it needs to (you can turn that off in settings).
+- **Chat:** double-click the creature, or press **Ctrl+Alt+B**. Replies show up in its speech bubble.
+- **Its voice:** it reads replies aloud with OpenAI's cheap `gpt-4o-mini-tts`, using the *ballad* voice and a direction written for the character. That works out to about 1.5¢ per minute of speech, and it starts talking in under half a second because the audio streams in.
+  - Without a key, or if anything goes wrong, it falls back to the free Windows voice.
+  - You can pick the voice or turn speech off in settings.
+- **It sees your screens when you ask something:** every question includes a fresh low-detail screenshot of each monitor. You can turn that off in settings. Only the newest message keeps its screenshots, so costs don't pile up.
+- **Voice:** there are two ways to talk to it, and OpenAI transcribes what you say.
+  - Click and hold the creature, talk, and let go.
+  - Press **Ctrl+Alt+V** and talk. It stops listening when you stop talking, or when you press the keys again.
 - **Memory:** when you tell it things worth keeping, it writes them to `Documents\Bestie\memory\about-you.md`. That's a plain file you can read and edit. It can also keep notes in `notes\`, set reminders, search its memory and journal, open apps from your Start menu, open folders, and do tricks.
 - **Costs:** it only calls the API when you talk to it, show it your screen or use voice. The creature's everyday life costs nothing. The model is set in settings and defaults to a cheap, fast one.
 
@@ -112,7 +118,11 @@ Nothing, until you talk to it. When you do, OpenAI receives:
 - the contents of `memory\`
 - a short description of your desktop: window titles and which one is focused
 - your tab titles and URLs, if the extension is connected
-- any screenshot or page text involved in that conversation
+- a low-detail screenshot of each monitor with every question (turn that off in settings)
+- any page text involved in that conversation
+- your spoken words, if you talk to it, for transcription; its replies come back as speech
+
+It also sends one low-detail screenshot of the monitor you're using on a nosy peek, about every 20 minutes while you're active. It skips private-looking windows, and you can turn this off.
 
 The creature's own life, its brain and its journal stay local.
 
