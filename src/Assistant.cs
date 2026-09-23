@@ -1131,6 +1131,19 @@ namespace Bestie
             SafeMood("followup");
         }
 
+        /// <summary>Close the listen-for-an-answer window now, if it's open (they're talking to something else). Any thread.</summary>
+        public void CancelFollowUp()
+        {
+            RunOnUi(delegate
+            {
+                VoiceRecorder r = recorder;
+                if (r == null || !r.FollowUp) return;
+                r.Abort();
+                recorder = null;
+                SafeMood(WorkerBusy ? "thinking" : "idle");
+            });
+        }
+
         // ------------------------------------------------------------------ announcements
 
         /// <summary>Something it says on its own (a reminder, a heads-up, a finished claude session): shown in the

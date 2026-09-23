@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace Bestie
@@ -10,21 +11,44 @@ namespace Bestie
     public sealed class AudioDucker
     {
         public double DuckTo = 0.2;          // other apps play at 20% of their volume while it talks
-        readonly Dictionary<string, float> original = new Dictionary<string, float>();   // session id -> volume before we touched it
-        readonly Dictionary<string, float> ours = new Dictionary<string, float>();       // session id -> volume we set it to
+        const float Slack = 0.02f;
+        const double ParkSeconds = 120;
+
+        /// <summary>One app we turned down: its real volume, and the range of volumes we've set it to since.
+        /// Other apps duck too (Wispr Flow mutes music while you dictate, then puts back whatever it saw), so a
+        /// volume inside that range is still "ours" even if someone else put it there.</summary>
+        sealed class Tracked
+        {
+            public float Original, Lo, Hi, Last;   // Last: what we set it to most recently
+            public bool HeldBelow;                 // something else pushed it under what we set (wispr muting for dictation)
+            public double ParkedAt = -1;
+        }
+
+        readonly Dictionary<string, Tracked> tracked = new Dictionary<string, Tracked>();   // session id -> what we know
         readonly uint myPid = (uint)Process.GetCurrentProcess().Id;
         double level = 1, target = 1;        // 1 = normal, DuckTo = ducked
         bool active;
+        double clock, nextParkCheck;
 
         public bool Ducked { get { return target < 1; } }
 
         public void Duck() { target = DuckTo; active = true; }
         public void Restore() { target = 1; }
 
+        /// <summary>Put everything back right now (no fade), e.g. before another app starts ducking on its own.</summary>
+        public void RestoreNow()
+        {
+            target = level = 1;
+            if (!active) return;
+            try { Apply(1); } catch (Exception ex) { DebugLog.Write("ducking: " + ex.Message); }
+            Finish();
+        }
+
         /// <summary>Call every frame; fades smoothly toward the target (fast down, gentler back up).</summary>
         public void Tick(double dt)
         {
-            if (!active) return;
+            clock += dt;
+            if (!active) { CheckParked(); return; }
             if (Math.Abs(target - level) < 0.001) { if (target >= 1) Finish(); return; }
             double speed = target < level ? 4.0 : 1.6;   // ~0.2 s down, ~0.5 s up
             level += Math.Sign(target - level) * Math.Min(Math.Abs(target - level), speed * dt);
@@ -35,8 +59,40 @@ namespace Bestie
         void Finish()
         {
             try { Apply(1); } catch { }
-            original.Clear(); ours.Clear();
+            // anything someone else is still holding down waits ("parked") until they let go, then gets its real volume back
+            foreach (var k in tracked.Where(kv => kv.Value.ParkedAt < 0).Select(kv => kv.Key).ToList()) tracked.Remove(k);
             active = false;
+        }
+
+        /// <summary>After a duck: an app another program was holding down comes back up to where it really was.</summary>
+        void CheckParked()
+        {
+            if (tracked.Count == 0 || clock < nextParkCheck) return;
+            nextParkCheck = clock + 0.5;
+            try
+            {
+                foreach (var s in Sessions())
+                {
+                    try
+                    {
+                        string id; s.Control.GetSessionInstanceIdentifier(out id);
+                        Tracked t;
+                        if (id == null || !tracked.TryGetValue(id, out t)) continue;
+                        float now; s.Volume.GetMasterVolume(out now);
+                        if (now > t.Hi + Slack) { tracked.Remove(id); continue; }        // turned up past anything we did: theirs now
+                        if (now >= t.Lo - Slack)                                        // let go, back at one of our ducked levels: undo it
+                        {
+                            var ctx = Guid.Empty;
+                            s.Volume.SetMasterVolume(t.Original, ref ctx);
+                            tracked.Remove(id);
+                            DebugLog.Write("ducking: put an app back to " + (int)Math.Round(t.Original * 100) + "% after another app let go of it");
+                        }
+                    }
+                    finally { Marshal.ReleaseComObject(s.Control); }
+                }
+            }
+            catch (Exception ex) { DebugLog.Write("ducking: " + ex.Message); }
+            foreach (var k in tracked.Where(kv => clock - kv.Value.ParkedAt > ParkSeconds).Select(kv => kv.Key).ToList()) tracked.Remove(k);
         }
 
         void Apply(double factor)
@@ -50,14 +106,32 @@ namespace Bestie
                     string id; s.Control.GetSessionInstanceIdentifier(out id);
                     if (id == null) continue;
                     float now; s.Volume.GetMasterVolume(out now);
-                    float set;
-                    if (ours.TryGetValue(id, out set) && Math.Abs(now - set) > 0.02f) { original.Remove(id); ours.Remove(id); continue; }   // the user moved it; hands off
-                    float orig;
-                    if (!original.TryGetValue(id, out orig)) { if (factor >= 1) continue; original[id] = orig = now; }
-                    float v = (float)Math.Max(0, Math.Min(1, orig * factor));
+                    Tracked t;
+                    if (!tracked.TryGetValue(id, out t))
+                    {
+                        if (factor >= 1) continue;
+                        tracked[id] = t = new Tracked { Original = now, Lo = now, Hi = now, Last = now };
+                    }
+                    else if (Math.Abs(now - t.Last) > Slack)
+                    {
+                        if (now < t.Last)
+                        {
+                            // something else (like wispr) turned it down: don't fight it, and put it back once it lets go
+                            t.HeldBelow = true;
+                            if (factor >= 1 && t.ParkedAt < 0) t.ParkedAt = clock;
+                            continue;
+                        }
+                        // turned up: if nothing else was holding it down, that's them choosing a volume: hands off.
+                        // (coming back up to one of our levels after something held it down is that app letting go.)
+                        if (!t.HeldBelow || now > t.Hi + Slack) { tracked.Remove(id); continue; }
+                    }
+                    t.ParkedAt = -1;
+                    t.HeldBelow = false;
+                    float v = (float)Math.Max(0, Math.Min(1, t.Original * factor));
                     var ctx = Guid.Empty;
                     s.Volume.SetMasterVolume(v, ref ctx);
-                    ours[id] = v;
+                    t.Last = v;
+                    t.Lo = Math.Min(t.Lo, v); t.Hi = Math.Max(t.Hi, v);
                 }
                 finally { Marshal.ReleaseComObject(s.Control); }
             }

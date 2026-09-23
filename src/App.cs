@@ -138,6 +138,8 @@ namespace Bestie
                 bool along = false;
                 try { along = brain.WisprListen && wispr != null && !(wisprCapture != null && wisprCapture.Active) && Wispr.Running && Wispr.IsDictating(); } catch { }
                 c.ListenAlong = along;
+                // dictating into something else right after it spoke: that's not an answer for it
+                if (along && assistant != null) assistant.CancelFollowUp();
             }
             wakeCheck -= dt;
             if (wakeCheck <= 0) { wakeCheck = 5; SyncWakeWord(); }
@@ -206,8 +208,11 @@ namespace Bestie
                 if (assistant == null) c.Say("my ears aren't plugged in. (the talking part didn't start.)", false, 0);
                 else if (brain.WisprVoice && wisprCapture != null && Wispr.Running)
                 {
+                    // wispr does the listening (and turns music down itself, then back to whatever it saw),
+                    // so put everyone's volume back first and don't duck on top of it
+                    assistant.CancelFollowUp();
+                    ducker.RestoreNow();
                     c.SetMood("listening");
-                    ducker.Duck();
                     wisprCapture.Begin(CreatureScreenPoint, OnWisprText);
                 }
                 else assistant.StartListening(true);
