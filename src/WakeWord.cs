@@ -116,9 +116,31 @@ namespace Bestie
         {
             rejected++;
             var r = e.Result;
-            // log near misses (something that started like a wake phrase) to help tune it
-            if (r != null && r.Alternates.Count > 0 && r.Alternates[0].Confidence > 0.25f && r.Alternates[0].Words.Any(w => names.Contains(w.Text.ToLowerInvariant())))
-                DebugLog.Write("wake word: almost (" + r.Alternates[0].Text + ", " + r.Alternates[0].Confidence.ToString("0.00") + ")");
+            if (r == null || r.Alternates.Count == 0) return;
+            var best = r.Alternates[0];
+            // quiet mics make the recognizer shy: a near miss that clearly starts with a greeting + its name still counts
+            var words = best.Words.Select(w => w.Text.ToLowerInvariant()).ToList();
+            int at = words.FindIndex(w => names.Contains(w));
+            bool upFront = at == 0 || (at == 1 && Greetings.Contains(words[0]));
+            if (upFront && best.Confidence >= 0.42f)
+            {
+                byte[] wav = null;
+                try { if (r.Audio != null) using (var ms = new MemoryStream()) { r.Audio.WriteToWaveStream(ms); wav = ms.ToArray(); } } catch { }
+                if (wav != null)
+                {
+                    string text = best.Text;
+                    DebugLog.Write("wake word: heard (near miss, " + best.Confidence.ToString("0.00") + ") \"" + text + "\"");
+                    Post(() =>
+                    {
+                        if (Busy != null && Busy()) return;
+                        if (Heard != null) Heard(wav, text);
+                    });
+                    return;
+                }
+            }
+            // log other near misses to help tune it
+            if (best.Confidence > 0.25f && at >= 0)
+                DebugLog.Write("wake word: almost (" + best.Text + ", " + best.Confidence.ToString("0.00") + ")");
         }
 
         void OnRecognized(object sender, SpeechRecognizedEventArgs e)

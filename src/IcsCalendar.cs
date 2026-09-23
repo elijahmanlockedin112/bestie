@@ -17,9 +17,13 @@ namespace Bestie
     {
         sealed class Feed
         {
-            public string Url, Name;
-            public List<VEvent> Parsed;
+            public string Url, Name;               // browser feeds: Url = "browser:<calendar id>"
+            public List<VEvent> Parsed;            // ical feeds
+            public List<CalEvent> Direct;          // browser feeds (already concrete events)
             public DateTime FetchedUtc = DateTime.MinValue;
+            public readonly object FetchGate = new object();
+            public bool Browser { get { return Url.StartsWith("browser:"); } }
+            public string CalendarId { get { return Browser ? Url.Substring(8) : null; } }
         }
 
         static readonly object gate = new object();
@@ -80,12 +84,32 @@ namespace Bestie
             return m.Success ? Unescape(m.Groups[1].Value.Trim()) : null;
         }
 
-        /// <summary>Check a link works (downloads it once), then add it to the calendars it reads. Any thread; blocks.</summary>
+        /// <summary>The calendar id in an embed/public url ("...embed?src=someone%40school.org"), or a bare id.</summary>
+        public static string CalendarIdFrom(string link)
+        {
+            link = (link ?? "").Trim();
+            var m = Regex.Match(link, @"[?&](?:src|cid)=([^&#]+)");
+            if (m.Success && !link.Contains("/ical/")) return Uri.UnescapeDataString(m.Groups[1].Value.Replace("+", " ")).Trim();
+            if (Regex.IsMatch(link, @"^[^\s@/]+@[^\s@/]+\.[^\s@/]+$")) return link;
+            return null;
+        }
+
+        static string NameFor(string calendarId)
+        {
+            string user = calendarId.Split('@')[0];
+            string domain = calendarId.Contains("@") ? calendarId.Split('@')[1] : "";
+            return user + (domain.Contains("k12") || domain.Contains(".edu") || domain.Contains("student") ? " (school)" : "");
+        }
+
+        /// <summary>Check a link works, then add it to the calendars it reads. Takes a secret/public iCal address, or a
+        /// calendar's public/embed url (tries its public feed, else reads it through the signed-in browser). Any thread; blocks.</summary>
         public static bool Connect(string link, out string message)
         {
             Load();
             link = (link ?? "").Trim().Trim('"', '\'', '<', '>');
             if (link.StartsWith("webcal://", StringComparison.OrdinalIgnoreCase)) link = "https://" + link.Substring(9);
+            string calId = CalendarIdFrom(link);
+            if (calId != null) return ConnectById(calId, out message);
             if (!LooksLikeIcalLink(link)) { message = "that doesn't look like a calendar link. it should start with https://calendar.google.com/calendar/ical/ and end in .ics"; return false; }
             try
             {
@@ -113,6 +137,39 @@ namespace Bestie
                 return false;
             }
             catch (Exception ex) { message = "that didn't work: " + ex.Message; return false; }
+        }
+
+        static bool ConnectById(string calId, out string message)
+        {
+            // a public calendar has a public ical feed: easiest, works without the browser
+            string pub = "https://calendar.google.com/calendar/ical/" + Uri.EscapeDataString(calId) + "/public/basic.ics";
+            try
+            {
+                string ics = Download(pub);
+                if (ics.Contains("BEGIN:VCALENDAR")) return Connect(pub, out message);
+            }
+            catch (WebException) { }   // not public (google says 404)
+
+            // otherwise: read its agenda page through the browser, which is signed in to an account that can see it
+            var feed = new Feed { Url = "browser:" + calId, Name = NameFor(calId) };
+            string error;
+            var evs = FetchBrowser(feed, out error);
+            if (evs == null && error != null && !error.StartsWith("the browser extension isn't connected"))
+            {
+                message = "i couldn't read it: " + error;
+                return false;
+            }
+            lock (gate)
+            {
+                feeds.RemoveAll(f => f.Url == feed.Url);
+                feeds.Add(feed);
+                if (evs != null) { feed.Direct = evs; feed.FetchedUtc = DateTime.UtcNow; }
+                SaveLocked();
+            }
+            message = evs != null
+                ? "connected \u201c" + feed.Name + "\u201d through your browser (" + evs.Count(e => e.Start < DateTime.Today.AddDays(7)) + " events this week)."
+                : "added \u201c" + feed.Name + "\u201d. it isn't public, so i'll read it through your browser once the bestie extension is connected.";
+            return true;
         }
 
         public static void Disconnect()
@@ -146,6 +203,24 @@ namespace Bestie
             string problem = null;
             foreach (var f in list)
             {
+                if (f.Browser)
+                {
+                    List<CalEvent> direct;
+                    lock (gate) direct = f.Direct;
+                    if ((direct == null || (DateTime.UtcNow - f.FetchedUtc).TotalMinutes > 15) && System.Threading.Monitor.TryEnter(f.FetchGate))
+                    {
+                        try
+                        {
+                            string error;
+                            var fresh = FetchBrowser(f, out error);
+                            lock (gate) { if (fresh != null) f.Direct = direct = fresh; f.FetchedUtc = fresh != null ? DateTime.UtcNow : DateTime.UtcNow.AddMinutes(-12); }
+                            if (fresh == null) problem = "couldn't read \u201c" + f.Name + "\u201d (" + error + ")";
+                        }
+                        finally { System.Threading.Monitor.Exit(f.FetchGate); }
+                    }
+                    if (direct != null) result.AddRange(direct.Where(e => e.End > from && e.Start < to));
+                    continue;
+                }
                 List<VEvent> evs;
                 lock (gate) evs = f.Parsed;
                 if (evs == null || (DateTime.UtcNow - f.FetchedUtc).TotalMinutes > 10)
@@ -168,6 +243,147 @@ namespace Bestie
             lastError = problem;
             return result.OrderBy(e => e.Start).ToList();
         }
+        // =====================================================================
+        // calendars read through the browser (not public, no secret link: e.g. a school account's calendar)
+        // =====================================================================
+
+        static string LocalIana()
+        {
+            foreach (var kv in WindowsZones) if (kv.Value == TimeZoneInfo.Local.Id) return kv.Key;
+            return null;
+        }
+
+        /// <summary>Reads the calendar's google agenda page with the browser's sign-in. Quiet fetch with extension 1.4+;
+        /// older versions: a background tab opens for a moment. Null (and an error) if it couldn't.</summary>
+        static List<CalEvent> FetchBrowser(Feed f, out string error)
+        {
+            error = null;
+            var bridge = BrowserBridge.Instance;
+            if (bridge == null || !bridge.Connected) { error = "the browser extension isn't connected"; return null; }
+            string ctz = LocalIana();
+            List<string> lines = null;
+            try
+            {
+                var args = new Dictionary<string, object> { { "calendarId", f.CalendarId }, { "ctz", ctz ?? "" } };
+                var r = bridge.Execute("calendar_agenda_html", args, 30000) as Dictionary<string, object>;
+                string html = Json.Str(r, "html") ?? "";
+                lines = HtmlToLines(html);
+                string title = Regex.Match(html, @"<title>(.*?)</title>", RegexOptions.Singleline).Groups[1].Value;
+                if (title.Length > 0 && f.Name == null) f.Name = WebUtility.HtmlDecode(title).Trim();
+            }
+            catch (BridgeException ex)
+            {
+                if (ex.Message.IndexOf("don't know how", StringComparison.OrdinalIgnoreCase) < 0) { error = ex.Message; return null; }
+                lines = ReadThroughTab(bridge, f.CalendarId, ctz, out error);   // an older extension: use a background tab
+                if (lines == null) return null;
+            }
+            var evs = ParseAgenda(lines, f.Name ?? NameFor(f.CalendarId));
+            DebugLog.Write("calendar (browser): read " + evs.Count + " events from “" + (f.Name ?? "a calendar") + "”");
+            return evs;
+        }
+
+        static List<string> ReadThroughTab(BrowserBridge bridge, string calId, string ctz, out string error)
+        {
+            error = null;
+            for (int authuser = 0; authuser <= 2; authuser++)
+            {
+                string url = "https://calendar.google.com/calendar/htmlembed?src=" + Uri.EscapeDataString(calId) + "&mode=AGENDA" +
+                    (ctz != null ? "&ctz=" + Uri.EscapeDataString(ctz) : "") + "&authuser=" + authuser;
+                int tab = 0;
+                try
+                {
+                    var opened = bridge.Execute("open_tab", new Dictionary<string, object> { { "url", url }, { "active", false } }, 8000) as Dictionary<string, object>;
+                    tab = (int)Json.Num(opened, "tabId", 0);
+                    string text = "", title = "";
+                    for (int i = 0; i < 16; i++)
+                    {
+                        System.Threading.Thread.Sleep(600);
+                        try
+                        {
+                            var page = bridge.Execute("get_page_text", new Dictionary<string, object> { { "tabId", tab }, { "maxChars", 60000 } }, 8000) as Dictionary<string, object>;
+                            text = Json.Str(page, "text") ?? ""; title = Json.Str(page, "title") ?? "";
+                            if (title.Contains("404") || text.Contains("Subscribe") || text.Contains("Timezone") || text.Contains("Events shown")) break;
+                        }
+                        catch (BridgeException) { }
+                    }
+                    if (title.Contains("404") || text.Length == 0) { error = "google won't show that calendar to this browser (is chrome signed in to an account that can see it?)"; continue; }
+                    return text.Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0).ToList();
+                }
+                catch (BridgeException ex) { error = ex.Message; return null; }
+                finally
+                {
+                    if (tab != 0) try { bridge.Execute("close_tab", new Dictionary<string, object> { { "tabId", tab } }, 5000); } catch { }
+                }
+            }
+            return null;
+        }
+
+        /// <summary>Google's html agenda page → lines like the page text: "Mon Oct 12, 2026", "9:30am AP Gov", "Columbus Day".</summary>
+        static List<string> HtmlToLines(string html)
+        {
+            var lines = new List<string>();
+            foreach (Match sec in Regex.Matches(html, "<div class=\"date\">(.*?)</div>(.*?)(?=<div class=\"date-section|</body|\\z)", RegexOptions.Singleline))
+            {
+                lines.Add(Text(sec.Groups[1].Value));
+                foreach (Match ev in Regex.Matches(sec.Groups[2].Value, "<tr class=\"event\">(.*?)</tr>", RegexOptions.Singleline))
+                {
+                    string time = Text(Regex.Match(ev.Groups[1].Value, "<td class=\"event-time\">(.*?)</td>", RegexOptions.Singleline).Groups[1].Value);
+                    string title = Text(Regex.Match(ev.Groups[1].Value, "<span class=\"event-summary\">(.*?)</span>", RegexOptions.Singleline).Groups[1].Value);
+                    if (title.Length == 0) title = Text(Regex.Match(ev.Groups[1].Value, "<td class=\"event-eventInfo\">(.*?)</td>", RegexOptions.Singleline).Groups[1].Value);
+                    lines.Add((time.Length > 0 ? time + " " : "") + title);
+                }
+            }
+            return lines;
+        }
+
+        static string Text(string html)
+        {
+            return Regex.Replace(WebUtility.HtmlDecode(Regex.Replace(html ?? "", "<[^>]+>", " ")), @"\s+", " ").Trim();
+        }
+
+        static readonly Regex TwelveHour = new Regex(@"^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m\.?\b\s*(?:[-–]\s*\d{1,2}(?::\d{2})?\s*[ap]\.?m\.?\s*)?(.*)$", RegexOptions.IgnoreCase);
+        static readonly Regex TwentyFour = new Regex(@"^(\d{1,2}):(\d{2})\b\s*(?:[-–]\s*\d{1,2}:\d{2}\s*)?(.*)$");
+        static readonly string[] PageChrome = { "Timezone", "Events shown", "Subscribe", "Google Calendar", "Today", "Month", "Week", "Agenda", "Print", "Looking for" };
+
+        /// <summary>Day lines ("Mon Oct 12, 2026") start a day; lines after it are that day's events, with or without a start time.</summary>
+        static List<CalEvent> ParseAgenda(List<string> lines, string calendar)
+        {
+            var list = new List<CalEvent>();
+            DateTime? day = null;
+            foreach (string raw in lines)
+            {
+                string line = raw.Trim();
+                DateTime d;
+                if (DateTime.TryParseExact(line, new[] { "ddd MMM d, yyyy", "dddd, MMMM d, yyyy", "ddd, MMM d, yyyy" }, CultureInfo.GetCultureInfo("en-US"), DateTimeStyles.None, out d))
+                { day = d; continue; }
+                if (day == null || line.Length == 0 || PageChrome.Any(p => line.StartsWith(p))) continue;
+                var m = TwelveHour.Match(line);
+                DateTime? start = null; string title = line;
+                if (m.Success && m.Groups[4].Value.Trim().Length > 0)
+                {
+                    int h = int.Parse(m.Groups[1].Value) % 12, min = m.Groups[2].Success ? int.Parse(m.Groups[2].Value) : 0;
+                    if (m.Groups[3].Value.ToLowerInvariant() == "p") h += 12;
+                    start = day.Value.AddHours(h).AddMinutes(min); title = m.Groups[4].Value.Trim();
+                }
+                else
+                {
+                    var m24 = TwentyFour.Match(line);
+                    if (m24.Success && m24.Groups[3].Value.Trim().Length > 0)
+                    {
+                        start = day.Value.AddHours(int.Parse(m24.Groups[1].Value)).AddMinutes(int.Parse(m24.Groups[2].Value));
+                        title = m24.Groups[3].Value.Trim();
+                    }
+                }
+                list.Add(new CalEvent
+                {
+                    Id = "web_" + (start ?? day.Value).ToString("yyyyMMddHHmm") + "_" + title.GetHashCode().ToString("x"),
+                    CalendarId = calendar, Title = title,
+                    Start = start ?? day.Value, End = start.HasValue ? start.Value.AddHours(1) : day.Value.AddDays(1), AllDay = !start.HasValue
+                });
+            }
+            return list;
+        }
+
         /// <summary>One line for the assistant: the next ~12 hours.</summary>
         public static string ContextLine()
         {

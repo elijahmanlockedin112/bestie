@@ -514,6 +514,26 @@ const COMMANDS = {
     return (frame && frame.result) || { ok: true };
   },
 
+  // A calendar's simple agenda page, fetched with this browser's google sign-in (for calendars that
+  // aren't public and have no secret link, like school ones). Only ever this one google calendar page.
+  async calendar_agenda_html({ calendarId, ctz = "", authuser }) {
+    const id = String(calendarId || "").trim();
+    if (!/^[^\s/?#&]{3,200}$/.test(id)) throw new Error("that doesn't look like a calendar id");
+    const tries = authuser !== undefined && authuser !== null ? [Number(authuser)] : [0, 1, 2, 3];
+    let last = 0;
+    for (const u of tries) {
+      const url = "https://calendar.google.com/calendar/htmlembed?src=" + encodeURIComponent(id) + "&mode=AGENDA" +
+        (ctz ? "&ctz=" + encodeURIComponent(ctz) : "") + "&authuser=" + u;
+      const res = await fetch(url, { credentials: "include", cache: "no-store" });
+      last = res.status;
+      if (!res.ok) continue;
+      const html = await res.text();
+      if (/accounts\.google\.com\/(ServiceLogin|v3\/signin)/i.test(res.url)) continue;
+      return { html: html.slice(0, 500000), authuser: u };
+    }
+    throw new Error(last === 404 ? "google won't show that calendar to this browser (is chrome signed in to an account that can see it?)" : "google said " + last);
+  },
+
   // Press "Save" on a prefilled Google Calendar event page (one bestie opened from a calendar link).
   // Only works on calendar.google.com, so nothing else can use it to click around.
   async gcal_save({ tabId, timeoutMs = 20000 }) {

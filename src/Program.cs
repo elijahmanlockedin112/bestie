@@ -25,6 +25,14 @@ namespace Bestie
             if (args.Length >= 2 && args[0] == "--icon") { Tools.WriteIcon(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--diary") { Tools.DiaryImage(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--widgets") { Tools.WidgetsImage(args[1]); return 0; }
+            if (args.Length >= 2 && args[0] == "--connect-calendar")
+            {
+                // same as the menu's "let me see my calendar", for scripts: Bestie.exe --connect-calendar <link> [result.txt]
+                string msg;
+                bool ok = IcsCalendar.Connect(args[1], out msg);
+                if (args.Length >= 3) File.WriteAllText(args[2], (ok ? "ok: " : "failed: ") + msg);
+                return ok ? 0 : 1;
+            }
             if (args.Length >= 2 && args[0] == "--sessions")
             {
                 AiSessions.Start();
