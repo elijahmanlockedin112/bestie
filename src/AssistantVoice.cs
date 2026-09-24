@@ -566,6 +566,8 @@ namespace Bestie
         public bool FollowUp;
         /// <summary>If &gt; 0: give up after this long without speech (instead of the usual 8 s).</summary>
         public int NoSpeechMs;
+        /// <summary>How much actual speech it heard (set when it finishes).</summary>
+        public int SpeechMs;
         /// <summary>A brain dump: minutes long, and pauses to think don't end it.</summary>
         public bool LongForm;
         public const int LongFormMaxMs = 8 * 60 * 1000;
@@ -716,6 +718,7 @@ namespace Bestie
                     wav = VoiceWav.Build(Louder(pcm.ToArray(), vad.PeakAbs), SampleRate, 16, 1);   // a deliberate hold always gets heard; the transcriber decides
                 else if (reason == "stopped") reason = "short";
             }
+            SpeechMs = vad.SpeechMs;
             DebugLog.Write("assistant: mic done (" + reason + ", " + vad.TotalMs + " ms, speech " + vad.SpeechMs + " ms, peak " + vad.PeakAbs + ")");
             var f = Finished;
             if (f != null)

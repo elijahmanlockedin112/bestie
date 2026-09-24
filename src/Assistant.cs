@@ -132,7 +132,7 @@ namespace Bestie
         readonly AssistantTools tools;
         readonly AssistantReminders reminders;
         readonly Queue<string> announcements = new Queue<string>();   // UI thread only
-        const int FollowUpMs = 4000;   // how long it waits for an answer after speaking
+        const int FollowUpMs = 3500;   // how long it waits for an answer after speaking
         readonly AssistantSpeaker tts;
         readonly AssistantCalendar calendar;
         readonly List<ManualResetEvent> openAsks = new List<ManualResetEvent>();
@@ -168,6 +168,8 @@ namespace Bestie
             public ScreenJob Screens;     // captures started when speech ended (in parallel with transcription)
             public VoiceTiming Timing;
             public string ForceTool;      // the first round must call this tool (a brain dump goes straight to the organizer)
+            public bool Tentative;        // overheard in the answer-back window: maybe not for us (the model may answer [skip])
+            public string Heard;          // what they said, without the "(overheard…)" tag
         }
 
         // tests: run a voice turn the old way (no streaming, no early capture) to compare timings
@@ -446,7 +448,12 @@ namespace Bestie
 
         internal void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing)
         {
-            SubmitUserMessage(text, fromVoice, screens, timing, null);
+            SubmitUserMessage(text, fromVoice, screens, timing, null, false);
+        }
+
+        void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing, string forceTool)
+        {
+            SubmitUserMessage(text, fromVoice, screens, timing, forceTool, false);
         }
 
         static Dictionary<string, object> ForcedTool(string name)
@@ -459,7 +466,9 @@ namespace Bestie
             return d;
         }
 
-        void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing, string forceTool)
+        /// <summary>tentative: heard in the few seconds after it spoke, without its name. It isn't shown or saved
+        /// unless the model decides it was meant for it.</summary>
+        void SubmitUserMessage(string text, bool fromVoice, ScreenJob screens, VoiceTiming timing, string forceTool, bool tentative)
         {
             if (disposed) return;
             text = (text ?? "").Trim();
@@ -486,11 +495,16 @@ namespace Bestie
             pendingImage = null;
             c.ClearAttachment();
             // (the history box can't draw emoji, so plain-text markers here)
-            c.AppendYou(text + (image != null ? "  [+ screenshot]" : ""), fromVoice);
-            AssistantMemory.AppendChat("you", text + (image != null ? " _(with a screenshot)_" : ""));
+            if (!tentative)
+            {
+                c.AppendYou(text + (image != null ? "  [+ screenshot]" : ""), fromVoice);
+                AssistantMemory.AppendChat("you", text + (image != null ? " _(with a screenshot)_" : ""));
+            }
 
             var p = new PendingInput();
-            p.Text = text;
+            p.Text = tentative ? OverheardTag + text : text;
+            p.Heard = text;
+            p.Tentative = tentative;
             p.Image = image;
             p.Ctx = CaptureContext();
             p.Ctx.UserText = text ?? "";
@@ -600,7 +614,7 @@ namespace Bestie
             activeClient = client;
             string reply = null;
             bool stream = !(p.Voice && LegacyVoicePathForTests);
-            var rs = new ReplyStream(this, s, p.Timing);
+            var rs = new ReplyStream(this, s, p.Timing, p.Tentative);
             // voice turns: no deliberation (the quirk handling downgrades to "minimal" where "none" isn't allowed)
             string effort = s.ReasoningEffort;
             if (p.Voice && !string.IsNullOrEmpty(effort)) effort = "none";
@@ -669,8 +683,23 @@ namespace Bestie
             }
             finally { activeClient = null; }
 
+            if (p.Tentative && (rs.Skipped || reply.TrimStart().StartsWith("[skip", StringComparison.OrdinalIgnoreCase)))
+            {
+                // it wasn't meant for us: forget it happened
+                history.RemoveAll(m => m.Turn == turn);
+                if (p.Timing != null) p.Timing.Finish("not for me");
+                DebugLog.Write("assistant: what it overheard wasn't for it; staying quiet");
+                Post(delegate { SetChatStatus(""); SafeMood("idle"); NextAnnouncement(); });
+                return;
+            }
+            if (p.Tentative)
+            {
+                string heard = p.Heard;
+                AssistantMemory.AppendChat("you", heard);
+                Post(delegate { EnsureChat().AppendYou(heard, true); });
+            }
             AssistantMemory.AppendChat(p.Ctx.CreatureName, reply);
-            AutoMemory.Note(p.Text, reply, p.Ctx.CreatureName);
+            AutoMemory.Note(p.Heard ?? p.Text, reply, p.Ctx.CreatureName);
             string name = p.Ctx.CreatureName;
             bool more = MoreQueued;
             bool spoken = rs.Spoke;
@@ -685,21 +714,38 @@ namespace Bestie
             readonly AssistantModule m;
             readonly AssistantSettings s;
             readonly VoiceTiming timing;
-            readonly bool speak;
+            readonly bool speak, tentative;
             readonly StringBuilder round = new StringBuilder();
             int consumed, spokenChars;
-            bool begun, capped, toolRound;
+            bool begun, capped, toolRound, decided, skipping;
             DateTime lastBubbleUtc = DateTime.MinValue;
 
-            public ReplyStream(AssistantModule m, AssistantSettings s, VoiceTiming timing)
+            public ReplyStream(AssistantModule m, AssistantSettings s, VoiceTiming timing, bool tentative)
             {
                 this.m = m;
                 this.s = s;
                 this.timing = timing;
+                this.tentative = tentative;
                 speak = s.SpeakReplies;
             }
 
             public bool Spoke { get { return begun; } }
+
+            /// <summary>The model said "[skip]": what it overheard wasn't for it.</summary>
+            public bool Skipped { get { return skipping; } }
+
+            /// <summary>Tentative turns: hold everything back while the reply could still turn out to be "[skip]".
+            /// True once it's safe to show and say.</summary>
+            bool MayGo(bool final)
+            {
+                if (!tentative) return true;
+                if (decided) return !skipping;
+                string t = round.ToString().TrimStart();
+                if (!final && t.Length < 6 && "[skip]".StartsWith(t, StringComparison.OrdinalIgnoreCase)) return false;
+                decided = true;
+                skipping = t.StartsWith("[skip", StringComparison.OrdinalIgnoreCase);
+                return !skipping;
+            }
 
             public void NewRound()
             {
@@ -714,7 +760,7 @@ namespace Bestie
             {
                 if (timing != null) timing.Mark("first token");
                 round.Append(d);
-                if (toolRound) return;
+                if (toolRound || !MayGo(false)) return;
                 if ((DateTime.UtcNow - lastBubbleUtc).TotalMilliseconds >= 250)
                 {
                     lastBubbleUtc = DateTime.UtcNow;
@@ -782,6 +828,7 @@ namespace Bestie
             {
                 // the final text is authoritative (e.g. a refusal or fallback line that never streamed)
                 if (round.Length == 0 && !string.IsNullOrEmpty(reply)) round.Append(reply);
+                if (!toolRound && !MayGo(true)) return;
                 if (speak && !toolRound) Feed(true);
                 if (begun) m.tts.End();
             }
@@ -1027,6 +1074,7 @@ namespace Bestie
                 sb.Append("- google calendar isn't connected, but you can still add events (calendar_create_event saves it through google calendar in their browser) and read their schedule (calendar_list_events reads the agenda page). if they want you to always see it, tell them to right-click you → \"let me see my calendar\" (they paste their calendar's secret iCal link; 30 seconds). say the exact day, date and time when you add something.\n");
             if (bridge != null)
                 sb.Append("- you can work in any browser tab, even ones they're not looking at: list_tabs → find_in_tab (links/buttons/fields with refs) → click_in_tab / type_in_tab / scroll_tab, plus navigate_tab and tab_action. risky clicks and submits pop up a yes/no for them. never type passwords or payment details.\n");
+            sb.Append("- a message starting with \"(overheard right after you spoke)\" came without your name, in the few seconds after you talked. if it clearly isn't meant for you (they're talking to someone else, a video, the tv, background noise, a half sentence), reply with exactly [skip] and nothing else. if it could be for you, just answer.\n");
             sb.Append("- brain dumps: when they want to vent or get everything out of their head, call start_brain_dump. if their message already is a long, messy dump, call organize_brain_dump. afterwards, offer to put the to-dos on their list.\n");
             sb.Append("- they have a to-do list (todo_* tools) and desktop widgets (show_widget / hide_widget: to-do, calendar, now playing, sticky notes). use them when they ask to add, finish or see things, or want something pinned on their desktop.\n");
             sb.Append("- you can list their claude and chatgpt sessions, bring one to the front, or open a new chat.\n")
@@ -1212,6 +1260,7 @@ namespace Bestie
 
         volatile bool brainDumpNext;   // start listening for a brain dump once it's done talking
         const string BrainDumpPrefix = "(brain dump) ";
+        const string OverheardTag = "(overheard right after you spoke) ";
 
         /// <summary>True while it's recording a brain dump.</summary>
         public bool IsBrainDumping { get { VoiceRecorder r = recorder; return r != null && r.LongForm && r.IsRecording; } }
@@ -1334,8 +1383,7 @@ namespace Bestie
                 // the audio is sent as-is (no re-encode); captures start now, alongside the transcription
                 var timing = new VoiceTiming("wake word");
                 ScreenJob screens = StartScreensIfWanted(s, WavSeconds(wav));
-                tts.Stop();
-                Ack();
+                tts.Stop();   // ("hm." waits until the transcript shows it really was its name)
                 var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, screens, timing); });
                 t.IsBackground = true;
                 t.Name = "bestie-wake";
@@ -1358,7 +1406,7 @@ namespace Bestie
             }
             timing.Mark("transcript");
             transcribing = false;
-            Post(delegate { SpokenTextCore(text, wakeWords, screens, timing, false); });
+            Post(delegate { SpokenTextCore(text, wakeWords, screens, timing, true, true); });
         }
 
         /// <summary>Handle already-transcribed speech exactly like a voice message (reply in the bubble, spoken,
@@ -1366,13 +1414,23 @@ namespace Bestie
         /// "yes?" and listen (VAD mode) for the rest. UI thread.</summary>
         public void SubmitSpokenText(string text, string[] wakeWords)
         {
-            RunOnUi(delegate { SpokenTextCore(text, wakeWords, null, new VoiceTiming("dictation"), true); });
+            RunOnUi(delegate { SpokenTextCore(text, wakeWords, null, new VoiceTiming("dictation"), true, false); });
         }
 
-        void SpokenTextCore(string text, string[] wakeWords, ScreenJob screens, VoiceTiming timing, bool ack)
+        /// <summary>requireName: this came from the (fuzzy, offline) wake word listener, so the accurate transcript
+        /// has to actually contain its name near the start, or it was a false alarm and nothing happens.</summary>
+        void SpokenTextCore(string text, string[] wakeWords, ScreenJob screens, VoiceTiming timing, bool ack, bool requireName)
         {
             if (disposed) return;
             if (!settings.HasKey) { SafeSay(NoKeyLine, 0); return; }
+            if (requireName && !SaysName(text, wakeWords))
+            {
+                if (timing != null) timing.Finish("its name wasn't in it");
+                DebugLog.Write("wake word: false alarm (its name wasn't in what was said); staying quiet");
+                SafeMood("idle");
+                NextAnnouncement();
+                return;
+            }
             string rest = StripWakeWords(text, wakeWords);
             if (rest.Length == 0)
             {
@@ -1383,6 +1441,43 @@ namespace Bestie
             if (ack) { tts.Stop(); Ack(); }
             if (timing != null) timing.Mark("transcript");
             SubmitUserMessage(rest, true, screens, timing);
+        }
+
+        // what the transcriber tends to write for its names
+        static readonly string[] NameSoundalikes = { "bessie", "bessy", "besty", "bestee", "bestey", "besties", "bestys",
+            "blurp", "blork", "blorb", "blorps", "blurb", "mothballs", "motheball" };
+
+        /// <summary>True if one of its names (or something the transcriber writes for it) is among the first few
+        /// words. wakeWords are the wake phrases ("hey bestie", ...); the name is each phrase's last word.</summary>
+        internal static bool SaysName(string text, string[] wakeWords)
+        {
+            Func<string, string> norm = w => new string((w ?? "").ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+            var names = (wakeWords ?? new string[0]).Select(p => norm((p ?? "").Trim().Split(' ').Last())).Where(n => n.Length > 0).Distinct().ToList();
+            if (names.Count == 0) return true;
+            string[] words = Regex.Matches(text ?? "", @"\S+").Cast<Match>().Select(m => norm(m.Value)).Where(w => w.Length > 0).Take(4).ToArray();
+            for (int i = 0; i < words.Length; i++)
+            {
+                string w = words[i], two = i + 1 < words.Length ? w + words[i + 1] : w;   // "moth ball"
+                foreach (string n in names)
+                {
+                    if (w == n || two == n) return true;
+                    // close enough: same first letter, at most one letter off, not a short everyday word ("best")
+                    if (w.Length >= 5 && n.Length >= 5 && w[0] == n[0] && Distance(w, n) <= 1) return true;
+                }
+                if (NameSoundalikes.Contains(w) || NameSoundalikes.Contains(two)) return true;
+            }
+            return false;
+        }
+
+        static int Distance(string a, string b)
+        {
+            var d = new int[a.Length + 1, b.Length + 1];
+            for (int i = 0; i <= a.Length; i++) d[i, 0] = i;
+            for (int j = 0; j <= b.Length; j++) d[0, j] = j;
+            for (int i = 1; i <= a.Length; i++)
+                for (int j = 1; j <= b.Length; j++)
+                    d[i, j] = Math.Min(Math.Min(d[i - 1, j] + 1, d[i, j - 1] + 1), d[i - 1, j - 1] + (a[i - 1] == b[j - 1] ? 0 : 1));
+            return d[a.Length, b.Length];
         }
 
         /// <summary>Removes a leading wake phrase ("hey, Mothball!") ignoring case and punctuation.
@@ -1443,7 +1538,8 @@ namespace Bestie
         void OnRecorderFinished(VoiceRecorder r, byte[] wav, string reason, string error)
         {
             if (disposed || reason == "aborted") return;
-            if (r.FollowUp && (wav == null || error != null || reason == "quiet"))
+            // (a follow-up with only a blip of speech is a cough or the room, not an answer)
+            if (r.FollowUp && (wav == null || error != null || reason == "quiet" || r.SpeechMs < 450))
             {
                 // nobody answered back: close the window without a fuss
                 Post(delegate
@@ -1488,7 +1584,7 @@ namespace Bestie
                 if (chat != null && !chat.IsDisposed) chat.SetListening(false);
                 SetChatStatus("writing down what you said…");
                 SafeMood("thinking");
-                Ack();
+                if (!r.FollowUp) Ack();   // (it might not be for us: no "hm." until we know)
             });
             HandleRecordedAudio(wav, s, screens, timing, !r.FollowUp && !r.LongForm, r.FollowUp, r.LongForm);
         }
@@ -1522,6 +1618,7 @@ namespace Bestie
                 }
                 transcribing = false;
                 if (brainDump) { Post(delegate { SubmitBrainDump(text, timing); }); return; }
+                if (followUp) { Post(delegate { SubmitUserMessage(text, true, screens, timing, null, true); }); return; }
                 Post(delegate { if (openChat) OpenChatCore(); SubmitUserMessage(text, true, screens, timing); });
             }
             catch (OpenAIException ex)
