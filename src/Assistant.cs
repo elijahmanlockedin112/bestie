@@ -1076,6 +1076,7 @@ namespace Bestie
                 sb.Append("- you can work in any browser tab, even ones they're not looking at: list_tabs → find_in_tab (links/buttons/fields with refs) → click_in_tab / type_in_tab / scroll_tab, plus navigate_tab and tab_action. risky clicks and submits pop up a yes/no for them. never type passwords or payment details.\n");
             sb.Append("- a message starting with \"(overheard right after you spoke)\" came without your name, in the few seconds after you talked. if it clearly isn't meant for you (they're talking to someone else, a video, the tv, background noise, a half sentence), reply with exactly [skip] and nothing else. if it could be for you, just answer.\n");
             sb.Append("- brain dumps: when they want to vent or get everything out of their head, call start_brain_dump. if their message already is a long, messy dump, call organize_brain_dump. afterwards, offer to put the to-dos on their list.\n");
+            sb.Append("- time blocks: they work in focus blocks (90 min) with breaks (15 min): time_blocks starts, pauses, skips or checks them; the time blocks widget shows the countdown. right now: ").Append(TimeBlocks.Describe()).Append('\n');
             sb.Append("- they have a to-do list (todo_* tools) and desktop widgets (show_widget / hide_widget: to-do, calendar, now playing, sticky notes). use them when they ask to add, finish or see things, or want something pinned on their desktop.\n");
             sb.Append("- you can list their claude and chatgpt sessions, bring one to the front, or open a new chat.\n")
               .Append("SAFETY (always)\n")
@@ -1431,6 +1432,7 @@ namespace Bestie
                 NextAnnouncement();
                 return;
             }
+            if (requireName) RunOnUi(delegate { try { host.Heard(); } catch { } });   // it really was its name: perk up now
             string rest = StripWakeWords(text, wakeWords);
             if (rest.Length == 0)
             {

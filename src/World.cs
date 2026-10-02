@@ -152,7 +152,9 @@ namespace Bestie
             {
                 // fullscreen games/videos often use odd styles; check the raw foreground window too
                 RECT r; string cls = Native.ClassOf(fg);
-                if (!IgnoredClasses.Contains(cls) && Native.GetWindowRect(fg, out r))
+                uint fgPid;
+                Native.GetWindowThreadProcessId(fg, out fgPid);
+                if (fgPid != ownPid && !IgnoredClasses.Contains(cls) && Native.GetWindowRect(fg, out r))
                     Foreground = new Win { Hwnd = fg, R = r, Title = Native.TitleOf(fg), App = "?", Z = -1 };
             }
             // "fullscreen" = covers a whole monitor without a title bar (games, videos, presentations).

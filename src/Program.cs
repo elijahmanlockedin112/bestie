@@ -265,7 +265,8 @@ namespace Bestie
                 new TodoWidget(new WidgetState { Id = "todo", Kind = "todo" }),
                 new CalendarWidget(new WidgetState { Id = "calendar", Kind = "calendar" }),
                 new MusicWidget(new WidgetState { Id = "music", Kind = "music" }),
-                new NoteWidget(new WidgetState { Id = "note-99", Kind = "note", Color = 0 }) };
+                new NoteWidget(new WidgetState { Id = "note-99", Kind = "note", Color = 0 }),
+                new TimeBlockWidget(new WidgetState { Id = "timeblocks", Kind = "timeblocks" }) };
             int gap = 20, width = gap, height = 0;
             foreach (var f in forms) { f.CreateControl(); width += f.Width + gap; height = Math.Max(height, f.Height); }
             using (var bmp = new Bitmap(width, height + gap * 2))

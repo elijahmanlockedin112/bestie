@@ -17,7 +17,18 @@ namespace Bestie
         SpeechRecognitionEngine engine;
         string[] names = new string[0];
         double lastPerk, lastLevelLog;
-        int maxLevel, detected, rejected;
+        int maxLevel, detected, rejected, ordinary, accepted;
+
+        /// <summary>Tests: listen to this WAV file instead of the microphone.</summary>
+#pragma warning disable 649   // only tests set it
+        internal static string TestWavePath;
+#pragma warning restore 649
+        /// <summary>Tests: also load ordinary dictation as a competitor. Off: with it, real wake phrases get written
+        /// out as ordinary words ("hey bestie" -> "a best you") and it stops hearing you.</summary>
+        internal static bool UseDictation = false;
+        // how sure the recognizer must be that the word it heard was its name. kept low on purpose: false alarms
+        // score just as high as real ones (0.6-0.95), so this only decides sensitivity. the transcript check decides.
+        const float NameConfidence = 0.4f, NearMissConfidence = 0.42f;
 
         /// <summary>Wake phrase plus (maybe) a command. Args: WAV of the whole utterance, the text SAPI heard. UI thread.</summary>
         public event Action<byte[], string> Heard;
@@ -49,7 +60,7 @@ namespace Bestie
                         ?? SpeechRecognitionEngine.InstalledRecognizers().FirstOrDefault(r => r.Culture.TwoLetterISOLanguageName == "en");
                 if (info == null) { DebugLog.Write("wake word: no english speech recognizer installed"); return false; }
                 engine = new SpeechRecognitionEngine(info);
-                engine.SetInputToDefaultAudioDevice();
+                if (TestWavePath != null) engine.SetInputToWaveFile(TestWavePath); else engine.SetInputToDefaultAudioDevice();
 
                 var greet = new Choices(Greetings);
                 var who = new Choices(names);
@@ -67,6 +78,13 @@ namespace Bestie
                 engine.LoadGrammar(new Grammar(nameOnly) { Name = "name" });
                 var nameBare = new GrammarBuilder(who) { Culture = info.Culture };
                 engine.LoadGrammar(new Grammar(nameBare) { Name = "name-bare" });
+                // ordinary speech competes with the wake phrases. without it, every sound (music, a video, people
+                // talking) gets squeezed into the nearest wake phrase, often at 90%+ confidence.
+                if (UseDictation)
+                {
+                    try { engine.LoadGrammar(new DictationGrammar { Name = "dictation" }); }
+                    catch (Exception ex) { DebugLog.Write("wake word: no dictation to compare against (" + ex.Message + ")"); }
+                }
 
                 // let people pause mid-sentence without being cut off
                 engine.EndSilenceTimeout = TimeSpan.FromSeconds(0.9);
@@ -107,7 +125,7 @@ namespace Bestie
             if (now - lastLevelLog > 120)
             {
                 lastLevelLog = now;
-                DebugLog.Write("wake word: mic loudest " + maxLevel + "/100, speech bits heard " + detected + ", not-a-wake-word " + rejected);
+                DebugLog.Write("wake word: mic loudest " + maxLevel + "/100, speech bits heard " + detected + ", ordinary talk " + ordinary + ", unclear " + rejected + ", for me " + accepted);
                 maxLevel = 0;
             }
         }
@@ -122,13 +140,14 @@ namespace Bestie
             var words = best.Words.Select(w => w.Text.ToLowerInvariant()).ToList();
             int at = words.FindIndex(w => names.Contains(w));
             bool upFront = at == 0 || (at == 1 && Greetings.Contains(words[0]));
-            if (upFront && best.Confidence >= 0.42f)
+            if (upFront && best.Confidence >= NearMissConfidence && (best.Grammar == null || best.Grammar.Name != "dictation"))
             {
                 byte[] wav = null;
                 try { if (r.Audio != null) using (var ms = new MemoryStream()) { r.Audio.WriteToWaveStream(ms); wav = ms.ToArray(); } } catch { }
                 if (wav != null)
                 {
                     string text = best.Text;
+                    accepted++;
                     DebugLog.Write("wake word: heard (near miss, " + best.Confidence.ToString("0.00") + ") \"" + text + "\"");
                     Post(() =>
                     {
@@ -147,10 +166,21 @@ namespace Bestie
         {
             var r = e.Result;
             if (r == null || r.Words.Count < 1) return;
-            // the name has to be heard clearly; the command part can be anything
-            var nameWord = r.Words.FirstOrDefault(w => names.Contains(w.Text.ToLowerInvariant()));
-            float wakeConfidence = nameWord != null ? nameWord.Confidence : 0;
-            if (wakeConfidence < 0.4f) { DebugLog.Write("wake word: ignored a maybe (" + r.Text + ", " + wakeConfidence.ToString("0.00") + ")"); return; }
+            float wakeConfidence;
+            if (r.Grammar != null && r.Grammar.Name == "dictation")
+            {
+                // ordinary talk. it only counts if it starts with its name ("bestie, open youtube" / "hey bessie ...")
+                if (!StartsWithName(r.Text)) { ordinary++; return; }
+                wakeConfidence = r.Confidence;
+            }
+            else
+            {
+                // the name has to be heard clearly; the command part can be anything
+                var nameWord = r.Words.FirstOrDefault(w => names.Contains(w.Text.ToLowerInvariant()));
+                wakeConfidence = nameWord != null ? nameWord.Confidence : 0;
+            }
+            if (wakeConfidence < NameConfidence) { rejected++; return; }
+            accepted++;
             byte[] wav = null;
             try
             {
@@ -167,10 +197,19 @@ namespace Bestie
             });
         }
 
+        /// <summary>Its name (or something the transcriber writes for it) as the first or second word.</summary>
+        bool StartsWithName(string text)
+        {
+            string[] first = (text ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Take(2).ToArray();
+            return first.Length > 0 && AssistantModule.SaysName(string.Join(" ", first), Phrases());
+        }
+
         void OnHypothesized(object sender, SpeechHypothesizedEventArgs e)
         {
             var r = e.Result;
-            if (r == null || r.Confidence < 0.35f || !r.Words.Any(w => names.Contains(w.Text.ToLowerInvariant()))) return;
+            // only a confident guess with its name up front gets the "!" (ordinary talk mentioning it mid-sentence doesn't)
+            if (r == null || r.Confidence < 0.5f) return;
+            if (!StartsWithName(r.Text)) return;
             Post(() =>
             {
                 double now = Clock.T;

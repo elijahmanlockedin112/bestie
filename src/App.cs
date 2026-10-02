@@ -26,7 +26,7 @@ namespace Bestie
         NotifyIcon tray;
         ContextMenuStrip menu;
         ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem;
-        double calendarCheck = 20;
+        double calendarCheck = 20, blockCheck;
         int calendarChecking;
         AssistantModule assistant;
         DiaryForm diary;
@@ -75,6 +75,8 @@ namespace Bestie
             c.PeekRequest = () => assistant != null && assistant.Peek();
             try { StartSessions(); }
             catch (Exception ex) { DebugLog.Write("ai sessions failed to start: " + ex); }
+            try { StartTimeBlocks(); }
+            catch (Exception ex) { DebugLog.Write("time blocks failed to start: " + ex); }
             try { StartWispr(); }
             catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
             try
@@ -131,6 +133,15 @@ namespace Bestie
             MaybeBeNosy();
             CheckHoldToTalk();
             CheckCalendarHeadsUps(dt);
+            blockCheck -= dt;
+            if (blockCheck <= 0)
+            {
+                blockCheck = 0.4;
+                TimeBlocks.Tick();
+                if (TimeBlocks.BreakLocked && !BreakOverlay.Active && leaveAt < 0) BreakOverlay.Show();
+                BreakOverlay.Tick();
+                if (BreakOverlay.Active) { KeepOnTop(); bubble.KeepOnTop(); }   // it keeps you company on the break screen
+            }
             ducker.Tick(dt);
             listenCheck -= dt;
             if (listenCheck <= 0)
@@ -345,6 +356,21 @@ namespace Bestie
         {
             int w = (int)(80 * c.S), h = (int)(130 * c.S);
             return new Rectangle((int)c.X - w, (int)c.Y - h, w * 2, h + (int)(20 * c.S));
+        }
+
+        void StartTimeBlocks()
+        {
+            TimeBlocks.Load();
+            TimeBlocks.PhaseStarted += phase =>
+            {
+                if (phase == "break")
+                    Announce(Rng.Pick("break time. " + TimeBlocks.BreakMinutes + " minutes. stand up, drink some water, look at something far away.",
+                        "break! " + TimeBlocks.BreakMinutes + " minutes. go be a person for a bit.", "that's " + TimeBlocks.FocusMinutes + " minutes. break time. stretch something."));
+                else
+                    Announce(Rng.Pick("break's over. back to it. " + TimeBlocks.FocusMinutes + " minutes on the clock.", "ok, focus time. " + TimeBlocks.FocusMinutes + " minutes. i'll guard the door."));
+            };
+            TimeBlocks.BreakSoon += () => Announce("break in five minutes. start wrapping up.");
+            TimeBlocks.StoppedWhileAway += () => c.Say("you were away, so i stopped your time blocks. start them again when you're back.", false, 0);
         }
 
         /// <summary>Someone launched Bestie again (the taskbar pin, the Start menu) while it's already here: come over.</summary>
@@ -612,7 +638,7 @@ namespace Bestie
         ToolStripMenuItem WidgetsMenu()
         {
             var root = new ToolStripMenuItem("widgets");
-            foreach (var kind in new[] { "todo", "calendar", "music" })
+            foreach (var kind in new[] { "todo", "calendar", "music", "timeblocks" })
             {
                 string k2 = kind;
                 var item = new ToolStripMenuItem(WidgetManager.Label(kind)) { CheckOnClick = false };
@@ -661,7 +687,8 @@ namespace Bestie
             {
                 wake = new WakeWord(this);
                 wake.Busy = () => holdTalking || assistant == null || assistant.IsBusy;
-                wake.Perked += () => { c.Glow(3); c.Squash = -0.2; };   // halo on the instant it hears its name
+                // (no reaction to a mere guess: on music and videos those come every minute. it lights up once the
+                // transcript confirms its name, about half a second after you stop talking.)
                 wake.Heard += OnWakeHeard;
                 if (!wake.Start(new[] { brain.Name }.Concat(brain.WakeNames))) { wake.Dispose(); wake = null; wakeRetryAt = Clock.T + 120; }
             }
@@ -671,9 +698,6 @@ namespace Bestie
         void OnWakeHeard(byte[] wav, string heard)
         {
             if (assistant == null || wav == null) return;
-            c.Freeze();
-            c.Glow(8);
-            c.Squash = -0.3;
             try { assistant.SubmitSpokenAudio(wav, wake != null ? wake.Phrases() : new string[0]); }
             catch (Exception ex) { DebugLog.Write("wake word: " + ex.Message); }
         }
@@ -801,6 +825,7 @@ namespace Bestie
         }
 
         public void Say(string text, double seconds) { c.Say(text, false, seconds, true); }
+        public void Heard() { c.Freeze(); c.Glow(4); c.Squash = -0.3; }
         public void SetMood(string mood)
         {
             c.SetMood(mood);

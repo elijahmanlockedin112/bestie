@@ -15,6 +15,8 @@ namespace Bestie
     /// </summary>
     public interface ICreatureHost
     {
+        /// <summary>Its name was really said (confirmed by the transcript): stop, glow, look up.</summary>
+        void Heard();
         string CreatureName { get; }
 
         /// <summary>A few lines on the creature's personality and what it has learned

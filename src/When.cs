@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text.RegularExpressions;
 
 namespace Bestie
@@ -133,6 +135,70 @@ namespace Bestie
                 if (hours.Length > 1) assumed = "they didn't say am or pm, so i picked the next " + Clock(best.Value) + ".";
             }
             return best;
+        }
+
+        static readonly string[] DayAbbr = { "sun", "mon", "tue", "wed", "thu", "fri", "sat" };
+
+        /// <summary>A repeat as stored: "" (once), "daily", "weekdays", "weekends", or days like "mon,thu".
+        /// Understands what people say: "every night", "weekdays", "weekly", "mondays and thursdays", "tue, fri".
+        /// Returns null if it can't tell. weekly means the weekday of firstDue.</summary>
+        public static string ParseRepeat(string said, DateTime firstDue)
+        {
+            string s = " " + (said ?? "").ToLowerInvariant().Replace(",", " ").Replace("/", " ") + " ";
+            s = Regex.Replace(s, @"\s+", " ");
+            if (s.Trim().Length == 0 || Regex.IsMatch(s, @"^ (none|no|once|one time|never) $")) return "";
+            if (Regex.IsMatch(s, @"\bweekdays?\b|\bschool ?days?\b|\bwork ?days?\b")) return "weekdays";
+            if (Regex.IsMatch(s, @"\bweekends?\b")) return "weekends";
+            var days = new List<int>();
+            MatchCollection ms = Regex.Matches(s, @"\b(sun(day)?|mon(day)?|tue(s|sday)?|wed(s|nesday)?|thu(r|rs|rsday)?|fri(day)?|sat(urday)?)s?\b");
+            foreach (Match m in ms)
+            {
+                int i = Array.IndexOf(DayAbbr, m.Groups[1].Value.Substring(0, 3));
+                if (i >= 0 && !days.Contains(i)) days.Add(i);
+            }
+            if (days.Count == 7) return "daily";
+            if (days.Count > 0) { days.Sort(); return string.Join(",", days.Select(i => DayAbbr[i]).ToArray()); }
+            if (Regex.IsMatch(s, @"\b(daily|every ?day|each day|every (night|morning|evening|afternoon)|nightly|each (night|morning|evening))\b")) return "daily";
+            if (Regex.IsMatch(s, @"\b(weekly|every week|each week)\b")) return DayAbbr[(int)firstDue.DayOfWeek];
+            return null;
+        }
+
+        public static bool RepeatsOn(string repeat, DayOfWeek day)
+        {
+            switch (repeat ?? "")
+            {
+                case "": return false;
+                case "daily": return true;
+                case "weekdays": return day != DayOfWeek.Saturday && day != DayOfWeek.Sunday;
+                case "weekends": return day == DayOfWeek.Saturday || day == DayOfWeek.Sunday;
+                default: return repeat.Split(',').Contains(DayAbbr[(int)day]);
+            }
+        }
+
+        /// <summary>The next time (local) this repeat comes around at hour:minute, strictly after `after`.</summary>
+        public static DateTime NextRepeat(string repeat, int hour, int minute, DateTime after)
+        {
+            for (int i = 0; i <= 8; i++)
+            {
+                DateTime c = after.Date.AddDays(i).AddHours(hour).AddMinutes(minute);
+                if (c > after && RepeatsOn(repeat, c.DayOfWeek)) return c;
+            }
+            return after.Date.AddDays(1).AddHours(hour).AddMinutes(minute);
+        }
+
+        /// <summary>"every day", "every weekday", "every monday and thursday".</summary>
+        public static string DescribeRepeat(string repeat)
+        {
+            switch (repeat ?? "")
+            {
+                case "": return "";
+                case "daily": return "every day";
+                case "weekdays": return "every weekday";
+                case "weekends": return "every saturday and sunday";
+            }
+            string[] full = { "sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday" };
+            var names = repeat.Split(',').Select(d => full[Array.IndexOf(DayAbbr, d)]).ToList();
+            return "every " + (names.Count == 1 ? names[0] : string.Join(", ", names.Take(names.Count - 1).ToArray()) + " and " + names.Last());
         }
 
         /// <summary>"6:45 am"</summary>
