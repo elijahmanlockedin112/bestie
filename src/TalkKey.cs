@@ -1,14 +1,19 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace Bestie
 {
-    /// <summary>Hold-to-talk on one key (default F9), anywhere in Windows: press and it's listening at once, let go
-    /// and it sends at once (no wake word, no waiting for silence). A quick tap listens hands-free instead. The key
-    /// itself is swallowed so the app in front doesn't also get it. Install on the UI thread.</summary>
+    /// <summary>Hold-to-talk on a key, anywhere in Windows: press and it's listening at once, let go and it sends at
+    /// once (no wake word, no waiting for silence). A quick tap listens hands-free instead. The key itself is swallowed
+    /// so the app in front doesn't also get it. Several keys can be set: the default is "F9, MediaNextTrack", because on
+    /// many laptops the F9 key sends "next track" unless Fn is held. Install on the UI thread.</summary>
     internal sealed class TalkKey : IDisposable
     {
+        public const string Default = "F9, MediaNextTrack";
+
         delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
         [StructLayout(LayoutKind.Sequential)] struct KBDLLHOOKSTRUCT { public uint vkCode, scanCode, flags, time; public IntPtr extra; }
         [DllImport("user32.dll", SetLastError = true)] static extern IntPtr SetWindowsHookEx(int id, HookProc fn, IntPtr mod, uint thread);
@@ -19,17 +24,17 @@ namespace Bestie
 
         const int TapMs = 350;
         readonly HookProc proc;   // kept alive here, or the hook would call into collected memory
-        readonly uint vk;
+        readonly HashSet<uint> vks;
         readonly Action down, upHold, upTap;
         readonly Control ui;
         IntPtr hook;
-        bool held;
+        uint heldVk;              // the key that's down right now (0 = none)
         int downAt;
 
         /// <summary>down: start listening (hold mode). upHold: let go after a real hold, send it. upTap: it was a tap.</summary>
-        public TalkKey(Keys key, Control ui, Action down, Action upHold, Action upTap)
+        public TalkKey(Keys[] keys, Control ui, Action down, Action upHold, Action upTap)
         {
-            vk = (uint)key;
+            vks = new HashSet<uint>(keys.Select(k => (uint)k));
             this.ui = ui; this.down = down; this.upHold = upHold; this.upTap = upTap;
             proc = Filter;
             hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, proc, GetModuleHandle(null), 0);
@@ -37,18 +42,26 @@ namespace Bestie
 
         public bool Active { get { return hook != IntPtr.Zero; } }
 
-        /// <summary>"F9" -> Keys.F9 (one key on its own), or Keys.None.</summary>
-        public static Keys Parse(string text)
+        /// <summary>"F9, MediaNextTrack" -> those keys (each one on its own, no modifiers). Unknown names are skipped.</summary>
+        public static Keys[] Parse(string text)
         {
-            Keys key;
-            if (string.IsNullOrWhiteSpace(text) || text.Contains("+") || !Enum.TryParse(text.Trim(), true, out key)) return Keys.None;
-            return Usable(key) ? key : Keys.None;
+            var list = new List<Keys>();
+            foreach (string part in (text ?? "").Split(','))
+            {
+                Keys key;
+                string p = part.Trim();
+                if (p.Length > 0 && !p.Contains("+") && Enum.TryParse(p, true, out key) && Usable(key) && !list.Contains(key)) list.Add(key);
+            }
+            return list.ToArray();
         }
 
-        /// <summary>Keys that make sense to hold (not letters you type with, not modifiers on their own).</summary>
+        /// <summary>Keys that make sense to hold: function keys, media and browser keys, and a few spares. Not the keys
+        /// you type with, and not ctrl/alt/shift/win on their own.</summary>
         public static bool Usable(Keys k)
         {
-            return k >= Keys.F1 && k <= Keys.F24 || k == Keys.Pause || k == Keys.Scroll || k == Keys.Insert
+            return k >= Keys.F1 && k <= Keys.F24
+                || k >= Keys.BrowserBack && k <= Keys.LaunchApplication2   // browser, volume, media and launch keys
+                || k == Keys.Pause || k == Keys.Scroll || k == Keys.Insert || k == Keys.PrintScreen
                 || k == Keys.RControlKey || k == Keys.RMenu || k == Keys.Apps || k == Keys.CapsLock;
         }
 
@@ -58,20 +71,21 @@ namespace Bestie
             {
                 var k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
                 bool injected = (k.flags & 0x10) != 0;
-                // only the bare key: with ctrl/alt/shift/win held it belongs to whatever shortcut they're pressing
-                bool modded = (GetAsyncKeyState(0x11) & 0x8000) != 0 || (GetAsyncKeyState(0x12) & 0x8000) != 0
-                           || (GetAsyncKeyState(0x10) & 0x8000) != 0 || (GetAsyncKeyState(0x5B) & 0x8000) != 0;
-                if (k.vkCode == vk && !injected && (held || !modded))
+                if (vks.Contains(k.vkCode) && !injected)
                 {
                     int msg = (int)wParam;
                     if (msg == 0x100 || msg == 0x104)   // key down (repeats keep coming while it's held)
                     {
-                        if (!held) { held = true; downAt = Environment.TickCount; Post(down); }
+                        // with ctrl/alt/shift/win held it belongs to whatever shortcut they're pressing
+                        bool modded = (GetAsyncKeyState(0x11) & 0x8000) != 0 || (GetAsyncKeyState(0x12) & 0x8000) != 0
+                                   || (GetAsyncKeyState(0x10) & 0x8000) != 0 || (GetAsyncKeyState(0x5B) & 0x8000) != 0;
+                        if (heldVk == 0 && modded) return CallNextHookEx(hook, code, wParam, lParam);
+                        if (heldVk == 0) { heldVk = k.vkCode; downAt = Environment.TickCount; Post(down); }
                         return (IntPtr)1;
                     }
                     if (msg == 0x101 || msg == 0x105)   // key up
                     {
-                        if (held) { held = false; Post(Environment.TickCount - downAt < TapMs ? upTap : upHold); }
+                        if (heldVk == k.vkCode) { heldVk = 0; Post(Environment.TickCount - downAt < TapMs ? upTap : upHold); }
                         return (IntPtr)1;
                     }
                 }
@@ -89,21 +103,68 @@ namespace Bestie
         {
             if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
         }
+
+        /// <summary>The next key pressed anywhere (media keys included, which windows don't always see), swallowed.
+        /// For the settings box. Install on the UI thread; dispose when done.</summary>
+        internal sealed class Catcher : IDisposable
+        {
+            readonly HookProc proc;
+            readonly Action<Keys> got;
+            readonly Control ui;
+            IntPtr hook;
+
+            public Catcher(Control ui, Action<Keys> got)
+            {
+                this.ui = ui; this.got = got;
+                proc = Filter;
+                hook = SetWindowsHookEx(13, proc, GetModuleHandle(null), 0);
+            }
+
+            IntPtr Filter(int code, IntPtr wParam, IntPtr lParam)
+            {
+                if (code >= 0 && ((int)wParam == 0x100 || (int)wParam == 0x104))
+                {
+                    var k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
+                    var key = (Keys)k.vkCode;
+                    if (Usable(key) || key == Keys.Back || key == Keys.Delete)
+                    {
+                        try { ui.BeginInvoke(new Action(() => got(key))); } catch { }
+                        return (IntPtr)1;
+                    }
+                }
+                return CallNextHookEx(hook, code, wParam, lParam);
+            }
+
+            public void Dispose()
+            {
+                if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+            }
+        }
     }
 
-    /// <summary>Settings box for the talk key: click it and press one key (F1-F24, Pause, Insert...). Backspace clears.</summary>
+    /// <summary>Settings box for the talk key: click it and press the key (function, media, browser keys...). Backspace clears.</summary>
     internal sealed class TalkKeyBox : TextBox
     {
+        TalkKey.Catcher catcher;
+
         public TalkKeyBox() { ReadOnly = true; BackColor = System.Drawing.SystemColors.Window; ShortcutsEnabled = false; }
 
-        protected override bool IsInputKey(Keys keyData) { return true; }
-
-        protected override void OnKeyDown(KeyEventArgs e)
+        protected override void OnGotFocus(EventArgs e)
         {
-            e.SuppressKeyPress = true;
-            e.Handled = true;
-            if (e.KeyCode == Keys.Back || e.KeyCode == Keys.Delete) { Text = ""; return; }
-            if (TalkKey.Usable(e.KeyCode)) Text = e.KeyCode.ToString();
+            base.OnGotFocus(e);
+            if (catcher == null) catcher = new TalkKey.Catcher(this, k => { Text = k == Keys.Back || k == Keys.Delete ? "" : k.ToString(); });
+        }
+
+        protected override void OnLostFocus(EventArgs e)
+        {
+            base.OnLostFocus(e);
+            if (catcher != null) { catcher.Dispose(); catcher = null; }
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (catcher != null) { catcher.Dispose(); catcher = null; }
+            base.Dispose(disposing);
         }
     }
 }

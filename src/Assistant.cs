@@ -1947,8 +1947,8 @@ namespace Bestie
                 HotkeyStatus[1] = hotkeys.Register(2, settings.HotkeyVoice, ToggleVoiceCore);
                 HotkeyStatus[2] = hotkeys.Register(3, settings.HotkeyScreen, ShareScreenCore);
                 if (talkKey != null) { talkKey.Dispose(); talkKey = null; }
-                Keys tk = TalkKey.Parse(settings.TalkKey);
-                if (tk != Keys.None)
+                Keys[] tk = TalkKey.Parse(settings.TalkKey);
+                if (tk.Length > 0)
                 {
                     talkKey = new TalkKey(tk, ui, delegate { StartRecording(true); }, delegate { StopRecording(true); }, delegate
                     {
@@ -1956,7 +1956,7 @@ namespace Bestie
                         if (recorder != null && recorder.PushToTalk) { recorder.Abort(); recorder = null; }
                         StartRecording(false);
                     });
-                    DebugLog.Write("assistant: hold " + tk + " to talk" + (talkKey.Active ? "" : " (couldn't hook the keyboard)"));
+                    DebugLog.Write("assistant: hold " + string.Join(" or ", tk.Select(k => k.ToString()).ToArray()) + " to talk" + (talkKey.Active ? "" : " (couldn't hook the keyboard)"));
                 }
                 string[] names = { "chat", "voice", "screen" };
                 for (int i = 0; i < 3; i++)

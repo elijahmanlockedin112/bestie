@@ -70,7 +70,7 @@ namespace Bestie
         public string HotkeyChat = DefaultHotkeyChat;
         public string HotkeyVoice = DefaultHotkeyVoice;
         public string HotkeyScreen = "";        // "" = off
-        public string TalkKey = "F9";           // hold to talk (one key, no modifiers); "" = off
+        public string TalkKey = Bestie.TalkKey.Default;   // hold to talk ("F9, MediaNextTrack": keys on their own, no modifiers); "" = off
         public bool AllowScreenTool = true;
         public bool AllowTabReading = true;
         public int MaxHistoryMessages = 24;
@@ -118,7 +118,7 @@ namespace Bestie
                 string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
                 hk = Json.Str(d, "hotkeyVoice"); s.HotkeyVoice = hk == null ? DefaultHotkeyVoice : hk.Trim();
                 hk = Json.Str(d, "hotkeyScreen"); s.HotkeyScreen = hk == null ? "" : hk.Trim();
-                hk = Json.Str(d, "talkKey"); s.TalkKey = hk == null ? "F9" : hk.Trim();
+                hk = Json.Str(d, "talkKey"); s.TalkKey = hk == null ? Bestie.TalkKey.Default : hk.Trim();
                 s.AllowScreenTool = Json.Bool(d, "allowScreenTool", true);
                 s.AllowTabReading = Json.Bool(d, "allowTabReading", true);
                 s.MaxHistoryMessages = Clamp((int)Json.Num(d, "maxHistoryMessages", 24), 4, 200);
