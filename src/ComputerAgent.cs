@@ -289,6 +289,9 @@ namespace Bestie
 
             public static void MoveTo(Point p) { SetCursorPos(p.X, p.Y); Thread.Sleep(30); }
 
+            /// <summary>One press of a key (media keys, volume...), stamped as Bestie's own.</summary>
+            public static void Press(ushort vk) { Send(KeyVk(vk, false)); Send(KeyVk(vk, true)); }
+
             public static void Click(Point p, string button, int times)
             {
                 MoveTo(p);

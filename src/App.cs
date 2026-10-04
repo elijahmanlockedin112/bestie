@@ -547,7 +547,7 @@ namespace Bestie
             System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
             step("wake word", () => { if (wake != null) wake.Dispose(); });
             step("wispr", () => { if (wispr != null) wispr.Dispose(); if (wisprCapture != null && wisprCapture.Active) wisprCapture.End(); });
-            step("sessions", () => { AiSessions.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
+            step("sessions", () => { AiSessions.Stop(); Office.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
             step("tray", () => { if (tray != null) { tray.Visible = false; tray.Dispose(); } bubble.Close(); });
             base.OnFormClosing(e);
         }
@@ -739,6 +739,8 @@ namespace Bestie
             AiSessions.Updated += () => OnUi(RefreshSessions);
             AiSessions.Changed += (s, before) => OnUi(() => SessionChanged(s, before));
             AiSessions.Start();
+            Office.Announce += line => OnUi(() => { Announce(line); c.Emit("sparkle", 3); });
+            Office.Start();
             sessHotkey = new SessionsHotkey(ToggleSessions);
         }
 
@@ -778,6 +780,7 @@ namespace Bestie
             // a permission prompt), and a turn that picks right back up (a queued message, a background task) isn't done.
             if (s.Status != "waiting") { maybeFinished.Remove(s.Id); return; }
             if (s.Kind == "app" || before != "working") return;
+            if (s.Origin == "sdk-cli") return;   // a headless run (vibe code central's agents): the office watcher announces those, by name
             maybeFinished[s.Id] = new KeyValuePair<AiSession, double>(s, Clock.T);
         }
 

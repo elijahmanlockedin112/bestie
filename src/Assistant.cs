@@ -462,6 +462,27 @@ namespace Bestie
             SubmitUserMessage(text, fromVoice, screens, timing, forceTool, false);
         }
 
+        /// <summary>A few words to say the moment a slow tool starts (null for quick ones, which answer fast anyway).</summary>
+        static string AckFor(object[] calls)
+        {
+            var first = calls.Length > 0 ? calls[0] as Dictionary<string, object> : null;
+            string name = Json.Str(Json.Obj(first, "function"), "name") ?? "";
+            var rnd = new Random();
+            Func<string[], string> pick = xs => xs[rnd.Next(xs.Length)];
+            switch (name)
+            {
+                case "play_music": return pick(new[] { "on it.", "one sec.", "queueing it up." });
+                case "use_computer": return pick(new[] { "on it. taking the wheel.", "okay, doing it." });
+                case "start_project": return pick(new[] { "starting it.", "on it." });
+                case "delegate_to_claude": return pick(new[] { "handing that to claude.", "on it. getting claude on it." });
+                case "organize_brain_dump": return pick(new[] { "got it. sorting.", "okay. untangling." });
+                case "look_at_screen": return "let me look.";
+                case "check_claude": return "checking.";
+            }
+            if (name.StartsWith("calendar_") || name == "web_search" || name == "read_tab" || name == "search_memory") return pick(new[] { "one sec.", "checking." });
+            return null;
+        }
+
         static Dictionary<string, object> ForcedTool(string name)
         {
             var fn = new Dictionary<string, object>();
@@ -621,6 +642,7 @@ namespace Bestie
             string reply = null;
             bool stream = !(p.Voice && LegacyVoicePathForTests);
             var rs = new ReplyStream(this, s, p.Timing, p.Tentative);
+            bool acked = false;
             // voice turns: no deliberation (the quirk handling downgrades to "minimal" where "none" isn't allowed)
             string effort = s.ReasoningEffort;
             if (p.Voice && !string.IsNullOrEmpty(effort)) effort = "none";
@@ -657,6 +679,12 @@ namespace Bestie
 
                     if (calls.Length > 0 && !last)
                     {
+                        // a slow tool on a spoken request: say something right away instead of sitting silent for seconds
+                        if (p.Voice && !p.Tentative && !acked && !rs.Spoke && s.SpeakReplies)
+                        {
+                            string ack = AckFor(calls);
+                            if (ack != null) { acked = true; AssistantSettings ackSettings = s; Post(delegate { if (!tts.Speaking) tts.Speak(ack, ackSettings); }); }
+                        }
                         RunToolCalls(calls, content, s, p.Ctx, turn);
                         continue;
                     }
@@ -1066,7 +1094,7 @@ namespace Bestie
             sb.Append("HOW YOU WORK\n")
               .Append("- you're also their personal assistant, and an agent: when they ask you to do something, do it with your tools instead of explaining how, chaining as many steps as it takes. after doing something, say briefly what you did.\n")
               .Append("- be persistent. if a tool doesn't get the result (wrong song, not found, an error), immediately try another way: different wording, then use_computer (small=true for quick things). only tell them it didn't work after two or three real attempts, and never just tell them to do it themselves when a tool could.\n")
-              .Append("- play_music plays anything on spotify. delegate_to_claude hands jobs to claude on their own claude subscription: ALL coding (\"code up X\", \"build me an app\", \"fix the bug in Y\", scripts) and anything token-heavy (research, long writing, going through documents or many files, big plans). never write code or do long heavy work yourself; hand it to claude. start_project starts their apps and servers (synaptic, spark lab, ascent...). use_computer operates the computer yourself (mouse, keyboard, screen) for anything else that happens in apps or websites; it asks them first; give it the whole goal. delegated claude sessions ask them in their own window before running commands.\n")
+              .Append("- play_music plays anything on spotify; media_control pauses, skips and changes the volume instantly. check_claude shows what their coding agents are doing (their vibe code central office: who's working, who's waiting on them, how locked in they've been today) and how a job you handed over is going. delegate_to_claude hands jobs to claude on their own claude subscription: ALL coding (\"code up X\", \"build me an app\", \"fix the bug in Y\", scripts) and anything token-heavy (research, long writing, going through documents or many files, big plans). never write code or do long heavy work yourself; hand it to claude. start_project starts their apps and servers (synaptic, spark lab, ascent...). use_computer operates the computer yourself (mouse, keyboard, screen) for anything else that happens in apps or websites; it asks them first; give it the whole goal. coding jobs go to a claude agent in their agent office, vibe code central (opened for them if it isn't running), which works on its own; other delegated jobs get a claude window that asks them before running commands.\n")
               .Append("- your memory is how you get to know them, and it's still thin, so be generous with it. whenever you learn anything about them (name, people, pets, school, classes, clubs, projects, deadlines and events, what they're into, music, games, shows, routines, opinions, how they like answers), call remember right away without asking, once per fact, several times if there are several. a dated near-term fact is fine (\"has a robotics competition sat 2026-10-03\"). use write_note for longer things (plans, lists, ideas they're working on). never remember passwords, keys or card numbers.\n");
             if (s.AutoLookScreens)
                 sb.Append("- each of their messages arrives with fresh low-res screenshots of all their screens (they turned this on so you can see what they mean). use them when relevant; don't narrate them unless it helps. look_at_screen gets a fresh look mid-task.\n");
@@ -1105,6 +1133,8 @@ namespace Bestie
             if (desk.Length > 0) sb.Append("\n\n## their desktop right now\n").Append(desk);
             string ai = AssistantTools.AiSessionsContextLine();
             if (ai != null) sb.Append("\n").Append(ai);
+            string office = Office.ContextLine();
+            if (office != null) sb.Append("\n").Append(office);
             string cal = calendar.IsConnected ? calendar.ContextLine() : IcsCalendar.Configured ? IcsCalendar.ContextLine() : null;
             if (cal != null) sb.Append("\n").Append(cal);
             sb.Append("\n\n## browser\n");

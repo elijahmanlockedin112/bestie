@@ -47,7 +47,9 @@ namespace Bestie
                 if (!string.IsNullOrEmpty(previousText)) body["previous_text"] = previousText;   // keeps the tone flowing between sentences
                 body["voice_settings"] = new Dictionary<string, object> { { "stability", 0.45 }, { "similarity_boost", 0.8 } };
                 byte[] bytes = Encoding.UTF8.GetBytes(Json.Write(body));
-                var req = Make("text-to-speech/" + Uri.EscapeDataString(voiceId) + "/stream?output_format=pcm_24000&optimize_streaming_latency=3", "POST", key, timeoutMs);
+                // the latency knob only exists on the older models (v4 refuses it outright)
+                string tune = m.StartsWith("eleven_v4") || m.StartsWith("eleven_v3") ? "" : "&optimize_streaming_latency=3";
+                var req = Make("text-to-speech/" + Uri.EscapeDataString(voiceId) + "/stream?output_format=pcm_24000" + tune, "POST", key, timeoutMs);
                 req.ContentType = "application/json";
                 req.Accept = "audio/*";
                 if (track != null) track(req);
@@ -62,7 +64,7 @@ namespace Bestie
                     OpenAIException e = Map(ex);
                     // the account can't use that model: try the always-available fast one, and remember
                     if (attempt == 0 && m != FallbackModel && (e.Status == 400 || e.Status == 403 || e.Status == 404 || e.Status == 422)
-                        && (e.ApiMessage ?? "").ToLowerInvariant().Contains("model"))
+                        && (e.ApiMessage ?? "").ToLowerInvariant().Contains("model") && !(e.ApiMessage ?? "").Contains("optimize_streaming_latency"))
                     {
                         DebugLog.Write("elevenlabs: " + m + " refused (" + e.ApiMessage + "); using " + FallbackModel);
                         m = learnedModel = FallbackModel;

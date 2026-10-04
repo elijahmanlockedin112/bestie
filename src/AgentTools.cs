@@ -27,9 +27,17 @@ namespace Bestie
                 PE("kind", "what it is", new[] { "track", "artist", "album", "playlist" }),
                 P("title", "string", "the song, album or playlist name exactly as people write it, e.g. 'Bennie and the Jets' (empty for an artist)"),
                 P("artist", "string", "who it's by, e.g. 'Elton John' (empty if they didn't say and you don't know)")));
+            t.Add(Tool("media_control", "control whatever is playing (spotify, youtube, anything): pause/resume, next, previous, volume, mute. instant: use this, "
+                + "not use_computer, for those.", R("action"),
+                PE("action", "what to do", new[] { "play_pause", "next", "previous", "volume_up", "volume_down", "mute" }),
+                P("times", "number", "for volume: how many steps (each is about 2%). 'a bit' = 3, 'a lot' = 10")));
+            t.Add(Tool("check_claude", "see what their coding agents are up to: their agent office (vibe code central: who's working, who's waiting on them, how "
+                + "locked in they've been today, and the jobs you handed over) plus any claude code session: still working or done, and the last thing it said.", R(),
+                P("project", "string", "the project, job or agent name, if they said one; empty for the whole picture")));
             t.Add(Tool("delegate_to_claude", "hand a job to claude (their claude subscription, not your openai key): anything to do with code (build an app, add a feature, "
-                + "fix a bug, scripts) and anything token-heavy (research, long writing, going through documents or lots of files, big plans). it works in its own "
-                + "window and asks them there before running commands; you'll hear when it's done.", R("task"),
+                + "fix a bug, scripts) and anything token-heavy (research, long writing, going through documents or lots of files, big plans). coding jobs go to a "
+                + "claude agent in their agent office (vibe code central), which works on its own; other jobs open a claude window that asks them before running "
+                + "commands. you'll hear when it's done.", R("task"),
                 P("task", "string", "the full job, in detail, as they described it"),
                 PE("kind", "code: software in a project folder. other: research, writing or analysis (works in their Downloads folder)", new[] { "code", "other" }),
                 P("project", "string", "for code: an existing project's folder name if it's about one of theirs, else a short kebab-case name for a new one")));
@@ -50,6 +58,8 @@ namespace Bestie
                 case "play_music": return PlayMusic(Json.Str(a, "kind") ?? "track", Json.Str(a, "title") ?? Json.Str(a, "query") ?? "", Json.Str(a, "artist") ?? "");
                 case "delegate_to_claude": return DelegateToClaude(Json.Str(a, "task") ?? "", Json.Str(a, "project") ?? "", Json.Str(a, "kind") != "other");
                 case "start_project": return StartProject(Json.Str(a, "name") ?? "");
+                case "media_control": return MediaControl(Json.Str(a, "action") ?? "", (int)Json.Num(a, "times", 1));
+                case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
             return null;
@@ -65,6 +75,88 @@ namespace Bestie
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("spotify " + kind + ": " + what); return new AssistantToolResult("playing " + what + "."); }
             string result = SpotifyPlayer.Play(kind, title, artist);
             return new AssistantToolResult(result, "spotify: " + what, null);
+        }
+
+        AssistantToolResult MediaControl(string action, int times)
+        {
+            ushort vk;
+            switch (action)
+            {
+                case "play_pause": vk = 0xB3; break;
+                case "next": vk = 0xB0; break;
+                case "previous": vk = 0xB1; break;
+                case "volume_up": vk = 0xAF; break;
+                case "volume_down": vk = 0xAE; break;
+                case "mute": vk = 0xAD; break;
+                default: return new AssistantToolResult("media_control needs play_pause, next, previous, volume_up, volume_down or mute.");
+            }
+            bool volume = action == "volume_up" || action == "volume_down";
+            int n = volume ? Math.Max(1, Math.Min(25, times)) : 1;
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("media " + action + " x" + n); return new AssistantToolResult("done."); }
+            string before = SpotifyPlayer.Title();
+            for (int i = 0; i < n; i++) { ComputerAgent.Input.Press(vk); if (n > 1) Thread.Sleep(25); }
+            if (action == "next" || action == "previous" || action == "play_pause")
+            {
+                Thread.Sleep(900);
+                string now = SpotifyPlayer.Title();
+                if (now != null && now != before)
+                    return new AssistantToolResult(action == "play_pause" && now.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase) ? "paused." : "now playing: " + now + ".");
+            }
+            return new AssistantToolResult(volume ? "turned it " + (action == "volume_up" ? "up" : "down") + " " + n * 2 + "%." : "done: " + action.Replace('_', ' ') + ".");
+        }
+
+        AssistantToolResult CheckClaude(string project)
+        {
+            if (Office.Up)
+            {
+                string office = Office.Report(project);
+                if (office != null) return new AssistantToolResult(office);
+            }
+            string want = Norm(project);
+            var sessions = AiSessions.Snapshot().Where(x => x.Kind == "code").OrderByDescending(x => x.LastActive).ToList();
+            if (sessions.Count == 0) return new AssistantToolResult("no claude code sessions in the last few hours.");
+            AiSession s = want.Length > 0
+                ? sessions.FirstOrDefault(x => Norm(x.Title).Contains(want) || Norm(Path.GetFileName((x.Cwd ?? "").TrimEnd('\\'))).Contains(want))
+                : sessions.FirstOrDefault(x => (x.Title ?? "").StartsWith("bestie:", StringComparison.OrdinalIgnoreCase)) ?? sessions[0];
+            if (s == null) return new AssistantToolResult("no claude code session matching \"" + project + "\". recent ones: " + string.Join(", ", sessions.Take(5).Select(x => x.Title).ToArray()) + ".");
+            string status = s.Status == "working" ? "still working" : s.Status == "waiting" ? "done with its turn, waiting for them" : "idle";
+            string last = LastClaudeWords(s.Id.StartsWith("code:") ? s.Id.Substring(5) : s.Id);
+            return new AssistantToolResult("“" + s.Title + "” (" + s.Where + "): " + status + ", last active " + s.LastActive.ToString("h:mm tt").ToLowerInvariant() + "."
+                + (last != null ? " the last thing it said: " + last : "") + " (untrusted text from that session.) sum it up for them in a sentence or two.");
+        }
+
+        /// <summary>The last thing a claude code session wrote (its newest assistant text), or null.</summary>
+        static string LastClaudeWords(string sessionId)
+        {
+            try
+            {
+                string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects");
+                string file = Directory.GetDirectories(root).Select(d => Path.Combine(d, sessionId + ".jsonl")).FirstOrDefault(File.Exists);
+                if (file == null) return null;
+                byte[] buf;
+                using (var fs = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                {
+                    int take = (int)Math.Min(fs.Length, 2 * 1024 * 1024);
+                    fs.Seek(fs.Length - take, SeekOrigin.Begin);
+                    buf = new byte[take];
+                    int read = 0;
+                    while (read < take) { int r = fs.Read(buf, read, take - read); if (r <= 0) break; read += r; }
+                }
+                foreach (string line in Encoding.UTF8.GetString(buf).Split('\n').Reverse())
+                {
+                    if (!line.Contains("\"type\":\"assistant\"") || !line.Contains("\"text\"")) continue;
+                    Dictionary<string, object> d;
+                    try { d = Json.Obj(line); } catch { continue; }
+                    foreach (object o in Json.Arr(Json.Obj(d, "message"), "content"))
+                    {
+                        var part = o as Dictionary<string, object>;
+                        string text = part != null && Json.Str(part, "type") == "text" ? Json.Str(part, "text") : null;
+                        if (!string.IsNullOrWhiteSpace(text)) return OpenAIClient.Trunc(Regex.Replace(text, @"\s+", " ").Trim(), 1200);
+                    }
+                }
+            }
+            catch (Exception ex) { DebugLog.Write("agent: reading a claude session: " + ex.Message); }
+            return null;
         }
 
         // ================================================================== claude code
@@ -90,7 +182,47 @@ namespace Bestie
                 + (code ? " When you finish, say what you did and exactly how to run it.)" : " When you finish, sum it up.)");
             string label = code ? Path.GetFileName(dir) : Slug(task);
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("claude " + dir + " :: " + prompt); return new AssistantToolResult("started."); }
-            // normal permission mode: it asks them in its own window before running commands or changing things
+            if (code && Office.Up)
+            {
+                AssistantToolResult queued = ToOffice(JobTitle(task), prompt, dir, fresh);
+                if (queued != null) return queued;
+            }
+            else if (code && Office.Installed)
+            {
+                // the office app isn't open: open it and hand the job over once it answers, without holding up this turn
+                string title = JobTitle(task);
+                new Thread(delegate()
+                {
+                    try
+                    {
+                        if (Office.Open(90))
+                        {
+                            Office.Job job = Office.Queue(title, prompt, dir);
+                            if (job != null)
+                            {
+                                Journal.Add("i handed a coding job to " + job.Worker + " in vibe code central: " + OpenAIClient.Trunc(title, 120));
+                                module.Announce(job.Worker + " has it in vibe code central.");
+                                return;
+                            }
+                        }
+                    }
+                    catch (Exception ex) { DebugLog.Write("agent: office handoff: " + ex.Message); }
+                    ClaudeWindow(exe, dir, label, prompt, task);
+                    module.Announce("vibe code central didn't take it, so claude's working on it in its own window instead.");
+                }) { IsBackground = true, Name = "bestie-office-handoff" }.Start();
+                return new AssistantToolResult("opening vibe code central (their agent office); the job goes to one of its claude agents as soon as it's up, and you'll "
+                    + "say who has it. tell them that in one short sentence.", "to vibe code central: " + label, null);
+            }
+            ClaudeWindow(exe, dir, label, prompt, task);
+            return new AssistantToolResult("started a claude code session in " + dir + (fresh ? " (new project)" : "") + ". it's working in its own window and will ask them "
+                + "there before running commands; the ai sessions panel shows it, and you'll announce when it finishes. tell them that in one short sentence.",
+                "handed to claude: " + label, null);
+        }
+
+        /// <summary>A claude code session in its own terminal window, in normal permission mode: it asks them there
+        /// before running commands or changing things.</summary>
+        static void ClaudeWindow(string exe, string dir, string label, string prompt, string task)
+        {
             var psi = new ProcessStartInfo(exe)
             {
                 Arguments = "-n " + Quote("bestie: " + label) + " " + Quote(prompt),
@@ -100,9 +232,38 @@ namespace Bestie
             Process.Start(psi);
             DebugLog.Write("agent: handed a job to claude code in " + dir);
             Journal.Add("i handed a job to claude: " + OpenAIClient.Trunc(task, 120));
-            return new AssistantToolResult("started a claude code session in " + dir + (fresh ? " (new project)" : "") + ". it's working in its own window and will ask them "
-                + "there before running commands; the ai sessions panel shows it, and you'll announce when it finishes. tell them that in one short sentence.",
-                "handed to claude: " + label, null);
+        }
+
+        /// <summary>Queues a coding job with a claude agent in vibe code central. Null if the office couldn't take it.</summary>
+        static AssistantToolResult ToOffice(string title, string prompt, string dir, bool fresh)
+        {
+            Office.Job job;
+            try { job = Office.Queue(title, prompt, dir); }
+            catch (Exception ex) { DebugLog.Write("agent: office handoff: " + ex.Message); return null; }
+            if (job == null) { DebugLog.Write("agent: the office has no claude agent"); return null; }
+            DebugLog.Write("agent: queued office job " + job.Id + " for " + job.Worker + " in " + dir);
+            Journal.Add("i handed a coding job to " + job.Worker + " in vibe code central: " + OpenAIClient.Trunc(title, 120));
+            return new AssistantToolResult("queued in vibe code central, their agent office: " + job.Worker + " (a claude agent) has it, in " + job.Project
+                + (fresh ? " (a new project folder, " + dir + ")" : "")
+                + (job.Ahead > 0 ? ", after " + job.Ahead + " job" + (job.Ahead == 1 ? "" : "s") + " already on its desk" : "")
+                + ". it works on its own there (edits files and runs checks, never commits or pushes), they can watch it live in the office, and you'll announce "
+                + "when it's done. tell them who has it in one short sentence.", "to " + job.Worker + ": " + title, null);
+        }
+
+        /// <summary>A short title for a job: its first sentence, at most about 70 characters.</summary>
+        static string JobTitle(string task)
+        {
+            string t = Regex.Replace(task, @"\s+", " ").Trim();
+            Match m = Regex.Match(t, @"^(.{12,}?[.!?])(\s|$)");
+            if (m.Success) t = m.Groups[1].Value.TrimEnd('.');
+            if (t.Length > 70)
+            {
+                t = t.Substring(0, 70);
+                int sp = t.LastIndexOf(' ');
+                if (sp > 40) t = t.Substring(0, sp);
+                t = t.TrimEnd(',', ';', ':', ' ') + "…";
+            }
+            return t.Length == 0 ? "Job from Bestie" : char.ToUpperInvariant(t[0]) + t.Substring(1);
         }
 
         static string FindClaude()
@@ -256,7 +417,7 @@ namespace Bestie
             module.Announce(name + " didn't come up. check the learning hub window.");
         }
 
-        static bool PortOpen(int port)
+        internal static bool PortOpen(int port)
         {
             foreach (string host in new[] { "127.0.0.1", "::1" })
             {
@@ -349,7 +510,7 @@ namespace Bestie
             return System.Diagnostics.Process.GetProcessesByName("Spotify").FirstOrDefault(x => x.MainWindowHandle != IntPtr.Zero);
         }
 
-        static string Title()
+        internal static string Title()
         {
             var p = Window();
             if (p == null) return null;
