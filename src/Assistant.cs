@@ -1655,6 +1655,16 @@ namespace Bestie
 
         string TranscribeAudio(byte[] wav, AssistantSettings s, int timeoutMs)
         {
+            // elevenlabs ears (scribe), if chosen; openai's if that fails and there's an openai key
+            if (s.TranscribeEngine == "elevenlabs" && s.ElevenKey.Length > 0)
+            {
+                try { return ElevenLabs.Transcribe(s.ElevenKey, wav, timeoutMs); }
+                catch (OpenAIException ex)
+                {
+                    if (ex.Aborted || !s.HasKey) throw;
+                    DebugLog.Write("assistant: elevenlabs transcription failed (" + ex.Message + "); using openai's");
+                }
+            }
             var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
             activeClient = client;
             string model = string.IsNullOrEmpty(s.TranscribeModel) ? AssistantSettings.DefaultTranscribeModel : s.TranscribeModel;

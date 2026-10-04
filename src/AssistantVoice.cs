@@ -216,6 +216,9 @@ namespace Bestie
             public int Gen;
             public AssistantSettings S;
             public OpenAIClient Client;
+            public bool Eleven;                         // speaking through elevenlabs
+            public volatile HttpWebRequest Req;         // its request in flight (so Stop can cut it off)
+            public string Prev;                         // the last sentence it said (elevenlabs keeps the tone flowing)
             public readonly Queue<string> Pending = new Queue<string>();
             public readonly List<string> All = new List<string>();
             public bool Ended, Windows, WindowsBegun;
@@ -281,14 +284,15 @@ namespace Bestie
             Stop();
             var u = new Utterance();
             u.S = s.Clone();
-            u.Windows = !s.UseOpenAiVoice;
+            u.Eleven = s.UseElevenVoice;
+            u.Windows = !u.Eleven && !s.UseOpenAiVoice;
             lock (gate)
             {
                 u.Gen = ++generation;
                 cur = u;
             }
             if (u.Windows) return;   // the windows voice starts with the first sentence (on the UI thread)
-            u.Client = new OpenAIClient(s.BaseUrl, s.ApiKey);
+            if (!u.Eleven) u.Client = new OpenAIClient(s.BaseUrl, s.ApiKey);
             var t = new Thread(delegate() { RunOpenAi(u); });
             t.IsBackground = true;
             t.Name = "bestie-voice";
@@ -370,7 +374,7 @@ namespace Bestie
                     if (cur != u || u.Pending.Count == 0) return null;
                     text = u.Pending.Dequeue();
                 }
-                try { resp = OpenSpeech(u.Client, model, voice, text); }
+                try { resp = u.Eleven ? OpenEleven(u, text) : OpenSpeech(u.Client, model, voice, text); }
                 catch (OpenAIException ex)
                 {
                     if (ex.Aborted) return null;
@@ -394,7 +398,7 @@ namespace Bestie
             if (stale()) return;   // superseded or stopped: Stop() already said Finished
             if (fail != null && !u.Played)
             {
-                DebugLog.Write("assistant: openai voice failed (" + fail + "); using the windows voice");
+                DebugLog.Write("assistant: " + (u.Eleven ? "elevenlabs" : "openai") + " voice failed (" + fail + "); using the windows voice");
                 lock (gate)
                 {
                     if (cur != u) return;
@@ -411,6 +415,15 @@ namespace Bestie
             }
             if (fail != null) DebugLog.Write("assistant: openai voice broke mid-sentence: " + fail);
             if (FinishIfCurrent(u)) Raise(Finished);
+        }
+
+        static HttpWebResponse OpenEleven(Utterance u, string text)
+        {
+            string key = u.S.ElevenKey;
+            string voice = ElevenLabs.VoiceOrDefault(key, u.S.ElevenVoice);
+            HttpWebResponse r = ElevenLabs.Speak(key, voice, u.S.ElevenModel, text, u.Prev, 30000, req => u.Req = req);
+            u.Prev = text;
+            return r;
         }
 
         /// <summary>With Personality.VoiceDirection as instructions; if the model rejects those, once more without.</summary>
@@ -442,6 +455,8 @@ namespace Bestie
             }
             if (u == null) return;
             if (u.Client != null) { try { u.Client.Abort(); } catch { } }
+            var inflight = u.Req;
+            if (inflight != null) { try { inflight.Abort(); } catch { } }
             if (u.Windows && u.WindowsBegun) postToUi(delegate { if (windowsOwner == u) { windowsOwner = null; windows.Stop(); } });
             Raise(Finished);
         }

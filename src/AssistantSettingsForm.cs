@@ -1,5 +1,6 @@
 // AssistantSettingsForm.cs - small, friendly settings window for the assistant. C# 5 only. UI thread.
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -29,9 +30,13 @@ namespace Bestie
         readonly TextBox keyBox, baseUrlBox;
         readonly Label keyHint, testResult, browserStatus, saveResult;
         readonly Button testButton;
-        static readonly string[] EngineLabels = { "openai voice (sounds real, ~1.5¢ a minute of talking)", "windows voice (free, a bit robotic)" };
+        static readonly string[] EngineLabels = { "openai voice (sounds real, ~1.5¢ a minute of talking)", "windows voice (free, a bit robotic)",
+            "elevenlabs voice (the most natural; needs an elevenlabs key)" };
 
-        readonly ComboBox modelBox, effortBox, transcribeBox, voiceBox, engineBox, openAiVoiceBox, ttsModelBox;
+        readonly ComboBox modelBox, effortBox, transcribeBox, voiceBox, engineBox, openAiVoiceBox, ttsModelBox, elevenVoiceBox;
+        readonly TextBox elevenKeyBox;
+        readonly CheckBox elevenEarsBox;
+        readonly List<string> elevenVoiceIds = new List<string>();
         readonly CheckBox speakBox, screenBox, tabsBox, autoLookBox, nosyBox, speakNosyBox;
         readonly NumericUpDown rateBox, historyBox, nosyMinutesBox;
         readonly TextBox skipBox, gIdBox, gSecretBox;
@@ -127,13 +132,31 @@ namespace Bestie
             speakBox = Check("read my replies out loud", s.SpeakReplies);
             Row("talking", speakBox);
             engineBox = Combo(EngineLabels, null, false, S(330));
-            engineBox.SelectedIndex = s.VoiceEngine == "windows" ? 1 : 0;
+            engineBox.SelectedIndex = s.VoiceEngine == "windows" ? 1 : s.VoiceEngine == "elevenlabs" ? 2 : 0;
             Row("voice", engineBox, Btn("try", delegate { OnTryVoice(); }));
             openAiVoiceBox = Combo(AssistantSettings.OpenAiVoices, null, false, S(120));
             if (!string.IsNullOrEmpty(s.OpenAiVoice) && openAiVoiceBox.Items.IndexOf(s.OpenAiVoice) < 0) openAiVoiceBox.Items.Add(s.OpenAiVoice);
             openAiVoiceBox.SelectedIndex = Math.Max(0, openAiVoiceBox.Items.IndexOf(s.OpenAiVoice ?? AssistantSettings.DefaultOpenAiVoice));
             ttsModelBox = Combo(AssistantSettings.SuggestedTtsModels, s.TtsModel, true, S(170));
             Row("", Lbl("openai", Ink, S(70)), openAiVoiceBox, ttsModelBox);
+            // elevenlabs: its own key, a voice from the account, and (optionally) its ears too
+            elevenKeyBox = new TextBox();
+            elevenKeyBox.UseSystemPasswordChar = true;
+            elevenKeyBox.Width = S(210);
+            bool hadElevenKey = s.ElevenKey.Length > 0;
+            elevenKeyBox.HandleCreated += delegate { SendMessage(elevenKeyBox.Handle, 0x1501, new IntPtr(1), hadElevenKey ? "key saved (paste to replace)" : "paste your elevenlabs key"); };
+            elevenKeyBox.TextChanged += delegate
+            {
+                // a first key: they want elevenlabs, so switch it on (voice and ears); they can change it back
+                if (!hadElevenKey && elevenKeyBox.Text.Trim().Length > 10) { engineBox.SelectedIndex = 2; elevenEarsBox.Checked = true; }
+            };
+            Row("", Lbl("elevenlabs", Ink, S(70)), elevenKeyBox, Btn("load voices", delegate { OnLoadElevenVoices(); }));
+            elevenVoiceBox = Combo(new[] { s.ElevenVoiceName.Length > 0 ? s.ElevenVoiceName : "(first voice on the account)" }, null, false, S(250));
+            elevenVoiceBox.SelectedIndex = 0;
+            elevenVoiceIds.Add(s.ElevenVoice ?? "");
+            elevenEarsBox = Check("use elevenlabs to hear me too", s.TranscribeEngine == "elevenlabs");
+            Row("", Lbl("", Ink, S(70)), elevenVoiceBox);
+            Row("", Lbl("", Ink, S(70)), elevenEarsBox);
             string[] voices = VoiceTts.InstalledVoices();
             voiceBox = Combo(new[] { "(default voice)" }, null, false, S(210));
             foreach (string v in voices) voiceBox.Items.Add(v);
@@ -532,7 +555,14 @@ namespace Bestie
             else n.BaseUrl = url;
 
             n.SpeakReplies = speakBox.Checked;
-            n.VoiceEngine = engineBox.SelectedIndex == 1 ? "windows" : "openai";
+            n.VoiceEngine = engineBox.SelectedIndex == 1 ? "windows" : engineBox.SelectedIndex == 2 ? "elevenlabs" : "openai";
+            string newEleven = AssistantSettings.CleanKey(elevenKeyBox.Text);
+            if (newEleven.Length > 0) n.SetElevenKey(newEleven);
+            int evi = elevenVoiceBox.SelectedIndex;
+            if (evi >= 0 && evi < elevenVoiceIds.Count) { n.ElevenVoice = elevenVoiceIds[evi]; n.ElevenVoiceName = evi == 0 && n.ElevenVoice.Length == 0 ? "" : elevenVoiceBox.Text; }
+            n.TranscribeEngine = elevenEarsBox.Checked ? "elevenlabs" : "openai";
+            if ((n.VoiceEngine == "elevenlabs" || n.TranscribeEngine == "elevenlabs") && n.ElevenKey.Length == 0 && problem == null)
+                problem = "elevenlabs needs its key: paste it in the elevenlabs box.";
             n.OpenAiVoice = openAiVoiceBox.Text.Length > 0 ? openAiVoiceBox.Text : AssistantSettings.DefaultOpenAiVoice;
             n.TtsModel = ttsModelBox.Text.Trim().Length > 0 ? ttsModelBox.Text.Trim() : AssistantSettings.DefaultTtsModel;
             n.TtsVoice = voiceBox.SelectedIndex <= 0 ? "" : voiceBox.Text;
@@ -633,12 +663,44 @@ namespace Bestie
             });
         }
 
+        /// <summary>Fills the elevenlabs voice list from their account (the key in the box, else the saved one).</summary>
+        void OnLoadElevenVoices()
+        {
+            string key = AssistantSettings.CleanKey(elevenKeyBox.Text);
+            if (key.Length == 0) key = s.ElevenKey;
+            if (key.Length == 0) { saveResult.Text = "paste your elevenlabs key first."; return; }
+            saveResult.Text = "asking elevenlabs for your voices…";
+            string keep = elevenVoiceIds.Count > elevenVoiceBox.SelectedIndex && elevenVoiceBox.SelectedIndex >= 0 ? elevenVoiceIds[elevenVoiceBox.SelectedIndex] : "";
+            var t = new System.Threading.Thread(delegate()
+            {
+                List<KeyValuePair<string, string>> voices = null; string err = null;
+                try { voices = ElevenLabs.Voices(key); } catch (OpenAIException ex) { err = ex.Friendly; } catch (Exception ex) { err = ex.Message; }
+                try
+                {
+                    BeginInvoke(new Action(delegate
+                    {
+                        if (voices == null) { saveResult.Text = err; return; }
+                        elevenVoiceBox.Items.Clear(); elevenVoiceIds.Clear();
+                        foreach (var v in voices) { elevenVoiceBox.Items.Add(v.Value); elevenVoiceIds.Add(v.Key); }
+                        int i = Math.Max(0, elevenVoiceIds.IndexOf(keep));
+                        if (elevenVoiceBox.Items.Count > 0) elevenVoiceBox.SelectedIndex = i;
+                        saveResult.Text = voices.Count + " voices. pick one, press try, then save.";
+                    }));
+                }
+                catch { }
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
         void OnTryVoice()
         {
             string problem;
             AssistantSettings n = Collect(out problem);
             if (n.VoiceEngine == "openai" && !n.HasKey)
                 saveResult.Text = "the openai voice needs a key, so here's the windows one.";
+            if (n.VoiceEngine == "elevenlabs" && n.ElevenKey.Length == 0)
+                saveResult.Text = "the elevenlabs voice needs its key.";
             owner.PreviewVoice(n);
         }
 

@@ -46,7 +46,12 @@ namespace Bestie
         public string TranscribeModel = DefaultTranscribeModel;
         public string BaseUrl = DefaultBaseUrl;
         public bool SpeakReplies = true;
-        public string VoiceEngine = "openai";   // "openai" (needs a key) | "windows" (System.Speech, free)
+        public string VoiceEngine = "openai";   // "openai" (needs a key) | "elevenlabs" (needs an elevenlabs key) | "windows" (System.Speech, free)
+        public string ElevenKeyProtected = "";  // DPAPI + base64
+        public string ElevenVoice = "";         // elevenlabs voice id ("" = the account's first voice)
+        public string ElevenVoiceName = "";     // for showing in settings
+        public string ElevenModel = ElevenLabs.DefaultModel;
+        public string TranscribeEngine = "openai";   // who turns speech into text: "openai" | "elevenlabs"
         public string TtsModel = DefaultTtsModel;
         public string OpenAiVoice = DefaultOpenAiVoice;
         public string TtsVoice = "";            // installed SAPI voice name, "" = system default
@@ -98,7 +103,13 @@ namespace Bestie
                 s.TranscribeModel = NonEmpty(Json.Str(d, "transcribeModel"), DefaultTranscribeModel);
                 s.BaseUrl = NonEmpty(Json.Str(d, "baseUrl"), DefaultBaseUrl);
                 s.SpeakReplies = Json.Bool(d, "speakReplies", true);
-                s.VoiceEngine = (Json.Str(d, "voiceEngine") ?? "openai").Trim().ToLowerInvariant() == "windows" ? "windows" : "openai";
+                string ve = (Json.Str(d, "voiceEngine") ?? "openai").Trim().ToLowerInvariant();
+                s.VoiceEngine = ve == "windows" || ve == "elevenlabs" ? ve : "openai";
+                s.ElevenKeyProtected = Json.Str(d, "elevenKeyProtected") ?? "";
+                s.ElevenVoice = Json.Str(d, "elevenVoice") ?? "";
+                s.ElevenVoiceName = Json.Str(d, "elevenVoiceName") ?? "";
+                s.ElevenModel = NonEmpty(Json.Str(d, "elevenModel"), ElevenLabs.DefaultModel);
+                s.TranscribeEngine = Json.Str(d, "transcribeEngine") == "elevenlabs" ? "elevenlabs" : "openai";
                 s.TtsModel = NonEmpty(Json.Str(d, "ttsModel"), DefaultTtsModel);
                 s.OpenAiVoice = NonEmpty(Json.Str(d, "openaiVoice"), DefaultOpenAiVoice);
                 s.AutoLookScreens = Json.Bool(d, "autoLookScreens", true);
@@ -138,7 +149,12 @@ namespace Bestie
             d["transcribeModel"] = TranscribeModel ?? DefaultTranscribeModel;
             d["baseUrl"] = BaseUrl ?? DefaultBaseUrl;
             d["speakReplies"] = SpeakReplies;
-            d["voiceEngine"] = VoiceEngine == "windows" ? "windows" : "openai";
+            d["voiceEngine"] = VoiceEngine == "windows" || VoiceEngine == "elevenlabs" ? VoiceEngine : "openai";
+            d["elevenKeyProtected"] = ElevenKeyProtected ?? "";
+            d["elevenVoice"] = ElevenVoice ?? "";
+            d["elevenVoiceName"] = ElevenVoiceName ?? "";
+            d["elevenModel"] = ElevenModel ?? ElevenLabs.DefaultModel;
+            d["transcribeEngine"] = TranscribeEngine == "elevenlabs" ? "elevenlabs" : "openai";
             d["ttsModel"] = TtsModel ?? DefaultTtsModel;
             d["openaiVoice"] = OpenAiVoice ?? DefaultOpenAiVoice;
             d["autoLookScreens"] = AutoLookScreens;
@@ -208,8 +224,21 @@ namespace Bestie
             GoogleClientSecretProtected = secret.Length == 0 ? "" : Protect(secret);
         }
 
-        /// <summary>OpenAI voice if chosen and a key exists; otherwise the free windows voice.</summary>
-        public bool UseOpenAiVoice { get { return VoiceEngine != "windows" && HasKey; } }
+        /// <summary>The ElevenLabs key (decrypted), or "".</summary>
+        public string ElevenKey { get { return Unprotect(ElevenKeyProtected); } }
+
+        public void SetElevenKey(string key)
+        {
+            key = CleanKey(key);
+            ElevenKeyProtected = key.Length == 0 ? "" : Protect(key);
+        }
+
+        /// <summary>ElevenLabs voice if chosen and its key exists.</summary>
+        public bool UseElevenVoice { get { return VoiceEngine == "elevenlabs" && ElevenKey.Length > 0; } }
+
+        /// <summary>OpenAI voice if chosen (or elevenlabs was chosen without its key) and an openai key exists;
+        /// otherwise the free windows voice.</summary>
+        public bool UseOpenAiVoice { get { return HasKey && (VoiceEngine == "openai" || VoiceEngine == "elevenlabs" && ElevenKey.Length == 0); } }
 
         /// <summary>"saved", "env" or "".</summary>
         public string KeySource { get { if (SavedKey.Length > 0) return "saved"; if (EnvKey.Length > 0) return "env"; return ""; } }
