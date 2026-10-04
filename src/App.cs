@@ -540,6 +540,7 @@ namespace Bestie
             Journal.Add(e.CloseReason == CloseReason.WindowsShutDown ? "the computer went to sleep. so did i." : "went to sleep. see you.");
             step("save", SaveAll);
             step("volume", () => { ducker.Restore(); ducker.Tick(1); ducker.Tick(1); });   // put everyone's volume back right away
+            step("wispr keys", () => { if (wisprCapture != null) wisprCapture.ReleaseIfHolding(); });   // never leave ctrl+win held
             step("widgets", WidgetManager.CloseAll);
             step("brain.md", () => c.WriteReadableBrain());
             step("assistant", () => { if (assistant != null) assistant.Dispose(); });

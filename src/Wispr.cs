@@ -260,6 +260,10 @@ namespace Bestie
     {
         readonly TextBox box;
         readonly System.Windows.Forms.Timer settle = new System.Windows.Forms.Timer { Interval = 150 };
+        // wispr's keys are ctrl+win: held too long by mistake (a lost key release), every key they type becomes a windows
+        // shortcut. so they're never held for more than 40 seconds, whatever happens.
+        readonly System.Windows.Forms.Timer guard = new System.Windows.Forms.Timer { Interval = 1000 };
+        DateTime pressedAt;
         IntPtr previous;
         DateTime releasedAt, lastChange;
         Action<string> done;
@@ -282,6 +286,11 @@ namespace Bestie
             Controls.Add(label);
             box.TextChanged += (s, e) => lastChange = DateTime.Now;
             settle.Tick += (s, e) => Settle();
+            guard.Tick += (s, e) =>
+            {
+                if (!holding) { guard.Stop(); return; }
+                if ((DateTime.Now - pressedAt).TotalSeconds > 40) { DebugLog.Write("wispr: held its keys 40 s, letting go"); End(); }
+            };
         }
 
         protected override CreateParams CreateParams
@@ -315,8 +324,19 @@ namespace Bestie
                 return false;
             }
             Active = true; holding = true; done = onText;
+            pressedAt = DateTime.Now;
             Wispr.PressPtt();
+            guard.Start();
             return true;
+        }
+
+        /// <summary>Let go of wispr's keys if they're still held (the app is closing).</summary>
+        public void ReleaseIfHolding()
+        {
+            if (!holding) return;
+            holding = false;
+            guard.Stop();
+            Wispr.ReleasePtt();
         }
 
         /// <summary>Windows only lets the app you're using hand the focus over, so borrow its input queue for a moment
@@ -342,6 +362,7 @@ namespace Bestie
         {
             if (!Active || !holding) return;
             holding = false;
+            guard.Stop();
             Wispr.ReleasePtt();
             releasedAt = DateTime.Now;
             lastChange = DateTime.MinValue;
@@ -367,7 +388,7 @@ namespace Bestie
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) settle.Dispose();
+            if (disposing) { ReleaseIfHolding(); settle.Dispose(); guard.Dispose(); }
             base.Dispose(disposing);
         }
     }

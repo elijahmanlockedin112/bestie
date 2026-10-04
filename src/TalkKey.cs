@@ -26,6 +26,7 @@ namespace Bestie
         [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
         [DllImport("user32.dll")] static extern bool PostThreadMessage(uint thread, uint msg, IntPtr w, IntPtr l);
         [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+        [DllImport("user32.dll")] static extern IntPtr SetTimer(IntPtr hwnd, IntPtr id, uint ms, IntPtr fn);
 
         /// <summary>Stamped on every key and click Bestie itself sends (SendInput's extra info), so its own input is never
         /// mistaken for the user's. Anything else counts, including keys a laptop's hotkey software sends on its behalf.</summary>
@@ -56,8 +57,20 @@ namespace Bestie
                 hookThread = GetCurrentThreadId();
                 hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, proc, GetModuleHandle(null), 0);
                 ready.Set();
+                // windows asks the newest keyboard hook first. when another app installs one later (wispr does, every time
+                // it starts) it gets ahead of us, and it swallows keys while it's dictating, including this key's release.
+                // so every few seconds, while the key isn't held, step back to the front of the line.
+                SetTimer(IntPtr.Zero, IntPtr.Zero, 5000, IntPtr.Zero);
                 MSG m;
-                while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
+                while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0)
+                {
+                    if (m.message != 0x0113 /* WM_TIMER */ || heldVk != 0) continue;
+                    IntPtr fresh = SetWindowsHookEx(13, proc, GetModuleHandle(null), 0);
+                    if (fresh == IntPtr.Zero) continue;
+                    IntPtr old = hook;
+                    hook = fresh;
+                    if (old != IntPtr.Zero) UnhookWindowsHookEx(old);
+                }
                 if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
             });
             t.IsBackground = true;
