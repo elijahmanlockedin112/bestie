@@ -49,6 +49,7 @@ namespace Bestie
                 P("task", "string", "exactly what to get done, with every detail they gave"),
                 P("small", "boolean", "true for a quick, harmless job in an app that's already open or easy to open (pick a song, press a button, scroll, open a menu, "
                     + "switch tabs). false for anything longer, or that sends, buys, deletes, signs in, changes settings or touches their files")));
+            AddFileTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -62,7 +63,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return null;
+            return FileTool(name, a);
         }
 
         // ================================================================== spotify

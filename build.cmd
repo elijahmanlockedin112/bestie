@@ -15,7 +15,7 @@ for %%d in ("%CSC%") do set SPEECH=%%~dpdWPF\System.Speech.dll
 if not exist "%SPEECH%" set SPEECH=%WINDIR%\Microsoft.NET\assembly\GAC_MSIL\System.Speech\v4.0_4.0.0.0__31bf3856ad364e35\System.Speech.dll
 rem ui automation (what's under the laser pointer) lives there too
 for %%d in ("%CSC%") do set WPF=%%~dpdWPF
-set REFS=/r:System.dll /r:System.Core.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/r:%SPEECH%" /r:System.Security.dll "/r:%WPF%\UIAutomationClient.dll" "/r:%WPF%\UIAutomationTypes.dll" "/r:%WPF%\WindowsBase.dll"
+set REFS=/r:System.dll /r:System.Core.dll /r:System.Data.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Web.Extensions.dll "/r:%SPEECH%" /r:System.Security.dll "/r:%WPF%\UIAutomationClient.dll" "/r:%WPF%\UIAutomationTypes.dll" "/r:%WPF%\WindowsBase.dll"
 set OPTS=/nologo /codepage:65001 /target:winexe /optimize+
 
 rem a running Bestie.exe can't be overwritten; opening it for append fails if it's in use
