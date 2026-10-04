@@ -17,6 +17,8 @@ namespace Bestie
     {
         /// <summary>Its name was really said (confirmed by the transcript): stop, glow, look up.</summary>
         void Heard();
+        /// <summary>It's operating the computer: stay out of the way of the clicks (on), or back to normal (off).</summary>
+        void Driving(bool on);
         string CreatureName { get; }
 
         /// <summary>A few lines on the creature's personality and what it has learned

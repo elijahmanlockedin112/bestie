@@ -18,7 +18,7 @@ namespace Bestie
         //  - gpt-transcribe: the recommended /audio/transcriptions model (~$0.0045/min).
         //  - gpt-4o-mini-tts: the current steerable TTS model (takes `instructions`; $0.60/1M text in,
         //    $12/1M audio out, roughly $0.015/min), cheaper per character than tts-1 ($15/1M chars).
-        public const string DefaultModel = "gpt-6-luna";
+        public const string DefaultModel = "gpt-6.1-sol";
         public const string DefaultTtsModel = "gpt-4o-mini-tts";
         public const string DefaultOpenAiVoice = "ballad";
         public const string DefaultReasoningEffort = "none";
@@ -28,7 +28,7 @@ namespace Bestie
         public const string DefaultHotkeyVoice = "Ctrl+Alt+V";
 
         public static readonly string[] SuggestedModels = new string[] {
-            "gpt-6-luna", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
+            "gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
         public static readonly string[] SuggestedTranscribeModels = new string[] {
             "gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1" };
         public static readonly string[] SuggestedTtsModels = new string[] { "gpt-4o-mini-tts", "tts-1", "tts-1-hd" };
@@ -70,6 +70,7 @@ namespace Bestie
         public string HotkeyChat = DefaultHotkeyChat;
         public string HotkeyVoice = DefaultHotkeyVoice;
         public string HotkeyScreen = "";        // "" = off
+        public string TalkKey = "F9";           // hold to talk (one key, no modifiers); "" = off
         public bool AllowScreenTool = true;
         public bool AllowTabReading = true;
         public int MaxHistoryMessages = 24;
@@ -117,6 +118,7 @@ namespace Bestie
                 string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
                 hk = Json.Str(d, "hotkeyVoice"); s.HotkeyVoice = hk == null ? DefaultHotkeyVoice : hk.Trim();
                 hk = Json.Str(d, "hotkeyScreen"); s.HotkeyScreen = hk == null ? "" : hk.Trim();
+                hk = Json.Str(d, "talkKey"); s.TalkKey = hk == null ? "F9" : hk.Trim();
                 s.AllowScreenTool = Json.Bool(d, "allowScreenTool", true);
                 s.AllowTabReading = Json.Bool(d, "allowTabReading", true);
                 s.MaxHistoryMessages = Clamp((int)Json.Num(d, "maxHistoryMessages", 24), 4, 200);
@@ -156,6 +158,7 @@ namespace Bestie
             d["hotkeyChat"] = HotkeyChat ?? "";
             d["hotkeyVoice"] = HotkeyVoice ?? "";
             d["hotkeyScreen"] = HotkeyScreen ?? "";
+            d["talkKey"] = TalkKey ?? "";
             d["allowScreenTool"] = AllowScreenTool;
             d["allowTabReading"] = AllowTabReading;
             d["maxHistoryMessages"] = MaxHistoryMessages;

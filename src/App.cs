@@ -826,6 +826,16 @@ namespace Bestie
 
         public void Say(string text, double seconds) { c.Say(text, false, seconds, true); }
         public void Heard() { c.Freeze(); c.Glow(4); c.Squash = -0.3; }
+
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hwnd, int index, int value);
+
+        public void Driving(bool on)
+        {
+            // clicks go straight through it to whatever is underneath while the agent works
+            int ex = Native.GetWindowLong(Handle, Native.GWL_EXSTYLE);
+            SetWindowLong(Handle, Native.GWL_EXSTYLE, on ? ex | Native.WS_EX_TRANSPARENT : ex & ~Native.WS_EX_TRANSPARENT);
+            if (on) { c.Freeze(); c.SetMood("thinking"); }
+        }
         public void SetMood(string mood)
         {
             c.SetMood(mood);

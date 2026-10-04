@@ -132,6 +132,7 @@ namespace Bestie
             bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
             if (calendarConnected) AddCalendarTools(t);
             AddExtraTools(t, browser, calendarConnected);
+            AddAgentTools(t);
             t.Add(Tool("list_ai_sessions","list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
             t.Add(Tool("focus_ai_session", "bring one of those sessions to the front.", R("id"), P("id", "string", "session id from list_ai_sessions")));
             t.Add(Tool("new_ai_chat", "start a brand-new claude or chatgpt conversation. only when they name claude or chatgpt; never for other websites (that's open_url).", R("provider"),
@@ -190,7 +191,7 @@ namespace Bestie
                     case "calendar_delete_event":
                     case "calendar_list_calendars":
                         return CalendarTool(name, a);
-                    default: return ExtraTool(name, a) ?? new AssistantToolResult("there's no tool called " + name + ".");
+                    default: return AgentTool(name, a, s) ?? ExtraTool(name, a) ?? new AssistantToolResult("there's no tool called " + name + ".");
                 }
             }
             catch (BridgeException ex) { return new AssistantToolResult("the browser said: " + ex.Message); }

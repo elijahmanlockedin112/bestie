@@ -23,7 +23,7 @@ namespace Bestie
         public OpenAIException(string friendly, string detail) : base(detail) { Friendly = friendly; }
     }
 
-    public sealed class OpenAIClient
+    public sealed partial class OpenAIClient
     {
         readonly string baseUrl;
         readonly string apiKey;
@@ -97,11 +97,13 @@ namespace Bestie
                 List<string> known;
                 if (quirks.TryGetValue(qkey, out known)) foreach (string q in known) ApplyQuirk(q, body);
             }
+            if (UsesResponses(model)) return ViaResponses(body, timeoutMs, false, null, null);
             for (int attempt = 0; ; attempt++)
             {
                 try { return PostJson("chat/completions", body, timeoutMs, model); }
                 catch (OpenAIException ex)
                 {
+                    if (LearnResponses(ex, model)) return ViaResponses(body, timeoutMs, false, null, null);
                     if (attempt >= 3 || ex.Status != 400) throw;
                     string fix = QuirkFor(ex, body);
                     if (fix == null) throw;
@@ -135,6 +137,7 @@ namespace Bestie
                     noStream = known.Contains("no_stream");
                 }
             }
+            if (UsesResponses(model)) { body.Remove("stream"); return ViaResponses(body, timeoutMs, !noStream, onContent, onToolCall); }
             if (noStream) return PlainAndFeed(body, timeoutMs, onContent, onToolCall);
             body["stream"] = true;
             for (int attempt = 0; ; attempt++)
@@ -142,6 +145,7 @@ namespace Bestie
                 try { return StreamOnce(body, timeoutMs, model, onContent, onToolCall); }
                 catch (OpenAIException ex)
                 {
+                    if (LearnResponses(ex, model)) { body.Remove("stream"); return ViaResponses(body, timeoutMs, true, onContent, onToolCall); }
                     if (attempt >= 3 || ex.Status != 400) throw;
                     string m = ((ex.ApiMessage ?? "") + " " + (ex.Param ?? "")).ToLowerInvariant();
                     string fix = m.Contains("stream") ? "no_stream" : QuirkFor(ex, body);

@@ -38,6 +38,7 @@ namespace Bestie
         readonly TrackBar gainBar;
         readonly Label gainLabel, calStatus;
         readonly CheckBox calWarnBox, autoMemoryBox, wakeBox, followUpBox;
+        readonly TalkKeyBox talkKeyBox;
         readonly Button connectButton, disconnectButton;
         bool calBusy;
         readonly HotkeyTextBox[] hotkeyBoxes = new HotkeyTextBox[3];
@@ -165,6 +166,10 @@ namespace Bestie
                 Row(i == 0 ? "hotkeys" : "", Lbl(hkNames[i], Ink, S(78)), hotkeyBoxes[i], hotkeyLabels[i]);
             }
             Row("", Note("click a box and press the keys. backspace clears it.", Muted));
+            talkKeyBox = new TalkKeyBox();
+            talkKeyBox.Width = S(150);
+            talkKeyBox.Text = s.TalkKey ?? "";
+            Row("hold to talk", talkKeyBox, Lbl("hold it, talk, let go. a tap listens hands-free.", Muted));
             RefreshHotkeyStatus();
 
             // --- permissions
@@ -545,6 +550,7 @@ namespace Bestie
             n.HotkeyChat = hk[0];
             n.HotkeyVoice = hk[1];
             n.HotkeyScreen = hk[2];
+            n.TalkKey = talkKeyBox.Text.Trim();
             n.AutoLookScreens = autoLookBox.Checked;
             n.AllowScreenTool = screenBox.Checked;
             n.AllowTabReading = tabsBox.Checked;

@@ -121,7 +121,7 @@ namespace Bestie
 
     public sealed class AssistantModule : IDisposable
     {
-        const int MaxToolRounds = 6;
+        const int MaxToolRounds = 12;   // room to chain: look something up, act, check, act again
         const int ChatTimeoutMs = 90000;
         const int TranscribeTimeoutMs = 60000;
         const int MemoryPromptChars = 12000;
@@ -132,6 +132,7 @@ namespace Bestie
         readonly AssistantTools tools;
         readonly AssistantReminders reminders;
         readonly Queue<string> announcements = new Queue<string>();   // UI thread only
+        TalkKey talkKey;   // hold-to-talk key (UI thread)
         const int FollowUpMs = 3500;   // how long it waits for an answer after speaking
         readonly AssistantSpeaker tts;
         readonly AssistantCalendar calendar;
@@ -278,6 +279,7 @@ namespace Bestie
             lock (openAsks) foreach (ManualResetEvent e in openAsks) { try { e.Set(); } catch { } }
             try { reminders.Dispose(); } catch { }
             try { AutoMemory.Stop(); } catch { }   // anything not yet written down waits in .state and is handled next time
+            try { if (talkKey != null) talkKey.Dispose(); } catch { }
             MethodInvoker uiParts = delegate
             {
                 try { if (recorder != null) recorder.Abort(); } catch { }
@@ -1058,7 +1060,8 @@ namespace Bestie
             var sb = new StringBuilder();
             sb.Append(Personality.Prompt(name).TrimEnd()).Append("\n\n");
             sb.Append("HOW YOU WORK\n")
-              .Append("- you're also their personal assistant. use tools instead of guessing. after doing something, say briefly what you did.\n")
+              .Append("- you're also their personal assistant, and an agent: when they ask you to do something, do it with your tools instead of explaining how, chaining as many steps as it takes. after doing something, say briefly what you did.\n")
+              .Append("- play_music plays anything on spotify. delegate_to_claude hands jobs to claude on their own claude subscription: ALL coding (\"code up X\", \"build me an app\", \"fix the bug in Y\", scripts) and anything token-heavy (research, long writing, going through documents or many files, big plans). never write code or do long heavy work yourself; hand it to claude. start_project starts their apps and servers (synaptic, spark lab, ascent...). use_computer operates the computer yourself (mouse, keyboard, screen) for anything else that happens in apps or websites; it asks them first; give it the whole goal. delegated claude sessions ask them in their own window before running commands.\n")
               .Append("- your memory is how you get to know them, and it's still thin, so be generous with it. whenever you learn anything about them (name, people, pets, school, classes, clubs, projects, deadlines and events, what they're into, music, games, shows, routines, opinions, how they like answers), call remember right away without asking, once per fact, several times if there are several. a dated near-term fact is fine (\"has a robotics competition sat 2026-10-03\"). use write_note for longer things (plans, lists, ideas they're working on). never remember passwords, keys or card numbers.\n");
             if (s.AutoLookScreens)
                 sb.Append("- each of their messages arrives with fresh low-res screenshots of all their screens (they turned this on so you can see what they mean). use them when relevant; don't narrate them unless it helps. look_at_screen gets a fresh look mid-task.\n");
@@ -1943,6 +1946,18 @@ namespace Bestie
                 HotkeyStatus[0] = hotkeys.Register(1, settings.HotkeyChat, OnChatHotkey);
                 HotkeyStatus[1] = hotkeys.Register(2, settings.HotkeyVoice, ToggleVoiceCore);
                 HotkeyStatus[2] = hotkeys.Register(3, settings.HotkeyScreen, ShareScreenCore);
+                if (talkKey != null) { talkKey.Dispose(); talkKey = null; }
+                Keys tk = TalkKey.Parse(settings.TalkKey);
+                if (tk != Keys.None)
+                {
+                    talkKey = new TalkKey(tk, ui, delegate { StartRecording(true); }, delegate { StopRecording(true); }, delegate
+                    {
+                        // a tap: listen hands-free until they stop talking
+                        if (recorder != null && recorder.PushToTalk) { recorder.Abort(); recorder = null; }
+                        StartRecording(false);
+                    });
+                    DebugLog.Write("assistant: hold " + tk + " to talk" + (talkKey.Active ? "" : " (couldn't hook the keyboard)"));
+                }
                 string[] names = { "chat", "voice", "screen" };
                 for (int i = 0; i < 3; i++)
                     if (HotkeyStatus[i] != "ok" && HotkeyStatus[i] != "off")
