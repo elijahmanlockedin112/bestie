@@ -254,7 +254,7 @@ namespace Bestie
         public void Dispose() { if (timer != null) { timer.Dispose(); timer = null; } }
     }
 
-    /// <summary>A little "listening through wispr" box near the creature. While you hold the creature, it presses Wispr's
+    /// <summary>An invisible text box that has the focus while you hold the creature (or the talk key): it presses Wispr's
     /// push-to-talk for you and catches what Wispr types into it.</summary>
     public sealed class WisprCapture : Form
     {
@@ -300,10 +300,11 @@ namespace Bestie
             if (Active) return true;
             previous = Native.GetForegroundWindow();
             box.Text = "";
-            float k = DeviceDpi / 96f;
-            Size = new Size((int)(320 * k), (int)(64 * k));
-            Location = new Point(anchor.X - Width / 2, anchor.Y - Height - (int)(90 * k));
-            try { int round = 2; Native.DwmSetWindowAttribute(Handle, 33, ref round, 4); } catch { }
+            // invisible: it only needs the focus so wispr has somewhere to type. the creature's halo and
+            // "listening…" bubble are the only sign it's listening.
+            Opacity = 0;
+            Size = new Size(1, 1);
+            Location = new Point(anchor.X, anchor.Y);
             Show();
             TakeFocus();
             if (Native.GetForegroundWindow() != Handle) { TakeFocus(); }

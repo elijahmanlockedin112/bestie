@@ -22,22 +22,48 @@ namespace Bestie
         [DllImport("user32.dll")] static extern short GetAsyncKeyState(int vk);
         [DllImport("kernel32.dll")] static extern IntPtr GetModuleHandle(string name);
 
+        [StructLayout(LayoutKind.Sequential)] struct MSG { public IntPtr hwnd; public uint message; public IntPtr wParam, lParam; public uint time; public int x, y; }
+        [DllImport("user32.dll")] static extern int GetMessage(out MSG msg, IntPtr hwnd, uint min, uint max);
+        [DllImport("user32.dll")] static extern bool PostThreadMessage(uint thread, uint msg, IntPtr w, IntPtr l);
+        [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
+        /// <summary>Stamped on every key and click Bestie itself sends (SendInput's extra info), so its own input is never
+        /// mistaken for the user's. Anything else counts, including keys a laptop's hotkey software sends on its behalf.</summary>
+        public static readonly IntPtr OwnInput = (IntPtr)0x42455354;
+
         const int TapMs = 350;
         readonly HookProc proc;   // kept alive here, or the hook would call into collected memory
         readonly HashSet<uint> vks;
         readonly Action down, upHold, upTap;
         readonly Control ui;
         IntPtr hook;
+        uint hookThread;
         uint heldVk;              // the key that's down right now (0 = none)
         int downAt;
+        static int seenLogged;
 
-        /// <summary>down: start listening (hold mode). upHold: let go after a real hold, send it. upTap: it was a tap.</summary>
+        /// <summary>down: start listening (hold mode). upHold: let go after a real hold, send it. upTap: it was a tap.
+        /// The hook lives on its own thread with its own message loop: windows skips (and can quietly remove) a keyboard
+        /// hook whose thread is slow to answer, and the creature's thread is busy drawing.</summary>
         public TalkKey(Keys[] keys, Control ui, Action down, Action upHold, Action upTap)
         {
             vks = new HashSet<uint>(keys.Select(k => (uint)k));
             this.ui = ui; this.down = down; this.upHold = upHold; this.upTap = upTap;
             proc = Filter;
-            hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, proc, GetModuleHandle(null), 0);
+            var ready = new System.Threading.ManualResetEvent(false);
+            var t = new System.Threading.Thread(delegate()
+            {
+                hookThread = GetCurrentThreadId();
+                hook = SetWindowsHookEx(13 /* WH_KEYBOARD_LL */, proc, GetModuleHandle(null), 0);
+                ready.Set();
+                MSG m;
+                while (GetMessage(out m, IntPtr.Zero, 0, 0) > 0) { }
+                if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+            });
+            t.IsBackground = true;
+            t.Name = "bestie-talk-key";
+            t.Start();
+            ready.WaitOne(2000);
         }
 
         public bool Active { get { return hook != IntPtr.Zero; } }
@@ -70,10 +96,17 @@ namespace Bestie
             if (code >= 0)
             {
                 var k = (KBDLLHOOKSTRUCT)Marshal.PtrToStructure(lParam, typeof(KBDLLHOOKSTRUCT));
-                bool injected = (k.flags & 0x10) != 0;
-                if (vks.Contains(k.vkCode) && !injected)
+                bool ours = k.extra == OwnInput;
+                int msg = (int)wParam;
+                // what the special keys really send (function, media, browser keys only: never typing), for the log
+                if ((msg == 0x100 || msg == 0x104) && seenLogged < 12 && (k.vkCode >= 0x70 && k.vkCode <= 0x87 || k.vkCode >= 0xA6 && k.vkCode <= 0xB7))
                 {
-                    int msg = (int)wParam;
+                    seenLogged++;
+                    string what = ((Keys)k.vkCode) + " (injected " + ((k.flags & 0x10) != 0) + ", " + (vks.Contains(k.vkCode) ? "the talk key" : "not the talk key") + ")";
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ => DebugLog.Write("talk key: saw " + what));
+                }
+                if (vks.Contains(k.vkCode) && !ours)
+                {
                     if (msg == 0x100 || msg == 0x104)   // key down (repeats keep coming while it's held)
                     {
                         // with ctrl/alt/shift/win held it belongs to whatever shortcut they're pressing
@@ -101,7 +134,7 @@ namespace Bestie
 
         public void Dispose()
         {
-            if (hook != IntPtr.Zero) { UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
+            if (hookThread != 0) { PostThreadMessage(hookThread, 0x0012 /* WM_QUIT */, IntPtr.Zero, IntPtr.Zero); hookThread = 0; }
         }
 
         /// <summary>The next key pressed anywhere (media keys included, which windows don't always see), swallowed.

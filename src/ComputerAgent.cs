@@ -281,9 +281,10 @@ namespace Bestie
             const uint KEYUP = 0x2, UNICODE = 0x4, EXTENDED = 0x1;
 
             static void Send(params INPUT[] inputs) { SendInput((uint)inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT))); }
-            static INPUT Mouse(uint flags, uint data) { return new INPUT { type = MOUSE, u = new UNION { mi = new MOUSEINPUT { dwFlags = flags, mouseData = data } } }; }
-            static INPUT KeyVk(ushort vk, bool up) { return new INPUT { type = KEYBOARD, u = new UNION { ki = new KEYBDINPUT { wVk = vk, dwFlags = (up ? KEYUP : 0) | (IsExtended(vk) ? EXTENDED : 0) } } }; }
-            static INPUT KeyChar(char c, bool up) { return new INPUT { type = KEYBOARD, u = new UNION { ki = new KEYBDINPUT { wScan = c, dwFlags = UNICODE | (up ? KEYUP : 0) } } }; }
+            // everything it sends carries TalkKey.OwnInput, so its keys are never mistaken for the user's
+            static INPUT Mouse(uint flags, uint data) { return new INPUT { type = MOUSE, u = new UNION { mi = new MOUSEINPUT { dwFlags = flags, mouseData = data, extra = TalkKey.OwnInput } } }; }
+            static INPUT KeyVk(ushort vk, bool up) { return new INPUT { type = KEYBOARD, u = new UNION { ki = new KEYBDINPUT { wVk = vk, dwFlags = (up ? KEYUP : 0) | (IsExtended(vk) ? EXTENDED : 0), extra = TalkKey.OwnInput } } }; }
+            static INPUT KeyChar(char c, bool up) { return new INPUT { type = KEYBOARD, u = new UNION { ki = new KEYBDINPUT { wScan = c, dwFlags = UNICODE | (up ? KEYUP : 0), extra = TalkKey.OwnInput } } }; }
             static bool IsExtended(ushort vk) { return vk >= 0x21 && vk <= 0x2E || vk == 0x5B || vk == 0x5C; }
 
             public static void MoveTo(Point p) { SetCursorPos(p.X, p.Y); Thread.Sleep(30); }

@@ -248,6 +248,7 @@ namespace Bestie
                 c.SetMood("listening");
                 if (!wisprCapture.Begin(CreatureScreenPoint, OnWisprText)) { c.SetMood("idle"); return false; }
                 wisprTalking = true;
+                DebugLog.Write("talk key: listening through wispr");
                 return true;
             }
             if (!wisprTalking) return false;
@@ -258,6 +259,7 @@ namespace Bestie
 
         void OnWisprText(string text)
         {
+            DebugLog.Write("wispr: got " + (string.IsNullOrWhiteSpace(text) ? "nothing" : text.Trim().Split(' ').Length + " words"));
             c.SetMood("idle");
             if (string.IsNullOrWhiteSpace(text)) { ducker.Restore(); c.Say(Rng.Pick("didn't catch that.", "hm? say again?", "wispr didn't hear anything."), false, 0); return; }
             try { assistant.SubmitSpokenText(text, WakePhrases()); }
