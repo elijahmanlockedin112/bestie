@@ -133,6 +133,10 @@ namespace Bestie
         readonly AssistantReminders reminders;
         readonly Queue<string> announcements = new Queue<string>();   // UI thread only
         TalkKey talkKey;   // hold-to-talk key (UI thread)
+
+        /// <summary>Set by the app: takes the talk key ("down", "up", "tap") and returns true if it handled it
+        /// (wispr flow does the listening), false to use the built-in mic. UI thread.</summary>
+        public Func<string, bool> TalkVia;
         const int FollowUpMs = 3500;   // how long it waits for an answer after speaking
         readonly AssistantSpeaker tts;
         readonly AssistantCalendar calendar;
@@ -1061,6 +1065,7 @@ namespace Bestie
             sb.Append(Personality.Prompt(name).TrimEnd()).Append("\n\n");
             sb.Append("HOW YOU WORK\n")
               .Append("- you're also their personal assistant, and an agent: when they ask you to do something, do it with your tools instead of explaining how, chaining as many steps as it takes. after doing something, say briefly what you did.\n")
+              .Append("- be persistent. if a tool doesn't get the result (wrong song, not found, an error), immediately try another way: different wording, then use_computer (small=true for quick things). only tell them it didn't work after two or three real attempts, and never just tell them to do it themselves when a tool could.\n")
               .Append("- play_music plays anything on spotify. delegate_to_claude hands jobs to claude on their own claude subscription: ALL coding (\"code up X\", \"build me an app\", \"fix the bug in Y\", scripts) and anything token-heavy (research, long writing, going through documents or many files, big plans). never write code or do long heavy work yourself; hand it to claude. start_project starts their apps and servers (synaptic, spark lab, ascent...). use_computer operates the computer yourself (mouse, keyboard, screen) for anything else that happens in apps or websites; it asks them first; give it the whole goal. delegated claude sessions ask them in their own window before running commands.\n")
               .Append("- your memory is how you get to know them, and it's still thin, so be generous with it. whenever you learn anything about them (name, people, pets, school, classes, clubs, projects, deadlines and events, what they're into, music, games, shows, routines, opinions, how they like answers), call remember right away without asking, once per fact, several times if there are several. a dated near-term fact is fine (\"has a robotics competition sat 2026-10-03\"). use write_note for longer things (plans, lists, ideas they're working on). never remember passwords, keys or card numbers.\n");
             if (s.AutoLookScreens)
@@ -1950,12 +1955,17 @@ namespace Bestie
                 Keys[] tk = TalkKey.Parse(settings.TalkKey);
                 if (tk.Length > 0)
                 {
-                    talkKey = new TalkKey(tk, ui, delegate { StartRecording(true); }, delegate { StopRecording(true); }, delegate
-                    {
-                        // a tap: listen hands-free until they stop talking
-                        if (recorder != null && recorder.PushToTalk) { recorder.Abort(); recorder = null; }
-                        StartRecording(false);
-                    });
+                    // the app can take the key for wispr flow (TalkVia); otherwise it's the built-in mic
+                    talkKey = new TalkKey(tk, ui,
+                        delegate { tts.Stop(); if (TalkVia == null || !TalkVia("down")) StartRecording(true); },
+                        delegate { if (TalkVia == null || !TalkVia("up")) StopRecording(true); },
+                        delegate
+                        {
+                            if (TalkVia != null && TalkVia("tap")) return;
+                            // a tap: listen hands-free until they stop talking
+                            if (recorder != null && recorder.PushToTalk) { recorder.Abort(); recorder = null; }
+                            StartRecording(false);
+                        });
                     DebugLog.Write("assistant: hold " + string.Join(" or ", tk.Select(k => k.ToString()).ToArray()) + " to talk" + (talkKey.Active ? "" : " (couldn't hook the keyboard)"));
                 }
                 string[] names = { "chat", "voice", "screen" };

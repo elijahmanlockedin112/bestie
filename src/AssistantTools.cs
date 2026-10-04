@@ -236,7 +236,22 @@ namespace Bestie
             string rel;
             string title = Json.Str(a, "title") ?? "note";
             string r = AssistantMemory.WriteNote(title, Json.Str(a, "content") ?? "", Json.Bool(a, "append", false), out rel);
-            return new AssistantToolResult(r, "wrote " + rel, "i wrote a note for you: " + rel);
+            // they asked for a document: put it in front of them
+            string opened = "";
+            if (!string.IsNullOrEmpty(rel) && !DryRun)
+            {
+                string full = Path.Combine(Home.Root, rel.Replace('/', '\\'));
+                if (File.Exists(full))
+                {
+                    try { Process.Start(new ProcessStartInfo(full) { UseShellExecute = true }); opened = " opened it on their screen."; }
+                    catch
+                    {
+                        try { Process.Start("notepad.exe", "\"" + full + "\""); opened = " opened it in notepad."; }
+                        catch (Exception ex) { DebugLog.Write("assistant: couldn't open the note: " + ex.Message); }
+                    }
+                }
+            }
+            return new AssistantToolResult(r + opened, "wrote " + rel, "i wrote a note for you: " + rel);
         }
 
         // ------------------------------------------------------------------ browser

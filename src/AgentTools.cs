@@ -23,8 +23,10 @@ namespace Bestie
 
         void AddAgentTools(List<object> t)
         {
-            t.Add(Tool("play_music", "play a song, artist, album or playlist in their spotify app (it starts playing right away).", R("query"),
-                P("query", "string", "what to play, e.g. 'end of beginning djo', 'taylor swift', 'liked songs'")));
+            t.Add(Tool("play_music", "play a song, artist, album or playlist in their spotify app (it starts playing right away, and checks it's the right one).", R("kind"),
+                PE("kind", "what it is", new[] { "track", "artist", "album", "playlist" }),
+                P("title", "string", "the song, album or playlist name exactly as people write it, e.g. 'Bennie and the Jets' (empty for an artist)"),
+                P("artist", "string", "who it's by, e.g. 'Elton John' (empty if they didn't say and you don't know)")));
             t.Add(Tool("delegate_to_claude", "hand a job to claude (their claude subscription, not your openai key): anything to do with code (build an app, add a feature, "
                 + "fix a bug, scripts) and anything token-heavy (research, long writing, going through documents or lots of files, big plans). it works in its own "
                 + "window and asks them there before running commands; you'll hear when it's done.", R("task"),
@@ -34,31 +36,35 @@ namespace Bestie
             t.Add(Tool("start_project", "start one of their apps or servers (synaptic, spark lab, ascent, ffa quiz drill, ai playground lab, ...) and open it in the browser.", R("name"),
                 P("name", "string", "the project, as they said it")));
             t.Add(Tool("use_computer", "operate their computer yourself (mouse, keyboard, screen) for anything the other tools don't cover: using apps, clicking through "
-                + "websites, settings in apps, filling in things. it asks them first, then takes over the mouse and keyboard until done; they can press esc to stop it.", R("task"),
-                P("task", "string", "exactly what to get done, with every detail they gave")));
+                + "websites, settings in apps, filling in things, and finishing what another tool couldn't. it takes over the mouse and keyboard until done; they can "
+                + "press esc to stop it. small jobs start right away; bigger ones ask them first.", R("task", "small"),
+                P("task", "string", "exactly what to get done, with every detail they gave"),
+                P("small", "boolean", "true for a quick, harmless job in an app that's already open or easy to open (pick a song, press a button, scroll, open a menu, "
+                    + "switch tabs). false for anything longer, or that sends, buys, deletes, signs in, changes settings or touches their files")));
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
         {
             switch (name)
             {
-                case "play_music": return PlayMusic(Json.Str(a, "query") ?? "");
+                case "play_music": return PlayMusic(Json.Str(a, "kind") ?? "track", Json.Str(a, "title") ?? Json.Str(a, "query") ?? "", Json.Str(a, "artist") ?? "");
                 case "delegate_to_claude": return DelegateToClaude(Json.Str(a, "task") ?? "", Json.Str(a, "project") ?? "", Json.Str(a, "kind") != "other");
                 case "start_project": return StartProject(Json.Str(a, "name") ?? "");
-                case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", s);
+                case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
             return null;
         }
 
         // ================================================================== spotify
 
-        AssistantToolResult PlayMusic(string query)
+        AssistantToolResult PlayMusic(string kind, string title, string artist)
         {
-            query = query.Trim();
-            if (query.Length == 0) return new AssistantToolResult("play what?");
-            if (DryRun) { lock (DryRunLog) DryRunLog.Add("spotify " + query); return new AssistantToolResult("playing " + query + "."); }
-            string result = SpotifyPlayer.Play(query);
-            return new AssistantToolResult(result, "spotify: " + query, null);
+            title = title.Trim(); artist = artist.Trim();
+            if (title.Length == 0 && artist.Length == 0) return new AssistantToolResult("play what?");
+            string what = title.Length > 0 ? title + (artist.Length > 0 ? " by " + artist : "") : artist;
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("spotify " + kind + ": " + what); return new AssistantToolResult("playing " + what + "."); }
+            string result = SpotifyPlayer.Play(kind, title, artist);
+            return new AssistantToolResult(result, "spotify: " + what, null);
         }
 
         // ================================================================== claude code
@@ -271,22 +277,26 @@ namespace Bestie
 
         static int driving;
 
-        AssistantToolResult UseComputer(string task, AssistantSettings s)
+        AssistantToolResult UseComputer(string task, bool small, AssistantSettings s)
         {
             task = task.Trim();
             if (task.Length < 4) return new AssistantToolResult("do what on the computer?");
-            if (DryRun) { lock (DryRunLog) DryRunLog.Add("computer " + task); return new AssistantToolResult("done."); }
-            // they say yes before it touches the mouse or keyboard, every time
-            int ok = module.AskUser("ok to take over your mouse and keyboard for: " + OpenAIClient.Trunc(task, 140) + "? (esc stops me)", AssistantCalendar.ConfirmTimeoutMs);
-            if (ok != 1)
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("computer " + (small ? "(small) " : "") + task); return new AssistantToolResult("done."); }
+            // small, harmless jobs just go (with a tight step budget, esc, and the banner). anything bigger: they say yes first.
+            if (!small)
             {
-                Journal.Add("i offered to use your computer for \"" + OpenAIClient.Trunc(task, 80) + "\". " + (ok == 0 ? "you said no." : "you didn't answer."));
-                return new AssistantToolResult(ok == 0 ? "they said no, so you didn't touch the computer." : "they didn't answer, so you didn't touch the computer.", "didn't use the computer", null);
+                int ok = module.AskUser("ok to take over your mouse and keyboard for: " + OpenAIClient.Trunc(task, 140) + "? (esc stops me)", AssistantCalendar.ConfirmTimeoutMs);
+                if (ok != 1)
+                {
+                    Journal.Add("i offered to use your computer for \"" + OpenAIClient.Trunc(task, 80) + "\". " + (ok == 0 ? "you said no." : "you didn't answer."));
+                    return new AssistantToolResult(ok == 0 ? "they said no, so you didn't touch the computer." : "they didn't answer, so you didn't touch the computer.", "didn't use the computer", null);
+                }
             }
             if (Interlocked.Exchange(ref driving, 1) == 1) return new AssistantToolResult("already using the computer for something else.");
             DrivingBanner banner = null;
             EscWatcher esc = null;
             var agent = new ComputerAgent(s, q => module.AskUser(q, AssistantCalendar.ConfirmTimeoutMs), null);
+            agent.Small = small;
             try
             {
                 agent.Screen = ComputerAgent.PickScreen();
@@ -328,6 +338,10 @@ namespace Bestie
     internal static class SpotifyPlayer
     {
         static readonly string[] Filler = { "the", "by", "and", "song", "music", "play", "some", "on", "spotify", "a" };
+        /// <summary>Tests: rank the play buttons and say which it would press, without pressing anything.</summary>
+#pragma warning disable 649   // only tests set it
+        internal static bool PreviewOnly;
+#pragma warning restore 649
         static readonly Regex Knockoff = new Regex(@"karaoke|in the style of|instrumental|tribute|\bcover\b|remix|sped up|slowed|8d audio|lullaby|made famous|originally performed|piano version|backing track", RegexOptions.Compiled);
 
         static System.Diagnostics.Process Window()
@@ -345,49 +359,89 @@ namespace Bestie
 
         static bool IsIdleTitle(string t) { return t == null || t.Length == 0 || t.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase); }
 
-        public static string Play(string query)
+        static string[] Words(string s)
         {
-            string before = Title();
-            System.Diagnostics.Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(query)) { UseShellExecute = true });
-            string[] words = Regex.Split(query.ToLowerInvariant(), @"[^a-z0-9']+").Where(w => w.Length > 1 && !Filler.Contains(w)).ToArray();
-            if (words.Length == 0) words = new[] { query.ToLowerInvariant() };
+            return Regex.Split((s ?? "").ToLowerInvariant(), @"[^a-z0-9']+").Where(w => w.Length > 1 && !Filler.Contains(w)).ToArray();
+        }
+
+        /// <summary>kind: track, artist, album or playlist. Presses the best matching play button on the search page,
+        /// checks the window title shows the right thing playing, and tries the next candidate if it doesn't.</summary>
+        public static string Play(string kind, string title, string artist)
+        {
+            bool artistOnly = kind == "artist" || title.Length == 0;
+            string search = artistOnly ? artist : (title + " " + artist).Trim();
+            string[] titleWords = Words(artistOnly ? artist : title);
+            string[] artistWords = Words(artist);
+            if (titleWords.Length == 0) titleWords = new[] { search.ToLowerInvariant() };
+            bool wantsKnockoff = Knockoff.IsMatch((title + " " + artist).ToLowerInvariant());
+            string exact = Regex.Replace(Regex.Replace((artistOnly ? artist : title).ToLowerInvariant(), @"[^a-z0-9' ]", " "), @"\s+", " ").Trim();
+            System.Diagnostics.Process.Start(new ProcessStartInfo("spotify:search:" + Uri.EscapeDataString(search)) { UseShellExecute = true });
             var sw = Stopwatch.StartNew();
-            while (sw.Elapsed.TotalSeconds < 12)
+            var tried = new List<string>();
+            while (sw.Elapsed.TotalSeconds < 14)
             {
                 Thread.Sleep(450);
                 var p = Window();
                 if (p == null) continue;
                 try
                 {
+                    // candidates: every "Play …" button naming the thing (all of its words), best first, page order breaking ties
                     var root = AutomationElement.FromHandle(p.MainWindowHandle);
-                    AutomationElement best = null;
-                    int bestScore = 0;
+                    var cands = new List<KeyValuePair<AutomationElement, double>>();
+                    int order = 0;
                     foreach (AutomationElement b in root.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
                     {
+                        order++;
                         string n = (b.Current.Name ?? "").ToLowerInvariant();
                         if (!n.StartsWith("play ")) continue;
-                        if (Knockoff.IsMatch(n) && !Knockoff.IsMatch(query.ToLowerInvariant())) continue;
-                        int score = words.Count(w => n.Contains(w));
-                        if (score > bestScore) { best = b; bestScore = score; }   // first (topmost) wins ties: that's the top result
+                        string label = n.Substring(5);
+                        if (Knockoff.IsMatch(label) && !wantsKnockoff) continue;
+                        if (!titleWords.All(w => label.Contains(w))) continue;
+                        double score = 10;
+                        string bare = Regex.Replace(Regex.Replace(label, @"[^a-z0-9' ]", " "), @"\s+", " ").Trim();
+                        if (bare == exact) score += 6;                                             // exactly the name (the artist itself, not "djo radio")
+                        if (bare.StartsWith(string.Join(" ", titleWords))) score += 3;            // starts with the name itself
+                        score += artistWords.Count(w => label.Contains(w));                        // names the artist too
+                        score -= Math.Max(0, Words(label).Length - titleWords.Length - artistWords.Length) * 0.5;   // "(live)", "- remastered 2014"...
+                        score -= order * 0.0001;                                                   // the top result first, when equal
+                        cands.Add(new KeyValuePair<AutomationElement, double>(b, score));
                     }
-                    if (best == null || bestScore < Math.Min(2, words.Length)) continue;
-                    string label = best.Current.Name.Substring(5);
-                    object ip;
-                    if (best.TryGetCurrentPattern(InvokePattern.Pattern, out ip)) ((InvokePattern)ip).Invoke();
-                    else continue;
-                    // it's playing once the window title turns into "artist - song"
-                    for (int i = 0; i < 16; i++)
+                    if (cands.Count == 0) continue;
+                    // the page fills in over a second or two; give the exact match a moment to show up
+                    if (cands.Max(x => x.Value) < 15 && sw.Elapsed.TotalSeconds < 3) continue;
+                    if (PreviewOnly) return "would press, in order: " + string.Join(" | ", cands.OrderByDescending(x => x.Value).Take(3).Select(x => x.Key.Current.Name.Substring(5)).ToArray());
+                    foreach (var c in cands.OrderByDescending(x => x.Value).Take(3))
                     {
-                        Thread.Sleep(250);
-                        string t = Title();
-                        if (!IsIdleTitle(t) && t != before) { DebugLog.Write("spotify: playing " + t); return "playing in spotify: " + t + "."; }
+                        string label = c.Key.Current.Name.Substring(5);
+                        object ip;
+                        if (!c.Key.TryGetCurrentPattern(InvokePattern.Pattern, out ip)) continue;
+                        string before = Title();
+                        ((InvokePattern)ip).Invoke();
+                        tried.Add(label);
+                        // playing shows up in the window title as "artist - song": is it the right one?
+                        string now = null;
+                        for (int i = 0; i < 16; i++)
+                        {
+                            Thread.Sleep(250);
+                            now = Title();
+                            if (!IsIdleTitle(now) && (now != before || i > 6)) break;
+                        }
+                        string playing = (now ?? "").ToLowerInvariant();
+                        bool right = artistOnly ? artistWords.All(w => playing.Contains(w)) || titleWords.All(w => playing.Contains(w))
+                                   : kind == "track" ? titleWords.All(w => playing.Contains(w))
+                                   : !IsIdleTitle(now);   // albums and playlists: their first song is what shows
+                        if (right) { DebugLog.Write("spotify: playing " + now); return "playing in spotify: " + now + ". (checked: it's the right one.)"; }
+                        DebugLog.Write("spotify: pressed \"" + label + "\" but " + (IsIdleTitle(now) ? "nothing started" : now + " is playing") + "; trying the next");
                     }
-                    return "pressed play on \"" + label + "\" in spotify" + (before != null && !IsIdleTitle(before) ? " (it may already have been playing that)." : ".");
+                    break;
                 }
                 catch (ElementNotAvailableException) { }
                 catch (Exception ex) { DebugLog.Write("spotify: " + ex.Message); }
             }
-            return "opened the search in spotify but couldn't find a play button for \"" + query + "\". it's on screen; try use_computer to pick the right one.";
+            string what = artistOnly ? artist : title + (artist.Length > 0 ? " by " + artist : "");
+            return "not playing yet: " + (tried.Count == 0 ? "spotify's search page has no play button for " + what
+                : "tried " + string.Join(", ", tried.ToArray()) + " but the right song didn't start")
+                + ". the search is open in spotify. call use_computer now (small=true) to play " + what + " from there, and check it's the right one.";
         }
     }
 }

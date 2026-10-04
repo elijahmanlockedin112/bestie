@@ -79,6 +79,7 @@ namespace Bestie
             catch (Exception ex) { DebugLog.Write("time blocks failed to start: " + ex); }
             try { StartWispr(); }
             catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
+            if (assistant != null) assistant.TalkVia = TalkViaWispr;
             try
             {
                 WidgetManager.ConnectCalendar = ConnectCalendar;
@@ -231,6 +232,28 @@ namespace Bestie
                 else assistant.StartListening(true);
             }
             catch (Exception ex) { DebugLog.Write("hold to talk: " + ex.Message); }
+        }
+
+        bool wisprTalking;   // the talk key is running a wispr capture
+
+        /// <summary>The talk key, through wispr flow when it's running (it hears a quiet mic much better than the built-in
+        /// one). Returns false to let the built-in mic handle it.</summary>
+        bool TalkViaWispr(string what)
+        {
+            if (what == "down")
+            {
+                if (!brain.WisprVoice || wisprCapture == null || wisprCapture.Active || !Wispr.Running) return false;
+                if (assistant != null) assistant.CancelFollowUp();
+                ducker.RestoreNow();   // wispr turns the music down itself, and puts back whatever it saw
+                c.SetMood("listening");
+                if (!wisprCapture.Begin(CreatureScreenPoint, OnWisprText)) { c.SetMood("idle"); return false; }
+                wisprTalking = true;
+                return true;
+            }
+            if (!wisprTalking) return false;
+            wisprTalking = false;
+            wisprCapture.End();   // a tap is too short for wispr to hear much; it says so if it got nothing
+            return true;
         }
 
         void OnWisprText(string text)
@@ -670,7 +693,7 @@ namespace Bestie
                 item.Click += (s, e) => { set(item.Checked); brain.Save(); };
                 root.DropDownItems.Add(item);
             };
-            toggle("use wispr when i hold you", () => brain.WisprVoice, v => brain.WisprVoice = v);
+            toggle("use wispr when i hold you or the talk key", () => brain.WisprVoice, v => brain.WisprVoice = v);
             toggle("answer “hey " + brain.Name.ToLowerInvariant() + "” in any dictation", () => brain.WisprWake, v => brain.WisprWake = v);
             toggle("cup an ear while i dictate", () => brain.WisprListen, v => brain.WisprListen = v);
             toggle("let the assistant see my recent dictations", () => brain.WisprShare, v => brain.WisprShare = v);

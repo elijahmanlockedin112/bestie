@@ -289,11 +289,15 @@ namespace Bestie
             get { var cp = base.CreateParams; cp.ExStyle |= Native.WS_EX_TOOLWINDOW; return cp; }
         }
 
-        /// <summary>Start: take focus, press Wispr's keys. anchor = where to show the box (screen coords).</summary>
-        public void Begin(Point anchor, Action<string> onText)
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool AttachThreadInput(uint attach, uint to, bool on);
+        [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool BringWindowToTop(IntPtr h);
+        [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
+        /// <summary>Start: take focus, press Wispr's keys. anchor = where to show the box (screen coords).
+        /// False if the box couldn't get the focus: then nothing is pressed, because Wispr would type into whatever has it.</summary>
+        public bool Begin(Point anchor, Action<string> onText)
         {
-            if (Active) return;
-            Active = true; holding = true; done = onText;
+            if (Active) return true;
             previous = Native.GetForegroundWindow();
             box.Text = "";
             float k = DeviceDpi / 96f;
@@ -301,10 +305,35 @@ namespace Bestie
             Location = new Point(anchor.X - Width / 2, anchor.Y - Height - (int)(90 * k));
             try { int round = 2; Native.DwmSetWindowAttribute(Handle, 33, ref round, 4); } catch { }
             Show();
-            Activate();
-            Native.SetForegroundWindow(Handle);
-            box.Focus();
+            TakeFocus();
+            if (Native.GetForegroundWindow() != Handle) { TakeFocus(); }
+            if (Native.GetForegroundWindow() != Handle)
+            {
+                Hide();
+                DebugLog.Write("wispr: couldn't get the focus for its text, so not using it this time");
+                return false;
+            }
+            Active = true; holding = true; done = onText;
             Wispr.PressPtt();
+            return true;
+        }
+
+        /// <summary>Windows only lets the app you're using hand the focus over, so borrow its input queue for a moment
+        /// (the talk key is pressed while some other app is in front).</summary>
+        void TakeFocus()
+        {
+            IntPtr fg = Native.GetForegroundWindow();
+            uint pid;
+            uint fgThread = fg == IntPtr.Zero ? 0 : Native.GetWindowThreadProcessId(fg, out pid), me = GetCurrentThreadId();
+            bool attached = fgThread != 0 && fgThread != me && AttachThreadInput(me, fgThread, true);
+            try
+            {
+                BringWindowToTop(Handle);
+                Native.SetForegroundWindow(Handle);
+                Activate();
+                box.Focus();
+            }
+            finally { if (attached) AttachThreadInput(me, fgThread, false); }
         }
 
         /// <summary>The user let go: release Wispr's keys and wait for its text to land.</summary>
