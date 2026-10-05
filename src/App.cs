@@ -388,6 +388,7 @@ namespace Bestie
             TimeBlocks.Load();
             TimeBlocks.PhaseStarted += phase =>
             {
+                Behavior.Block(phase == "break" ? "break started" : "focus block started");
                 if (phase == "break")
                     Announce(Rng.Pick("break time. " + TimeBlocks.BreakMinutes + " minutes. stand up, drink some water, look at something far away.",
                         "break! " + TimeBlocks.BreakMinutes + " minutes. go be a person for a bit.", "that's " + TimeBlocks.FocusMinutes + " minutes. break time. stretch something."));
@@ -547,7 +548,7 @@ namespace Bestie
             System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
             step("wake word", () => { if (wake != null) wake.Dispose(); });
             step("wispr", () => { if (wispr != null) wispr.Dispose(); if (wisprCapture != null && wisprCapture.Active) wisprCapture.End(); });
-            step("sessions", () => { AiSessions.Stop(); Office.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
+            step("sessions", () => { AiSessions.Stop(); Office.Stop(); Behavior.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
             step("tray", () => { if (tray != null) { tray.Visible = false; tray.Dispose(); } bubble.Close(); });
             base.OnFormClosing(e);
         }
@@ -741,6 +742,7 @@ namespace Bestie
             AiSessions.Start();
             Office.Announce += line => OnUi(() => { Announce(line); c.Emit("sparkle", 3); });
             Office.Start();
+            Behavior.Start();
             sessHotkey = new SessionsHotkey(ToggleSessions);
         }
 

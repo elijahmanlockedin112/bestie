@@ -119,7 +119,7 @@ namespace Bestie
                 t.Add(Tool("look_at_screen", "screenshot the user's current monitor and look at it. only when they ask you to look or clearly want you to see something.", R()));
             t.Add(Tool("open_app", "launch an app from the start menu by name (no arguments).", R("name"), P("name", "string", "app name, e.g. 'spotify'")));
             t.Add(Tool("open_folder", "open one of your folders in explorer.", R("which"),
-                PE("which", "which folder", new[] { "root", "memory", "notes", "journal", "chats" })));
+                PE("which", "which folder (behavior: your log of how they use their computer)", new[] { "root", "memory", "notes", "journal", "chats", "behavior" })));
             t.Add(Tool("set_reminder", "remind the user later with a bubble and your voice. for a clock time pass time (and date) exactly as they said it; "
                 + "i work out when that is. never convert a clock time to minutes yourself. use minutes only for 'in 10 minutes' / 'in 2 hours'.", R("text"),
                 P("text", "string", "what to remind them of"),
@@ -560,6 +560,7 @@ namespace Bestie
                 case "notes": dir = Home.NotesDir; break;
                 case "journal": dir = Home.JournalDir; break;
                 case "chats": dir = Home.ChatsDir; break;
+                case "behavior": dir = Behavior.Dir; Directory.CreateDirectory(dir); break;
                 default: which = "root"; dir = Home.Root; break;
             }
             LaunchFolder(dir);

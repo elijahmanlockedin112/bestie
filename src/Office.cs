@@ -158,6 +158,16 @@ namespace Bestie
 
         // ================================================================== what bestie can see
 
+        /// <summary>Today's totals from the office's last look (false while it's closed).</summary>
+        public static bool TodayCounts(out int steps, out int files, out int projects)
+        {
+            Dictionary<string, object> o;
+            lock (gate) o = state != null ? overview : null;
+            var d = Json.Obj(o, "today");
+            steps = (int)Json.Num(d, "steps", 0); files = (int)Json.Num(d, "files", 0); projects = (int)Json.Num(d, "projects", 0);
+            return d != null;
+        }
+
         /// <summary>For the prompt: how locked in the office is right now (from the last look, no waiting). Null when it's closed.</summary>
         public static string ContextLine()
         {

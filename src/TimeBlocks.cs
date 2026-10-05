@@ -87,6 +87,7 @@ namespace Bestie
             if (!running) return;
             running = false; paused = false;
             Save(); Raise(Changed);
+            Behavior.Block("stopped the blocks");
         }
 
         /// <summary>End this block now and go on to the next one.</summary>
@@ -94,6 +95,7 @@ namespace Bestie
         {
             if (!running) return;
             paused = false;
+            Behavior.Block(phase == "focus" ? "cut a focus block short" : "skipped a break");
             Begin(phase == "focus" ? "break" : "focus");
         }
 
@@ -103,6 +105,7 @@ namespace Bestie
             unlocked = true;
             Save(); Raise(Changed);
             Journal.Add("you typed your way out of a break. i'm not mad. (i'm a little mad.)");
+            Behavior.Block("typed out of a break");
         }
 
         static void Begin(string next)

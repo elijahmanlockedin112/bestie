@@ -715,6 +715,7 @@ namespace Bestie
             if (s == null) { songKey = null; return; }
             if (s.Key == songKey) return;
             songKey = s.Key;
+            Behavior.Song(s.Artist, s.Title);
             string artist = s.Artist.ToLowerInvariant();
             double plays; bool heard = Brain.Artists.TryGetValue(artist, out plays);
             Brain.Artists[artist] = plays + 1;
