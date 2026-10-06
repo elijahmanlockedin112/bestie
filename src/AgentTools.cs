@@ -52,6 +52,7 @@ namespace Bestie
             AddFileTools(t);
             AddBehaviorTools(t);
             AddSystemTools(t);
+            AddPowerTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -65,7 +66,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a);
+            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a);
         }
 
         // ================================================================== spotify

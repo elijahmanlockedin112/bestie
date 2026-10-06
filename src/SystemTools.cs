@@ -136,6 +136,37 @@ namespace Bestie
             finally { Marshal.ReleaseComObject(policy); }
         }
 
+        /// <summary>The default output's volume, 0-100.</summary>
+        public static void SetVolume(int percent)
+        {
+            WithDefaultVolume(v => { Guid ctx = Guid.Empty; Check(v.SetMasterVolumeLevelScalar(Math.Max(0, Math.Min(100, percent)) / 100f, ref ctx)); if (percent > 0) Check(v.SetMute(false, ref ctx)); });
+        }
+
+        public static void SetMute(bool mute)
+        {
+            WithDefaultVolume(v => { Guid ctx = Guid.Empty; Check(v.SetMute(mute, ref ctx)); });
+        }
+
+        static void WithDefaultVolume(Action<IAudioEndpointVolume> act)
+        {
+            var en = (IMMDeviceEnumerator)new MMDeviceEnumeratorCom();
+            IMMDevice d = null;
+            try
+            {
+                Check(en.GetDefaultAudioEndpoint(eRender, eMultimedia, out d));
+                Guid iid = typeof(IAudioEndpointVolume).GUID;
+                object o;
+                Check(d.Activate(ref iid, 1, IntPtr.Zero, out o));
+                var vol = (IAudioEndpointVolume)o;
+                try { act(vol); } finally { Marshal.ReleaseComObject(vol); }
+            }
+            finally
+            {
+                if (d != null) Marshal.ReleaseComObject(d);
+                Marshal.ReleaseComObject(en);
+            }
+        }
+
         static string FriendlyName(IMMDevice d)
         {
             IPropertyStore store;
