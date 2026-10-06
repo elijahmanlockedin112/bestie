@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem;
         double calendarCheck = 20, blockCheck;
         int calendarChecking;
         AssistantModule assistant;
@@ -131,6 +131,7 @@ namespace Bestie
             if (sessHandle != null) sessHandle.Tick(dt);
             SettleFinished();
             AnnounceFinished();
+            QuietTick();
             MaybeBeNosy();
             CheckHoldToTalk();
             CheckCalendarHeadsUps(dt);
@@ -322,6 +323,7 @@ namespace Bestie
             forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
             Add(brain.Name + "'s diary", null, OpenDiary);
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
+            quietItem = Add("be quiet for an hour", null, ToggleQuiet);
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
             napItem = Add("take a nap", null, () => { if (c.Pose == Pose.Lie) c.AbortActivity(); else c.DoTrick("nap"); });
             menu.Items.Add(new ToolStripSeparator());
@@ -338,6 +340,8 @@ namespace Bestie
                 calendarItem.Text = cals == 0 ? "let me see my calendar…" : "add another calendar… (" + cals + " connected)";
                 forgetCalendarsItem.Visible = cals > 0;
                 napItem.Text = c.Pose == Pose.Lie ? "wake up" : "take a nap";
+                quietItem.Text = Quiet.On ? "you can talk again (quiet until " + When.Clock(Quiet.Until) + ")" : "be quiet for an hour";
+                quietItem.Checked = Quiet.On;
                 brainDumpItem.Text = assistant != null && assistant.IsBrainDumping ? "that's everything (organize it)" : "brain dump…";
                 startupItem.Checked = StartsWithWindows();
             };
@@ -740,8 +744,16 @@ namespace Bestie
             AiSessions.Updated += () => OnUi(RefreshSessions);
             AiSessions.Changed += (s, before) => OnUi(() => SessionChanged(s, before));
             AiSessions.Start();
-            Office.Announce += line => OnUi(() => { Announce(line); c.Emit("sparkle", 3); });
+            Office.Announce += line => OnUi(() =>
+            {
+                // they're watching the office: they already know
+                if (Behavior.SeenRecently((app, site, title) => title.IndexOf("Vibe Code Central", StringComparison.OrdinalIgnoreCase) >= 0, 60)) return;
+                int quote = line.IndexOf('”');
+                Notify(line, quote > 0 ? line.Substring(0, quote + 1) : line);
+                c.Emit("sparkle", 3);
+            });
             Office.Start();
+            Quiet.Load();
             Behavior.Start();
             sessHotkey = new SessionsHotkey(ToggleSessions);
         }
@@ -780,10 +792,33 @@ namespace Bestie
         {
             // only a real end of turn counts. "idle" just means nothing was written for a while (a long command,
             // a permission prompt), and a turn that picks right back up (a queued message, a background task) isn't done.
+            if (s.Status == "working" && before != "working") workingSince[s.Id] = Clock.T;
             if (s.Status != "waiting") { maybeFinished.Remove(s.Id); return; }
             if (s.Kind == "app" || before != "working") return;
             if (s.Origin == "sdk-cli") return;   // a headless run (vibe code central's agents): the office watcher announces those, by name
             maybeFinished[s.Id] = new KeyValuePair<AiSession, double>(s, Clock.T);
+        }
+
+        /// <summary>When each session last started working (Clock.T), to tell a quick reply from a real job.</summary>
+        readonly Dictionary<string, double> workingSince = new Dictionary<string, double>();
+        const double QuickReplySeconds = 45, LookingSeconds = 90;
+
+        static bool Terminal(string app)
+        {
+            return app == "windowsterminal" || app == "wt" || app == "openconsole" || app == "conhost" || app == "powershell" || app == "pwsh" || app == "cmd"
+                || app == "code" || app == "cursor";
+        }
+
+        /// <summary>Were they just looking at this session (its tab, its app, its terminal)? Then they saw it finish.</summary>
+        static bool LookedAt(AiSession s)
+        {
+            string where = (s.Where ?? "").ToLowerInvariant();
+            Func<string, string, string, bool> match;
+            if (s.Kind == "tab") match = (app, site, title) => site.Length > 0 && site == where;
+            else if (s.Kind == "codex") match = (app, site, title) => app == "codex" || Terminal(app);
+            else if (s.Origin == "claude-desktop" || where == "claude app") match = (app, site, title) => app == "claude";
+            else match = (app, site, title) => Terminal(app) || app == "claude";
+            return Behavior.SeenRecently(match, LookingSeconds);
         }
 
         /// <summary>Every tick: sessions that have stayed finished long enough are really finished.</summary>
@@ -796,8 +831,17 @@ namespace Bestie
                 var s = kv.Value.Key;
                 var now = AiSessions.Snapshot().FirstOrDefault(x => x.Id == s.Id);
                 if (now == null || now.Status != "waiting") continue;
-                finished.Add(now);
                 Journal.Add(now.Provider + " finished \u201c" + now.Title + "\u201d (" + now.Where + ").");
+                // a chat they're having back and forth isn't news: they were looking at it, or it answered in seconds
+                double started;
+                bool quick = workingSince.TryGetValue(s.Id, out started) && kv.Value.Value - started < QuickReplySeconds;
+                workingSince.Remove(s.Id);
+                if (quick || LookedAt(now))
+                {
+                    DebugLog.Write("sessions: not announcing \u201c" + now.Title + "\u201d (" + (quick ? "a quick reply" : "they were looking at it") + ")");
+                    continue;
+                }
+                finished.Add(now);
             }
         }
 
@@ -810,15 +854,50 @@ namespace Bestie
             {
                 var s = finished[0];
                 string title = s.Title.Length > 40 ? s.Title.Substring(0, 38) + "\u2026" : s.Title;
-                Announce(s.Provider + " finished \u201c" + title + "\u201d. " + Rng.Pick("your move.", "it's waiting on you.", "tenant's done."));
+                Notify(s.Provider + " finished \u201c" + title + "\u201d. " + Rng.Pick("your move.", "it's waiting on you.", "tenant's done."), s.Provider + " finished \u201c" + title + "\u201d");
             }
             else
             {
                 int claude = finished.Count(x => x.Provider == "claude"), gpt = finished.Count - claude;
-                Announce(finished.Count + " sessions just finished (" + (claude > 0 ? claude + " claude" : "") + (claude > 0 && gpt > 0 ? ", " : "") + (gpt > 0 ? gpt + " chatgpt" : "") + "). your move.");
+                Notify(finished.Count + " sessions just finished (" + (claude > 0 ? claude + " claude" : "") + (claude > 0 && gpt > 0 ? ", " : "") + (gpt > 0 ? gpt + " chatgpt" : "") + "). your move.",
+                    string.Join("; ", finished.Select(x => x.Provider + " finished \u201c" + x.Title + "\u201d").ToArray()));
             }
-            c.Emit("sparkle", 3);
+            if (!Quiet.On) c.Emit("sparkle", 3);
             finished.Clear();
+        }
+
+        /// <summary>An FYI nobody asked for (a session or an office job finished): said out loud, unless it's quiet
+        /// time, when it waits for the summary afterwards.</summary>
+        void Notify(string line, string brief)
+        {
+            if (Quiet.On) { Quiet.Hold(brief); return; }
+            Announce(line);
+        }
+
+        double nextQuietCheck;
+
+        void QuietTick()
+        {
+            if (Clock.T < nextQuietCheck) return;
+            nextQuietCheck = Clock.T + 5;
+            string summary = Quiet.TakeSummary(false);   // null while still quiet, or if nothing waited
+            if (summary != null) Announce(summary);
+        }
+
+        void ToggleQuiet()
+        {
+            if (Quiet.On)
+            {
+                Quiet.For(0);
+                string summary = Quiet.TakeSummary(true);
+                Announce(summary ?? "ok, talking again.");
+            }
+            else
+            {
+                Quiet.For(60);
+                if (assistant != null) assistant.StopSpeaking();
+                c.Say("shh. quiet until " + When.Clock(Quiet.Until) + ". reminders still pop up, silently.", false, 0);
+            }
         }
 
         /// <summary>Something it tells you on its own (a claude session finished, a class is coming up): in the bubble

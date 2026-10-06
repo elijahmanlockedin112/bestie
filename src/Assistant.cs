@@ -266,6 +266,9 @@ namespace Bestie
         /// <summary>Start push-to-talk; if already listening, stop and send.</summary>
         public void ToggleVoice() { RunOnUi(ToggleVoiceCore); }
 
+        /// <summary>Cut off whatever it's saying right now (quiet time just started).</summary>
+        public void StopSpeaking() { RunOnUi(delegate { if (!disposed) tts.Stop(); }); }
+
         /// <summary>Open chat with a screenshot attached to the next message.</summary>
         public void ShareScreenAndAsk() { RunOnUi(ShareScreenCore); }
 
@@ -1116,6 +1119,9 @@ namespace Bestie
             sb.Append("- time blocks: they work in focus blocks (90 min) with breaks (15 min): time_blocks starts, pauses, skips or checks them; the time blocks widget shows the countdown. right now: ").Append(TimeBlocks.Describe()).Append('\n');
             sb.Append("- they have a to-do list (todo_* tools) and desktop widgets (show_widget / hide_widget: to-do, calendar, now playing, sticky notes). use them when they ask to add, finish or see things, or want something pinned on their desktop.\n");
             sb.Append("- files on their computer: find_files searches everything in their user folder instantly, by name, folder or what's inside (pdfs, docs, slides, notes, photos), and open_file opens what you found in its app (or shows it in its folder). when they want a file, a pdf, notes, slides or a folder, go straight to find_files and open_file: don't go through apps, websites, tabs or use_computer to get to a file that's on their computer.\n");
+            sb.Append("- your own notifications: when they want you to stop going off, snooze, pause notifications, do not disturb or be quiet for a while, call quiet_mode (never use_computer: you have no settings window for that). ")
+              .Append(Quiet.On ? "quiet time is ON until " + When.Clock(Quiet.Until) + " (you still answer when they talk to you). " : "")
+              .Append("sound trouble (can't hear, no sound, wrong speakers, switch to headphones): sound_output list first, then fix it yourself with set when the answer is clear (e.g. the default is a virtual device and there's one real speaker); ask only if several real outputs could be the one.\n");
             sb.Append("- you keep a factual behavior log for them (they asked you to, for their own good): what's in front of them and for how long, sites, focus streaks, switching, time away, late nights, focus blocks, music. my_patterns turns it into numbers. use it whenever they ask about their day, week, habits, focus, procrastination, sleep or screen time, and give an honest, specific, kind read with one or two concrete changes. you may mention something from their day so far when it's genuinely useful (a very late night, hours on one video site before a deadline), but not as nagging.\n");
             sb.Append("- you can list their claude and chatgpt sessions, bring one to the front, or open a new chat.\n")
               .Append("SAFETY (always)\n")
@@ -1396,6 +1402,7 @@ namespace Bestie
             string line = announcements.Dequeue();
             SafeSay(line, 0);
             AssistantSettings s = settings;
+            if (Quiet.On) { DebugLog.Write("assistant: showed a notice silently (quiet time)"); return; }
             if (s.SpeakReplies)
             {
                 tts.Speak(Speakable(line), s);

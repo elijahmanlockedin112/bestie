@@ -121,6 +121,7 @@ namespace Bestie
                     WriteSpan("away", awayFrom, now, new Dictionary<string, object>());
                     away = false;
                 }
+                Remember(now, app, site, title);
                 if (curApp == null || app != curApp || title != curTitle || site != curSite)
                 {
                     Close(now);
@@ -131,6 +132,29 @@ namespace Bestie
             }
             catch (Exception ex) { DebugLog.Write("behavior: sample: " + ex.Message); }
             finally { Monitor.Exit(gate); }
+        }
+
+        sealed class Seen { public string App, Site, Title; public DateTime Until; }
+        static readonly List<Seen> seen = new List<Seen>();   // what was in front of them (while they were here), last 10 minutes
+        static readonly object seenGate = new object();
+
+        static void Remember(DateTime now, string app, string site, string title)
+        {
+            lock (seenGate)
+            {
+                Seen last = seen.Count > 0 ? seen[seen.Count - 1] : null;
+                if (last != null && last.App == app && last.Site == site && last.Title == title) last.Until = now;
+                else seen.Add(new Seen { App = app, Site = site, Title = title, Until = now });
+                seen.RemoveAll(s => (now - s.Until).TotalMinutes > 10);
+            }
+        }
+
+        /// <summary>Was something matching (app, site, title) in front of them, while they were at the computer, in the
+        /// last few seconds? (So Bestie doesn't announce a chat finishing while they're the ones chatting in it.)</summary>
+        public static bool SeenRecently(Func<string, string, string, bool> match, double seconds)
+        {
+            DateTime cutoff = DateTime.Now.AddSeconds(-seconds);
+            lock (seenGate) return seen.Any(s => s.Until >= cutoff && match(s.App ?? "", s.Site ?? "", s.Title ?? ""));
         }
 
         static void Open(DateTime at, string app, string title, string site, string cat)
@@ -238,6 +262,11 @@ namespace Bestie
                     if (tab != null && tab.FocusedWindow) site = Host(tab.Url);
                 }
                 catch { }
+            }
+            if (site == "passwords.google.com" || Regex.IsMatch(title, @"\bpassword manager\b|\bpasswords\b", RegexOptions.IgnoreCase))
+            {
+                title = "(private)"; cat = "other";
+                return;
             }
             cat = Category(app, title, site);
         }

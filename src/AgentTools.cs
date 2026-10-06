@@ -51,6 +51,7 @@ namespace Bestie
                     + "switch tabs). false for anything longer, or that sends, buys, deletes, signs in, changes settings or touches their files")));
             AddFileTools(t);
             AddBehaviorTools(t);
+            AddSystemTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -64,7 +65,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return FileTool(name, a) ?? BehaviorTool(name, a);
+            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a);
         }
 
         // ================================================================== spotify
