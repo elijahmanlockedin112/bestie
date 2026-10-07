@@ -175,6 +175,87 @@ namespace Bestie
             public string ForceTool;      // the first round must call this tool (a brain dump goes straight to the organizer)
             public bool Tentative;        // overheard in the answer-back window: maybe not for us (the model may answer [skip])
             public string Heard;          // what they said, without the "(overheard…)" tag
+            public PhoneTurn Phone;       // sent from the phone app: the answer goes back there, not out loud here
+        }
+
+        PhoneTurn currentPhone;   // the phone turn the worker is on (worker thread only)
+
+        /// <summary>A message from the phone app. It runs like a typed message (same memory, tools, history and
+        /// transcript), but the answer goes back to the phone: nothing is said out loud or popped up here. Any thread.</summary>
+        internal PhoneTurn SubmitFromPhone(string text, string imageDataUrl, bool voice)
+        {
+            var t = new PhoneTurn();
+            text = (text ?? "").Trim();
+            if (text.Length == 0 && imageDataUrl == null) { t.Fail("say something first."); return t; }
+            if (text.Length == 0) text = "what's in this picture?";
+            RunOnUi(delegate
+            {
+                if (disposed) { t.Fail("bestie is closing."); return; }
+                if (!settings.HasKey) { t.Fail("bestie has no openai key yet. add it in its settings on your pc."); return; }
+                AssistantMemory.AppendChat("you", text + (imageDataUrl != null ? " _(with a photo)_" : "") + " _(from your phone)_");
+                if (chat != null && !chat.IsDisposed) chat.AppendYou(text + "  [from your phone]", voice);
+                var p = new PendingInput();
+                p.Text = text + "\n\n(sent from the bestie app on their phone" + (voice ? ", by voice" : "") + (imageDataUrl != null ? ", with a photo from the phone" : "")
+                    + ". they may be away from the computer: do things with your tools as usual, and say what you did in your reply, since they can't see the computer.)";
+                p.Heard = text;
+                p.Image = imageDataUrl;
+                p.Ctx = CaptureContext();
+                p.Ctx.UserText = text;
+                p.Settings = settings.Clone();
+                p.Settings.SpeakReplies = false;      // the phone speaks it (or not), not the pc
+                p.Settings.AutoLookScreens = false;   // "this" means the phone's photo, not the pc screen (look_at_screen still works)
+                p.Phone = t;
+                Enqueue(p);
+            });
+            return t;
+        }
+
+        /// <summary>Reminders still to come (for the phone's saved tab).</summary>
+        internal List<AssistantReminder> PendingReminders() { return reminders.Pending(); }
+
+        /// <summary>The phone's hold-to-talk audio (m4a/mp4 from iOS, webm elsewhere) as text. Any thread; throws OpenAIException.</summary>
+        internal string TranscribeForPhone(byte[] audio, string contentType)
+        {
+            AssistantSettings s = settings;
+            string ct = (contentType ?? "").ToLowerInvariant();
+            string ext = ct.Contains("webm") ? "webm" : ct.Contains("ogg") ? "ogg" : ct.Contains("wav") ? "wav" : ct.Contains("mpeg") ? "mp3" : "m4a";
+            string type = ext == "m4a" ? "audio/mp4" : ct.Length > 0 ? ct.Split(';')[0] : "audio/mp4";
+            if (!s.HasKey)
+            {
+                if (s.ElevenKey.Length > 0) return ElevenLabs.Transcribe(s.ElevenKey, audio, TranscribeTimeoutMs);
+                throw new OpenAIException("bestie has no key to hear with.", "no key");
+            }
+            var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
+            string model = string.IsNullOrEmpty(s.TranscribeModel) ? AssistantSettings.DefaultTranscribeModel : s.TranscribeModel;
+            try { return client.Transcribe(audio, "speech." + ext, type, model, TranscribeTimeoutMs); }
+            catch (OpenAIException ex)
+            {
+                bool modelProblem = ex.Status == 404 || (ex.Status == 400 && (ex.ApiMessage ?? "").ToLowerInvariant().Contains("model"));
+                if (!modelProblem || model == "whisper-1") throw;
+                return client.Transcribe(audio, "speech." + ext, type, "whisper-1", TranscribeTimeoutMs);
+            }
+        }
+
+        /// <summary>A reply in its own voice, as mp3 for the phone (null if it has no voice set up). Any thread.</summary>
+        internal byte[] SpeakForPhone(string text)
+        {
+            AssistantSettings s = settings;
+            text = CutAtWord(SpeakableSegment(text ?? ""), 700);
+            if (text.Length == 0) return null;
+            Func<System.Net.HttpWebResponse, byte[]> all = r => { using (r) using (var ms = new MemoryStream()) { r.GetResponseStream().CopyTo(ms); return ms.ToArray(); } };
+            if (s.UseElevenVoice)
+            {
+                try { return all(ElevenLabs.Speak(s.ElevenKey, ElevenLabs.VoiceOrDefault(s.ElevenKey, s.ElevenVoice), s.ElevenModel, text, null, 30000, null, "mp3_44100_128")); }
+                catch (OpenAIException ex) { DebugLog.Write("phone: elevenlabs voice failed: " + ex.Message); if (!s.HasKey) return null; }
+            }
+            if (!s.HasKey) return null;
+            var c = new OpenAIClient(s.BaseUrl, s.ApiKey);
+            try { return all(c.Speech(s.TtsModel, s.OpenAiVoice, text, Personality.VoiceDirection, "mp3", 30000)); }
+            catch (OpenAIException ex)
+            {
+                if (ex.Status != 400) throw;
+                return all(c.Speech(s.TtsModel, s.OpenAiVoice, text, null, "mp3", 30000));
+            }
         }
 
         // tests: run a voice turn the old way (no streaming, no early capture) to compare timings
@@ -594,6 +675,7 @@ namespace Bestie
                 catch (Exception ex)
                 {
                     DebugLog.Write("assistant: turn crashed: " + ex);
+                    if (p.Phone != null) { p.Phone.Fail("something in my head tangled up. try again?"); continue; }
                     bool more = MoreQueued;
                     Post(delegate { ShowProblem("something in my head tangled up. try again?", more); });
                 }
@@ -633,7 +715,8 @@ namespace Bestie
         {
             AssistantSettings s = p.Settings;
             int turn = ++turnCounter;
-            if (!p.Tentative) Behavior.Ask(p.Voice ? "voice" : "typed");
+            currentPhone = p.Phone;
+            if (!p.Tentative) Behavior.Ask(p.Phone != null ? "phone" : p.Voice ? "voice" : "typed");
             StripOldImages(turn);
             history.Add(new AssistantChatMsg(Msg("user", BuildUserContent(p, s)), true, turn));
             TrimHistory(s.MaxHistoryMessages);
@@ -645,7 +728,7 @@ namespace Bestie
             activeClient = client;
             string reply = null;
             bool stream = !(p.Voice && LegacyVoicePathForTests);
-            var rs = new ReplyStream(this, s, p.Timing, p.Tentative);
+            var rs = new ReplyStream(this, s, p.Timing, p.Tentative, p.Phone);
             bool acked = false;
             // voice turns: no deliberation (the quirk handling downgrades to "minimal" where "none" isn't allowed)
             string effort = s.ReasoningEffort;
@@ -712,14 +795,16 @@ namespace Bestie
                 history.RemoveAll(m => m.Turn == turn);
                 rs.Abort();
                 if (p.Timing != null) p.Timing.Finish("error");
+                if (p.Phone != null) p.Phone.Fail(ex.Aborted ? "stopped." : ex.Friendly);
                 if (ex.Aborted || disposed) return;
                 DebugLog.Write("assistant: chat failed: " + ex.Message);
                 string friendly = ex.Friendly;
                 bool queued = MoreQueued;
+                if (p.Phone != null) { Post(delegate { SetChatStatus(""); SafeMood("idle"); }); return; }
                 Post(delegate { ShowProblem(friendly, queued); });
                 return;
             }
-            finally { activeClient = null; }
+            finally { activeClient = null; currentPhone = null; }
 
             if (p.Tentative && (rs.Skipped || reply.TrimStart().StartsWith("[skip", StringComparison.OrdinalIgnoreCase)))
             {
@@ -738,6 +823,14 @@ namespace Bestie
             }
             AssistantMemory.AppendChat(p.Ctx.CreatureName, reply);
             AutoMemory.Note(p.Heard ?? p.Text, reply, p.Ctx.CreatureName);
+            if (p.Phone != null)
+            {
+                // the answer is the phone's; here it only goes in the chat window's history (no bubble, no voice)
+                p.Phone.Finish(reply);
+                string r2 = reply;
+                Post(delegate { if (chat != null && !chat.IsDisposed) chat.AppendCreature(r2); SetChatStatus(""); SafeMood("idle"); });
+                return;
+            }
             string name = p.Ctx.CreatureName;
             bool more = MoreQueued;
             bool spoken = rs.Spoke;
@@ -753,18 +846,20 @@ namespace Bestie
             readonly AssistantSettings s;
             readonly VoiceTiming timing;
             readonly bool speak, tentative;
+            readonly PhoneTurn phone;
             readonly StringBuilder round = new StringBuilder();
             int consumed, spokenChars;
             bool begun, capped, toolRound, decided, skipping;
             DateTime lastBubbleUtc = DateTime.MinValue;
 
-            public ReplyStream(AssistantModule m, AssistantSettings s, VoiceTiming timing, bool tentative)
+            public ReplyStream(AssistantModule m, AssistantSettings s, VoiceTiming timing, bool tentative, PhoneTurn phone)
             {
                 this.m = m;
                 this.s = s;
                 this.timing = timing;
                 this.tentative = tentative;
-                speak = s.SpeakReplies;
+                this.phone = phone;
+                speak = s.SpeakReplies && phone == null;
             }
 
             public bool Spoke { get { return begun; } }
@@ -790,6 +885,7 @@ namespace Bestie
                 round.Length = 0;
                 consumed = 0;
                 toolRound = false;
+                if (phone != null) phone.SetPartial("");
             }
 
             public void ToolCall() { toolRound = true; }
@@ -799,6 +895,7 @@ namespace Bestie
                 if (timing != null) timing.Mark("first token");
                 round.Append(d);
                 if (toolRound || !MayGo(false)) return;
+                if (phone != null) { phone.SetPartial(round.ToString()); return; }   // the phone shows it; the pc stays quiet
                 if ((DateTime.UtcNow - lastBubbleUtc).TotalMilliseconds >= 250)
                 {
                     lastBubbleUtc = DateTime.UtcNow;
@@ -926,6 +1023,7 @@ namespace Bestie
             {
                 string label = call[1].Replace('_', ' ');
                 Post(delegate { SetChatStatus(label + "…"); });
+                if (currentPhone != null) currentPhone.SetStatus(label);
                 AssistantToolResult r = tools.Execute(call[1], call[2], s, ctx);
                 var toolMsg = new Dictionary<string, object>();
                 toolMsg["role"] = "tool";
@@ -937,6 +1035,7 @@ namespace Bestie
                 {
                     string note = r.Note;
                     AssistantMemory.AppendChatNote(note);
+                    if (currentPhone != null) currentPhone.Note(note);
                     Post(delegate { if (chat != null && !chat.IsDisposed) chat.AppendNote(note); });
                 }
                 if (!string.IsNullOrEmpty(r.JournalLine)) Journal.Add(r.JournalLine);

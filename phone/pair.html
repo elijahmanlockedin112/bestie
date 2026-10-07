@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{NAME}} on your phone</title>
+<link rel="icon" href="icon-180.png">
+<style>
+:root{--accent:{{ACCENT}};--bg:#ffffff;--fg:#0d0d0d;--muted:#6e6e73;--line:#e5e5ea;--mono:ui-monospace,"Cascadia Mono",Consolas,monospace;--sans:"Segoe UI Variable Text","Segoe UI",system-ui,sans-serif}
+@media (prefers-color-scheme: dark){:root{--bg:#0f0f0f;--fg:#ececec;--muted:#8e8e93;--line:#262628}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;background:var(--bg);color:var(--fg);font:16px/1.5 var(--sans);display:grid;place-items:center;padding:32px 16px}
+.wrap{display:grid;grid-template-columns:auto 1fr;gap:56px;align-items:center;max-width:860px;width:100%}
+.qr{background:#fff;padding:22px;border-radius:14px;border:1px solid var(--line);line-height:0}
+.qr img,.qr canvas{width:280px;height:280px}
+.head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.head img{width:48px;height:48px;border-radius:12px}
+h1{font-size:30px;line-height:1.1;letter-spacing:-.02em;margin:0}
+ol{padding:0;margin:0 0 22px;list-style:none;counter-reset:s}
+li{counter-increment:s;display:flex;gap:14px;padding:12px 0;border-bottom:1px solid var(--line)}
+li:last-child{border-bottom:0}
+li::before{content:counter(s);font:600 13px var(--mono);color:var(--accent);min-width:14px;padding-top:2px}
+b{font-weight:600}
+.url{font:12.5px var(--mono);color:var(--muted);word-break:break-all;border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;gap:12px;align-items:flex-start}
+.url span{flex:1}
+.url button{font:12px var(--mono);border:1px solid var(--line);background:transparent;color:var(--fg);border-radius:7px;padding:4px 9px;cursor:pointer}
+.small{color:var(--muted);font-size:13.5px;margin-top:14px}
+.problem{border:1px solid #d6453d;color:#d6453d;border-radius:10px;padding:10px 12px;margin-bottom:18px;font-size:14.5px}
+.problem:empty{display:none}
+@media (max-width:720px){.wrap{grid-template-columns:1fr;gap:28px;justify-items:center}.qr img,.qr canvas{width:220px;height:220px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="qr" id="qr"></div>
+  <div>
+    <div class="head"><img src="icon-180.png" alt=""><h1>{{NAME}} on your iPhone</h1></div>
+    <div class="problem">{{PROBLEM}}</div>
+    <ol>
+      <li><span>Open the <b>Camera</b> on your iPhone and point it at the code. Tap the link that pops up.</span></li>
+      <li><span>In Safari, tap <b>Share</b>, then <b>Add to Home Screen</b>.</span></li>
+      <li><span>Open {{NAME}} from your home screen. Talk, type, or send a photo; it can do things on this computer while you're away.</span></li>
+    </ol>
+    <div class="url"><span id="url">{{URL}}</span><button id="copy">copy</button></div>
+    <p class="small">Private: only your devices on Tailscale can reach it, and only with this code. Your iPhone needs the Tailscale app turned on.</p>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+const url = {{URLJSON}};
+if (url && window.QRCode) new QRCode(document.getElementById('qr'), { text: url, width: 280, height: 280, colorDark: '#0d0d0d', colorLight: '#ffffff', correctLevel: QRCode.CorrectLevel.M });
+else document.getElementById('qr').textContent = url ? 'QR code didn’t load: use the link below.' : 'Tailscale isn’t ready on this computer.';
+document.getElementById('copy').onclick = () => navigator.clipboard.writeText(url).then(() => document.getElementById('copy').textContent = 'copied');
+</script>
+</body>
+</html>

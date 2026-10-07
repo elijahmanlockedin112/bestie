@@ -38,6 +38,12 @@ namespace Bestie
         /// <summary>Streams one piece of speech: raw 16-bit 24 kHz mono PCM. track gets the request so it can be aborted.</summary>
         public static HttpWebResponse Speak(string key, string voiceId, string model, string text, string previousText, int timeoutMs, Action<HttpWebRequest> track)
         {
+            return Speak(key, voiceId, model, text, previousText, timeoutMs, track, "pcm_24000");
+        }
+
+        /// <summary>The same, in another output format (the phone app plays "mp3_44100_128").</summary>
+        public static HttpWebResponse Speak(string key, string voiceId, string model, string text, string previousText, int timeoutMs, Action<HttpWebRequest> track, string format)
+        {
             string m = learnedModel ?? (string.IsNullOrEmpty(model) ? DefaultModel : model);
             for (int attempt = 0; ; attempt++)
             {
@@ -49,7 +55,7 @@ namespace Bestie
                 byte[] bytes = Encoding.UTF8.GetBytes(Json.Write(body));
                 // the latency knob only exists on the older models (v4 refuses it outright)
                 string tune = m.StartsWith("eleven_v4") || m.StartsWith("eleven_v3") ? "" : "&optimize_streaming_latency=3";
-                var req = Make("text-to-speech/" + Uri.EscapeDataString(voiceId) + "/stream?output_format=pcm_24000" + tune, "POST", key, timeoutMs);
+                var req = Make("text-to-speech/" + Uri.EscapeDataString(voiceId) + "/stream?output_format=" + Uri.EscapeDataString(format) + tune, "POST", key, timeoutMs);
                 req.ContentType = "application/json";
                 req.Accept = "audio/*";
                 if (track != null) track(req);

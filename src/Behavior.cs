@@ -157,6 +157,17 @@ namespace Bestie
             lock (seenGate) return seen.Any(s => s.Until >= cutoff && match(s.App ?? "", s.Site ?? "", s.Title ?? ""));
         }
 
+        /// <summary>What's in front of them right now (a site, else the app), or null if they're away.</summary>
+        public static string CurrentThing()
+        {
+            lock (seenGate)
+            {
+                Seen s = seen.Count > 0 ? seen[seen.Count - 1] : null;
+                if (s == null || (DateTime.Now - s.Until).TotalSeconds > 10) return null;
+                return string.IsNullOrEmpty(s.Site) ? s.App : s.Site;
+            }
+        }
+
         static void Open(DateTime at, string app, string title, string site, string cat)
         {
             curApp = app; curTitle = title; curSite = site; curCat = cat; curFrom = at; curActive = 0;

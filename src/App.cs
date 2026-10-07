@@ -26,6 +26,7 @@ namespace Bestie
         NotifyIcon tray;
         ContextMenuStrip menu;
         ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem;
+        PhoneServer phone;
         double calendarCheck = 20, blockCheck;
         int calendarChecking;
         AssistantModule assistant;
@@ -80,6 +81,17 @@ namespace Bestie
             try { StartWispr(); }
             catch (Exception ex) { DebugLog.Write("wispr failed to start: " + ex); }
             if (assistant != null) assistant.TalkVia = TalkViaWispr;
+            if (assistant != null)
+            {
+                try
+                {
+                    phone = PhoneServer.Start(assistant, () => new Dictionary<string, object> {
+                        { "name", brain.Name }, { "hue", brain.Looks.Hue },
+                        { "playing", c.NowPlaying != null ? c.NowPlaying.Artist + " – " + c.NowPlaying.Title : null } },
+                        PhoneIcon);
+                }
+                catch (Exception ex) { DebugLog.Write("phone app failed to start: " + ex); }
+            }
             try
             {
                 WidgetManager.ConnectCalendar = ConnectCalendar;
@@ -318,6 +330,12 @@ namespace Bestie
             Add("my brain dumps", null, OpenBrainDumps);
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
+            Add(brain.Name + " on your phone…", null, () =>
+            {
+                if (phone == null) { c.Say("my phone line didn't start. check the log.", false, 0); return; }
+                c.Say("opening the code for your phone. scan it with the camera.", false, 0);
+                Process.Start(new ProcessStartInfo("http://127.0.0.1:" + PhoneServer.Port + "/pair") { UseShellExecute = true });
+            });
             menu.Items.Add(WidgetsMenu());
             calendarItem = Add("let me see my calendar…", null, ConnectCalendar);
             forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
@@ -552,7 +570,7 @@ namespace Bestie
             System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
             step("wake word", () => { if (wake != null) wake.Dispose(); });
             step("wispr", () => { if (wispr != null) wispr.Dispose(); if (wisprCapture != null && wisprCapture.Active) wisprCapture.End(); });
-            step("sessions", () => { AiSessions.Stop(); Office.Stop(); Behavior.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
+            step("sessions", () => { AiSessions.Stop(); Office.Stop(); Behavior.Stop(); if (phone != null) phone.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
             step("tray", () => { if (tray != null) { tray.Visible = false; tray.Dispose(); } bubble.Close(); });
             base.OnFormClosing(e);
         }
@@ -864,6 +882,27 @@ namespace Bestie
             }
             if (!Quiet.On) c.Emit("sparkle", 3);
             finished.Clear();
+        }
+
+        /// <summary>The phone app's icon: the creature, smiling, on a pale tint of its own colour. Any thread (draws on the UI thread).</summary>
+        byte[] PhoneIcon(int size)
+        {
+            return (byte[])Invoke(new Func<byte[]>(delegate
+            {
+                using (var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+                {
+                    using (var g = Graphics.FromImage(bmp))
+                    {
+                        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                        g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                        g.Clear(Renderer.Hsl(brain.Looks.Hue, 0.32, 0.90, 255));
+                        int inner = (int)(size * 0.86);
+                        using (Bitmap face = Portrait.Make(brain, inner, Face.Happy))
+                            g.DrawImage(face, (size - inner) / 2, (int)(size * 0.06), inner, inner);
+                    }
+                    using (var ms = new System.IO.MemoryStream()) { bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png); return ms.ToArray(); }
+                }
+            }));
         }
 
         /// <summary>An FYI nobody asked for (a session or an office job finished): said out loud, unless it's quiet
