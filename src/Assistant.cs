@@ -202,7 +202,8 @@ namespace Bestie
                 if (chat != null && !chat.IsDisposed) chat.AppendYou(text + "  [from your phone]", voice);
                 var p = new PendingInput();
                 p.Text = text + "\n\n(sent from the bestie app on their phone" + (voice ? ", by voice" : "") + (imageDataUrl != null ? ", with a photo from the phone" : "")
-                    + ". they may be away from the computer: do things with your tools as usual, and say what you did in your reply, since they can't see the computer.)";
+                    + ". they may be away from the computer: do things with your tools as usual, and say what you did in your reply, since they can't see the computer."
+                    + (voice ? " your reply is read aloud to them: keep it to a sentence or two, no lists or links." : "") + ")";
                 p.Heard = text;
                 p.Image = imageDataUrl;
                 p.Ctx = CaptureContext();
@@ -210,6 +211,7 @@ namespace Bestie
                 p.Settings = settings.Clone();
                 p.Settings.SpeakReplies = false;      // the phone speaks it (or not), not the pc
                 p.Settings.AutoLookScreens = false;   // "this" means the phone's photo, not the pc screen (look_at_screen still works)
+                p.Voice = voice;                      // spoken turns think less and answer sooner, like on the pc
                 p.Phone = t;
                 Enqueue(p);
             });

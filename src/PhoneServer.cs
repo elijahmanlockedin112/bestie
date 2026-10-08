@@ -75,7 +75,8 @@ namespace Bestie
 
         readonly AssistantModule assistant;
         readonly Func<Dictionary<string, object>> creature;   // name, hue, now playing
-        readonly Func<int, byte[]> portrait;                  // the creature's app icon as a PNG of this size
+        readonly Func<int, string, byte[]> portrait;          // the creature as a PNG of this size, with this mood
+        readonly Dictionary<string, byte[]> faces = new Dictionary<string, byte[]>();
         readonly string webDir;
         readonly Dictionary<string, PhoneTurn> turns = new Dictionary<string, PhoneTurn>();
         readonly Dictionary<string, KeyValuePair<string, DateTime>> offers = new Dictionary<string, KeyValuePair<string, DateTime>>();   // file id -> path, expiry
@@ -89,12 +90,12 @@ namespace Bestie
         /// <summary>The address the phone opens (with the pairing key), or null until tailscale's name is known.</summary>
         public string PairUrl { get { return tailnetHost == null ? null : "https://" + tailnetHost + ":" + TailscalePort + "/?k=" + Key; } }
 
-        PhoneServer(AssistantModule assistant, Func<Dictionary<string, object>> creature, Func<int, byte[]> portrait, string webDir)
+        PhoneServer(AssistantModule assistant, Func<Dictionary<string, object>> creature, Func<int, string, byte[]> portrait, string webDir)
         {
             this.assistant = assistant; this.creature = creature; this.portrait = portrait; this.webDir = webDir;
         }
 
-        public static PhoneServer Start(AssistantModule assistant, Func<Dictionary<string, object>> creature, Func<int, byte[]> portrait)
+        public static PhoneServer Start(AssistantModule assistant, Func<Dictionary<string, object>> creature, Func<int, string, byte[]> portrait)
         {
             var s = new PhoneServer(assistant, creature, portrait, Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "phone"));
             s.Key = LoadKey();
@@ -412,6 +413,8 @@ namespace Bestie
             if (r.Method == "GET" && path == "/sw.js") { Static(s, "sw.js", "application/javascript; charset=utf-8"); return; }
             if (r.Method == "GET" && (path == "/icon-180.png" || path == "/icon-512.png" || path == "/apple-touch-icon.png")) { Icon(s, path == "/icon-512.png" ? 512 : 180); return; }
             if (r.Method == "GET" && path == "/pair") { Pair(r, s); return; }
+            Match face = Regex.Match(path, @"^/face/(happy|think|sleep|surprised|content|normal)\.png$");
+            if (r.Method == "GET" && face.Success) { Face(s, face.Groups[1].Value); return; }
             if (!path.StartsWith("/api/")) { SendText(s, 404, "not here"); return; }
             if (!Authorized(r)) { SendError(s, 401, "not paired"); return; }
             switch (r.Method + " " + path)
@@ -422,7 +425,8 @@ namespace Bestie
                 case "POST /api/speak": Speak(r, s); return;
                 case "GET /api/history": SendJson(s, History(60)); return;
                 case "GET /api/status": SendJson(s, Status()); return;
-                case "GET /api/screen": Screen(s); return;
+                case "GET /api/screen": Screen(r, s); return;
+                case "POST /api/screen/act": ScreenAct(r, s); return;
                 case "GET /api/saved": SendJson(s, Saved()); return;
                 case "GET /api/note": Note(r, s); return;
                 case "POST /api/todo": Todo(r, s); return;
@@ -497,7 +501,7 @@ namespace Bestie
             byte[] png = size == 512 ? icon512 : icon180;
             if (png == null)
             {
-                try { png = portrait(size); } catch (Exception ex) { DebugLog.Write("phone: icon: " + ex.Message); }
+                try { png = portrait(size, "happy"); } catch (Exception ex) { DebugLog.Write("phone: icon: " + ex.Message); }
                 if (png == null) { SendText(s, 404, "no icon"); return; }
                 if (size == 512) icon512 = png; else icon180 = png;
             }
@@ -634,13 +638,88 @@ namespace Bestie
             return d;
         }
 
-        void Screen(Stream s)
+        void Face(Stream s, string mood)
         {
-            string layout;
-            List<string> shots;
-            try { shots = ScreenGrab.CaptureAllScreens(1600, 72, out layout); }
-            catch (Exception ex) { SendError(s, 500, "couldn't see the screen: " + ex.Message); return; }
-            SendJson(s, new Dictionary<string, object> { { "images", shots.ToArray() }, { "at", When.Clock(DateTime.Now) } });
+            byte[] png;
+            lock (faces) faces.TryGetValue(mood, out png);
+            if (png == null)
+            {
+                try { png = portrait(128, mood); } catch (Exception ex) { DebugLog.Write("phone: face: " + ex.Message); }
+                if (png == null) { SendText(s, 404, "no face"); return; }
+                lock (faces) faces[mood] = png;
+            }
+            Send(s, 200, "image/png", png, "Cache-Control: max-age=3600\r\n");
+        }
+
+        // ================================================================== the computer's screen, live, to tap on
+
+        /// <summary>The monitors, left to right (the same order the phone shows them).</summary>
+        static Rectangle[] Monitors() { return System.Windows.Forms.Screen.AllScreens.OrderBy(m => m.Bounds.Left).ThenBy(m => m.Bounds.Top).Select(m => m.Bounds).ToArray(); }
+
+        /// <summary>?screen=N: just that monitor, smaller and quicker (the live view refreshes it every second or so);
+        /// without it, every monitor.</summary>
+        void Screen(Request r, Stream s)
+        {
+            Rectangle[] mons = Monitors();
+            int only;
+            bool one = int.TryParse(r.Q("screen"), out only) && only >= 0 && only < mons.Length;
+            var images = new List<object>();
+            for (int i = 0; i < mons.Length; i++)
+            {
+                if (one && i != only) continue;
+                try
+                {
+                    using (Bitmap bmp = ScreenGrab.Capture(mons[i]))
+                        images.Add(new Dictionary<string, object> { { "index", i }, { "src", ScreenGrab.ToJpegDataUrl(bmp, one ? 1400 : 1600, one ? 62 : 72) }, { "w", mons[i].Width }, { "h", mons[i].Height } });
+                }
+                catch (Exception ex) { DebugLog.Write("phone: screen " + i + ": " + ex.Message); }
+            }
+            SendJson(s, new Dictionary<string, object> { { "screens", images.ToArray() }, { "count", mons.Length }, { "at", When.Clock(DateTime.Now) } });
+        }
+
+        /// <summary>Taps on the live view become real input on the computer: click (left/right/double) at a spot given as
+        /// fractions of that monitor, scroll there, type text, or press a key.</summary>
+        void ScreenAct(Request r, Stream s)
+        {
+            var b = BodyJson(r);
+            string what = Json.Str(b, "do") ?? "";
+            Rectangle[] mons = Monitors();
+            int i = (int)Json.Num(b, "screen", 0);
+            if (i < 0 || i >= mons.Length) { SendError(s, 400, "no such screen"); return; }
+            double fx = Math.Max(0, Math.Min(1, Json.Num(b, "x", 0.5))), fy = Math.Max(0, Math.Min(1, Json.Num(b, "y", 0.5)));
+            var at = new Point(mons[i].Left + (int)Math.Round(fx * (mons[i].Width - 1)), mons[i].Top + (int)Math.Round(fy * (mons[i].Height - 1)));
+            if (Json.Bool(b, "dry", false)) { SendJson(s, new Dictionary<string, object> { { "x", at.X }, { "y", at.Y }, { "screen", i } }); return; }
+            try
+            {
+                switch (what)
+                {
+                    case "click": ComputerAgent.Input.Click(at, "left", 1); break;
+                    case "double": ComputerAgent.Input.Click(at, "left", 2); break;
+                    case "right": ComputerAgent.Input.Click(at, "right", 1); break;
+                    case "scroll": ComputerAgent.Input.Scroll(at, 0, (int)Json.Num(b, "dy", 300)); break;
+                    case "type":
+                    {
+                        string text = Json.Str(b, "text") ?? "";
+                        if (text.Length > 2000) text = text.Substring(0, 2000);
+                        ComputerAgent.Input.Type(text);
+                        break;
+                    }
+                    case "key":
+                    {
+                        string key = (Json.Str(b, "key") ?? "").ToLowerInvariant();
+                        var allowed = new[] { "enter", "esc", "backspace", "tab", "up", "down", "left", "right", "space", "delete", "pageup", "pagedown", "home", "end" };
+                        if (!allowed.Contains(key)) { SendError(s, 400, "that key isn't on the phone's keypad"); return; }
+                        ComputerAgent.Input.Key(new[] { key.ToUpperInvariant() });
+                        break;
+                    }
+                    default: SendError(s, 400, "do what?"); return;
+                }
+            }
+            catch (Exception ex) { SendError(s, 500, ex.Message); return; }
+            Thread.Sleep(what == "type" ? 250 : 450);   // let the screen react before the fresh look
+            var shot = new Dictionary<string, object> { { "index", i }, { "w", mons[i].Width }, { "h", mons[i].Height } };
+            try { using (Bitmap bmp = ScreenGrab.Capture(mons[i])) shot["src"] = ScreenGrab.ToJpegDataUrl(bmp, 1400, 62); } catch { }
+            SendJson(s, new Dictionary<string, object> { { "screens", new object[] { shot } }, { "count", mons.Length }, { "at", When.Clock(DateTime.Now) } });
         }
 
         // ================================================================== saved things

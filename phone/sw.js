@@ -8,9 +8,13 @@ self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
 self.addEventListener('push', e => {
   let d = {};
   try { d = e.data ? e.data.json() : {}; } catch (_) { d = { body: e.data ? e.data.text() : '' }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Bestie', {
-    body: d.body || '', icon: 'icon-180.png', badge: 'icon-180.png', tag: d.tag || 'bestie', renotify: true, data: { url: d.url || './' }
-  }));
+  e.waitUntil((async () => {
+    await self.registration.showNotification(d.title || 'Bestie', {
+      body: d.body || '', icon: 'icon-180.png', badge: 'icon-180.png', tag: (d.tag || 'bestie') + '-' + Date.now(), data: { url: d.url || './' }
+    });
+    // the number on the home-screen icon: how many are waiting
+    try { if (self.navigator.setAppBadge) self.navigator.setAppBadge((await self.registration.getNotifications()).length); } catch (_) {}
+  })());
 });
 
 self.addEventListener('notificationclick', e => {

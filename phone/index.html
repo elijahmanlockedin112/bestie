@@ -167,6 +167,63 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 .menu .act{font-size:16.5px}
 .menu .cancel{width:100%;padding:14px;margin-top:6px;border-radius:12px;background:var(--bubble);font-weight:600}
 
+/* mood avatar */
+header img.think{animation:bob 1.1s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-3px) rotate(-3deg)}}
+
+/* actions under the newest reply */
+.acts{display:flex;gap:16px;margin-top:6px}
+.acts .play{margin-top:0}
+.retry{margin-top:8px;font:13px var(--mono);color:var(--accent)}
+
+/* can't reach the computer */
+.offline{flex:none;display:none;align-items:center;gap:10px;padding:9px 14px;background:var(--bubble);font-size:14px;color:var(--muted)}
+.offline.show{display:flex}
+.offline span{flex:1}
+.offline button{color:var(--accent);font-weight:600}
+
+/* voice mode */
+.voice{position:fixed;inset:0;background:#0d0d0d;color:#ececec;display:none;flex-direction:column;align-items:center;padding:calc(var(--top) + 24px) 24px calc(var(--bottom) + 28px);z-index:25}
+.voice.open{display:flex}
+.vm-name{font:12px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:#8e8e93}
+.vm-mid{flex:1;display:grid;place-items:center;width:100%;position:relative}
+.vm-ring{position:absolute;width:210px;height:210px;border-radius:50%;background:var(--accent);opacity:.16;transition:transform .08s linear}
+.voice[data-state=thinking] .vm-ring{animation:breathe 1.4s ease-in-out infinite}
+.voice[data-state=speaking] .vm-ring{opacity:.28;animation:breathe .9s ease-in-out infinite}
+@keyframes breathe{50%{transform:scale(1.12)}}
+.vm-mid img{width:172px;height:172px;border-radius:50%;position:relative}
+.vm-status{font-size:20px;font-weight:600;letter-spacing:-.01em;margin-bottom:14px;min-height:28px}
+.vm-you,.vm-reply{max-width:330px;text-align:center;font-size:15px;line-height:1.4;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:0}
+.vm-you{color:#8e8e93;margin-bottom:8px}
+.vm-reply{color:#d8d8d8;margin-bottom:26px}
+.vm-end{width:68px;height:68px;border-radius:50%;background:#e5483f;color:#fff;display:grid;place-items:center}
+.vm-end .icon{width:28px;height:28px;stroke-width:2.2}
+
+/* the computer's screen, live */
+.screen .tabs{flex:none;display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid #222}
+.screen .tabs:empty{display:none}
+.screen .tabs button{font:12.5px var(--mono);color:#8e8e93;border:1px solid #2a2a2a;border-radius:8px;padding:5px 10px}
+.screen .tabs button.on{color:#ececec;border-color:#ececec}
+.screen .body{padding:0;position:relative;overflow:auto;-webkit-overflow-scrolling:touch}
+.view{position:relative;line-height:0;touch-action:manipulation;margin-top:auto;flex:none}
+.screen .hint{margin-bottom:auto}
+.view img{width:100%;display:block;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.view.zoomed{width:260%}
+.tapdot{position:absolute;width:26px;height:26px;margin:-13px 0 0 -13px;border-radius:50%;border:2px solid var(--accent);background:rgba(255,255,255,.15);pointer-events:none;opacity:0}
+.tapdot.go{animation:tap .5s ease-out}
+@keyframes tap{0%{opacity:1;transform:scale(.6)}100%{opacity:0;transform:scale(1.6)}}
+.live{font:11px var(--mono);letter-spacing:.08em;color:#8e8e93;display:flex;align-items:center;gap:6px}
+.live i{width:7px;height:7px;border-radius:50%;background:#e5483f;animation:blink 1.4s infinite}
+.tools{flex:none;display:flex;gap:4px;justify-content:space-between;padding:8px 10px calc(var(--bottom) + 8px);border-top:1px solid #222;background:#000}
+.tools button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;color:#ececec;font:10.5px var(--mono);padding:6px 0;border-radius:8px}
+.tools button:active,.tools button.on{background:#222}
+.tools .icon{width:20px;height:20px}
+.typebar{flex:none;display:none;gap:8px;padding:8px 10px;background:#000;border-top:1px solid #222}
+.typebar.show{display:flex}
+.typebar input{flex:1;border:1px solid #333;border-radius:10px;padding:9px 12px;background:#111;color:#ececec;font:16px var(--sans);outline:0}
+.typebar button{color:#000;background:#ececec;border-radius:10px;padding:0 14px;font-weight:600}
+.screen .hint{font:12px var(--mono);color:#8e8e93;text-align:center;padding:8px 16px 0;line-height:1.4}
+
 /* files under a reply */
 .file{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;color:var(--fg);text-decoration:none;max-width:320px}
 .file .icon{color:var(--accent);flex:none}
@@ -187,7 +244,7 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 </head>
 <body>
 <header>
-  <img src="icon-180.png" alt="">
+  <img src="face/content.png" alt="" id="av">
   <div class="who"><b>{{NAME}}</b><div class="status" id="status"><i></i>connecting…</div></div>
   <button class="hbtn" id="controlsBtn" aria-label="Controls"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   <button class="hbtn" id="screenBtn" aria-label="See your computer screen"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
@@ -198,6 +255,7 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
   <span>Tap <b>Share</b>, then <b>Add to Home Screen</b> to keep {{NAME}} as an app.</span>
   <button class="hbtn" id="installX" aria-label="Dismiss"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 </div>
+<div class="offline" id="offline"><span>Can't reach your computer. Is it on, with Tailscale on this phone?</span><button id="retryConn">Retry</button></div>
 <main id="log"></main>
 <div class="chips" id="chips"></div>
 <footer>
@@ -206,6 +264,7 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
     <button class="round" id="photoBtn" aria-label="Add a photo"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
     <textarea id="input" rows="1" placeholder="Message {{NAME}}" enterkeyhint="send"></textarea>
     <button class="round mic" id="micBtn" aria-label="Hold to talk"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+    <button class="round go" id="voiceBtn" aria-label="Voice mode"><svg class="icon" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></svg></button>
     <button class="round go" id="sendBtn" aria-label="Send" style="display:none"><svg class="icon" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg></button>
   </div>
   <div class="rec" id="rec"><div class="dot"></div><div class="t" id="recT">0:00</div><div class="hint" id="recHint">Release to send · slide left to cancel</div><div class="round"><svg class="icon" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div></div>
@@ -259,10 +318,28 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
   <div class="body"><div class="notebody bestie" id="noteBody"></div></div>
 </section>
 <section class="sheet screen" id="screenSheet">
-  <div class="top"><b>Your computer</b><span class="meta" id="screenAt"></span>
-    <button class="hbtn" id="screenRefresh" aria-label="Refresh"><svg class="icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5"/></svg></button>
+  <div class="top"><b>Your computer</b><span class="live" id="live"><i></i>LIVE</span>
     <button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
-  <div class="body" id="screenBody"></div>
+  <div class="tabs" id="screenTabs"></div>
+  <div class="body" id="screenBody"><div class="view" id="view"><img id="shot" alt=""><span class="tapdot" id="tapdot"></span></div><div class="hint" id="screenHint">tap to click · hold to right-click · double-tap to double-click<br>turn sideways for a bigger view</div></div>
+  <form class="typebar" id="typeBar"><input id="typeText" placeholder="Type on your computer" autocomplete="off" autocapitalize="off" enterkeyhint="send"><button>Type</button></form>
+  <div class="tools">
+    <button id="zoomBtn"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg>zoom</button>
+    <button id="kbBtn"><svg class="icon" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>type</button>
+    <button data-key="enter"><svg class="icon" viewBox="0 0 24 24"><path d="M20 5v7a3 3 0 0 1-3 3H5M9 11l-4 4 4 4"/></svg>enter</button>
+    <button data-key="esc"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>esc</button>
+    <button data-key="backspace"><svg class="icon" viewBox="0 0 24 24"><path d="M21 5H9l-6 7 6 7h12zM17 9l-6 6M11 9l6 6"/></svg>back</button>
+    <button data-scroll="-1"><svg class="icon" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></svg>up</button>
+    <button data-scroll="1"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>down</button>
+  </div>
+</section>
+<section class="voice" id="voice" data-state="listening">
+  <div class="vm-name">{{NAME}}</div>
+  <div class="vm-mid"><div class="vm-ring" id="vmLevel"></div><img id="vmFace" src="face/normal.png" alt=""></div>
+  <div class="vm-status" id="vmStatus">Listening…</div>
+  <div class="vm-you" id="vmYou"></div>
+  <div class="vm-reply" id="vmReply"></div>
+  <button class="vm-end" id="vmEnd" aria-label="End voice mode"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 </section>
 
 <div class="pair" id="pair">
@@ -330,19 +407,33 @@ function addYou(text, img, phone) {
   if (phone === false) { const t = document.createElement('div'); t.className = 'tag'; t.textContent = 'on the computer'; wrap.appendChild(t); }
   d.appendChild(wrap); log.appendChild(d); scrollDown(true);
 }
-function playButton(text) {
-  log.querySelectorAll('.play').forEach(b => b.remove());   // only the newest reply carries it
+/** "hear it · copy" under the newest reply (only the newest carries them). Returns the hear-it button. */
+function actions(el, text) {
+  log.querySelectorAll('.acts').forEach(b => b.remove());
+  const row = document.createElement('div'); row.className = 'acts';
   const p = document.createElement('button'); p.className = 'play';
   p.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M5 9v6h4l5 4V5L9 9H5z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg>hear it';
   p.onclick = () => speak(text, p);
+  const c = document.createElement('button'); c.className = 'play';
+  c.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>copy';
+  c.onclick = () => navigator.clipboard.writeText(text).then(() => toast('copied')).catch(() => toast('couldn’t copy'));
+  row.appendChild(p); row.appendChild(c); el.appendChild(row);
   return p;
 }
-function addBestie(text, withPlay) {
+function addBestie(text, withActions) {
   clearEmpty();
   const d = document.createElement('div'); d.className = 'msg bestie';
   d.innerHTML = md(text);
-  if (withPlay !== false) d.appendChild(playButton(text));
+  if (withActions !== false) actions(d, text);
   log.appendChild(d); scrollDown(); return d;
+}
+
+// ---------- its face in the header ----------
+let restingMood = 'content', moodTimer = null;
+function mood(name, ms) {
+  const av = $('av'); clearTimeout(moodTimer);
+  av.src = 'face/' + name + '.png'; av.classList.toggle('think', name === 'think');
+  if (ms) moodTimer = setTimeout(() => mood(restingMood), ms);
 }
 function addNote(text) { const d = document.createElement('div'); d.className = 'note'; d.textContent = text; log.appendChild(d); scrollDown(); }
 function addDay(text) { const d = document.createElement('div'); d.className = 'day'; d.textContent = text; log.appendChild(d); }
@@ -369,8 +460,9 @@ async function loadHistory() {
 async function send(text, opts = {}) {
   text = (text || '').trim();
   const img = opts.image !== undefined ? opts.image : photo;
-  if ((!text && !img) || busy) return;
-  busy = true; input.value = ''; grow(); clearPhoto(); updateButtons();
+  if ((!text && !img) || busy) return null;
+  busy = true; input.value = ''; grow(); clearPhoto(); updateButtons(); mood('think');
+  let replyText = null;
   addYou(text || 'what’s in this picture?', img);
   const d = document.createElement('div'); d.className = 'msg bestie';
   const body = document.createElement('div');
@@ -390,18 +482,30 @@ async function send(text, opts = {}) {
       scrollDown();
     }
     work.remove();
-    if (t.error) { body.innerHTML = '<p class="err">' + esc(t.error) + '</p>'; }
+    if (t.error) { body.innerHTML = '<p class="err">' + esc(t.error) + '</p>'; retryButton(d, text, img); mood('surprised', 4000); }
     else {
       body.innerHTML = md(t.reply);
       fileChips(d, t.files);
-      const p = playButton(t.reply); d.appendChild(p);
-      if (opts.voice) speak(t.reply, p);
+      const p = actions(d, t.reply);
+      replyText = t.reply;
+      mood('happy', 6000);
+      if (opts.voice && !opts.quietly) speak(t.reply, p);
     }
   } catch (e) {
     work.remove();
-    if (e.message !== 'not paired') body.innerHTML = '<p class="err">' + esc(e.message === 'Failed to fetch' || e.message === 'Load failed' ? 'can’t reach your computer. is it on, with ' + NAME + ' running?' : e.message) + '</p>';
+    if (e.message !== 'not paired') {
+      body.innerHTML = '<p class="err">' + esc(e.message === 'Failed to fetch' || e.message === 'Load failed' ? 'can’t reach your computer. is it on, with ' + NAME + ' running?' : e.message) + '</p>';
+      retryButton(d, text, img);
+    }
+    mood('surprised', 4000);
   }
   busy = false; scrollDown(true); refreshStatus();
+  return replyText;
+}
+function retryButton(el, text, img) {
+  const b = document.createElement('button'); b.className = 'retry'; b.textContent = 'try again';
+  b.onclick = () => { b.remove(); send(text, { image: img || null }); };
+  el.appendChild(b);
 }
 
 // ---------- voice out ----------
@@ -420,22 +524,110 @@ function unlockAudio() {
   audio.src = silentWav();
   audio.play().catch(() => {});
 }
-async function speak(text, btn) {
-  if (speakingBtn) speakingBtn.classList.remove('on');
-  if (audio && !audio.paused && speakingBtn === btn) { audio.pause(); speakingBtn = null; return; }
-  speakingBtn = btn || null; if (btn) btn.classList.add('on');
-  const done = () => { if (btn) btn.classList.remove('on'); if (speakingBtn === btn) speakingBtn = null; };
-  try {
-    const res = await api('api/speak', { json: { text }, raw: true });
-    if (res.status === 200) {
-      const url = URL.createObjectURL(await res.blob());
-      if (!audio) audio = new Audio();
-      audio.src = url; audio.onended = done; audio.onerror = done;
-      await audio.play(); return;
-    }
-  } catch (e) {}
-  if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(text.replace(/[*_`#>]/g, '')); u.onend = done; speechSynthesis.speak(u); } else done();
+/** Says it in its own voice (the phone's voice if that fails). Resolves when it's finished talking. */
+function speak(text, btn) {
+  return new Promise(async resolve => {
+    if (speakingBtn) speakingBtn.classList.remove('on');
+    if (btn && audio && !audio.paused && speakingBtn === btn) { audio.pause(); speakingBtn = null; resolve(); return; }
+    speakingBtn = btn || null; if (btn) btn.classList.add('on');
+    let finished = false;
+    const done = () => { if (finished) return; finished = true; if (btn) btn.classList.remove('on'); if (speakingBtn === btn) speakingBtn = null; resolve(); };
+    try {
+      const res = await api('api/speak', { json: { text }, raw: true });
+      if (res.status === 200) {
+        const url = URL.createObjectURL(await res.blob());
+        if (!audio) audio = new Audio();
+        audio.src = url; audio.onended = done; audio.onerror = done; audio.onpause = () => { if (audio.currentTime < audio.duration - 0.1) done(); };
+        await audio.play(); return;
+      }
+    } catch (e) {}
+    if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(text.replace(/[*_`#>]/g, '')); u.onend = done; u.onerror = done; speechSynthesis.speak(u); } else done();
+  });
 }
+
+// ---------- voice mode: talk back and forth, hands-free, like a phone call ----------
+const vm = { on: false, stream: null, ctx: null, rec: null, raf: 0 };
+const vmFaces = { listening: 'normal', hearing: 'surprised', thinking: 'think', speaking: 'happy' };
+function vmSet(state, text) { $('voice').dataset.state = state; $('vmStatus').textContent = text; $('vmFace').src = 'face/' + (vmFaces[state] || 'content') + '.png'; console.log('[voice] ' + state); }
+function vmStopMic() {
+  cancelAnimationFrame(vm.raf);
+  if (vm.rec && vm.rec.state !== 'inactive') { vm.rec.onstop = null; try { vm.rec.stop(); } catch (_) {} }
+  vm.rec = null;
+  if (vm.stream) vm.stream.getTracks().forEach(t => t.stop());
+  vm.stream = null;
+}
+async function voiceStart() {
+  unlockAudio();
+  if (busy) { toast('one sec, still on the last thing'); return; }
+  if (!window.MediaRecorder || !navigator.mediaDevices) { toast('this browser can’t listen'); return; }
+  try { vm.ctx = vm.ctx || new (window.AudioContext || window.webkitAudioContext)(); await vm.ctx.resume(); } catch (_) {}
+  vm.on = true; $('vmYou').textContent = ''; $('vmReply').textContent = '';
+  $('voice').classList.add('open');
+  vmListen();
+}
+function voiceEnd() {
+  vm.on = false; vmStopMic();
+  if (audio) audio.pause();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  $('voice').classList.remove('open');
+}
+async function vmListen() {
+  if (!vm.on) return;
+  vmSet('listening', 'Listening…');
+  try { vm.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); }
+  catch (e) { toast('allow the microphone to talk to ' + NAME, 3500); voiceEnd(); return; }
+  if (!vm.on) { vmStopMic(); return; }
+  const an = vm.ctx.createAnalyser(); an.fftSize = 1024;
+  vm.ctx.createMediaStreamSource(vm.stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  const type = MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : '';
+  const chunks = [];
+  const rec = vm.rec = new MediaRecorder(vm.stream, type ? { mimeType: type } : undefined);
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.start(250);
+  let floor = 0.006, frames = 0, voiced = 0, speaking = false, quietSince = 0;
+  const started = performance.now();
+  const tick = () => {
+    if (!vm.on || vm.rec !== rec) return;
+    an.getFloatTimeDomainData(buf);
+    let sum = 0; for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+    const rms = Math.sqrt(sum / buf.length), now = performance.now();
+    if (++frames < 18) floor = Math.max(floor * 0.85 + rms * 0.15, 0.004);   // the first ~300 ms learns how loud the room is
+    $('vmLevel').style.transform = 'scale(' + (1 + Math.min(rms * 9, 0.7)).toFixed(3) + ')';
+    if (rms > Math.max(floor * 3, 0.018)) { voiced++; quietSince = 0; if (!speaking && voiced > 5) { speaking = true; vmSet('hearing', 'Go on…'); } }
+    else { voiced = Math.max(0, voiced - 1); if (speaking && !quietSince) quietSince = now; }
+    if (speaking && quietSince && now - quietSince > 950) return finish();   // they stopped talking
+    if (speaking && now - started > 60000) return finish();
+    if (!speaking && now - started > 20000) { vmStopMic(); return vmListen(); }   // nothing said: start a fresh clip
+    vm.raf = requestAnimationFrame(tick);
+  };
+  const finish = () => {
+    vm.rec = null; cancelAnimationFrame(vm.raf);
+    rec.onstop = async () => {
+      if (vm.stream) vm.stream.getTracks().forEach(t => t.stop());   // mic off while it answers (iPhones turn playback down while the mic is open)
+      vm.stream = null;
+      if (!vm.on) return;
+      vmSet('thinking', 'Thinking…');
+      try {
+        const blobType = rec.mimeType || type || 'audio/mp4';
+        const heard = await api('api/listen', { body: new Blob(chunks, { type: blobType }), headers: { 'Content-Type': blobType } });
+        const said = (heard.text || '').trim();
+        console.log('[voice] heard: ' + said);
+        if (said && vm.on) {
+          $('vmYou').textContent = said; $('vmReply').textContent = '';
+          const reply = await send(said, { voice: true, quietly: true });
+          console.log('[voice] reply: ' + reply);
+          if (vm.on && reply) { $('vmReply').textContent = reply; vmSet('speaking', NAME + ' is talking'); await speak(reply); }
+        }
+      } catch (e) { toast(e.message); }
+      vmListen();
+    };
+    try { rec.stop(); } catch (_) { vmListen(); }
+  };
+  vm.raf = requestAnimationFrame(tick);
+}
+$('voiceBtn').onclick = voiceStart;
+$('vmEnd').onclick = voiceEnd;
 
 // ---------- voice in (hold to talk) ----------
 let rec = null, chunks = [], recStart = 0, recTimer = null, cancelled = false, startX = 0, stream = null, pressing = false;
@@ -554,6 +746,7 @@ function updateButtons() {
   const has = input.value.trim().length > 0 || !!photo;
   $('sendBtn').style.display = has ? '' : 'none';
   mic.style.display = has ? 'none' : '';
+  $('voiceBtn').style.display = has ? 'none' : '';
   $('chips').style.display = has || rec ? 'none' : '';
 }
 input.addEventListener('input', () => { grow(); updateButtons(); });
@@ -573,8 +766,17 @@ async function refreshStatus() {
     if (s.playing) bits.push('playing ' + s.playing);
     if (s.quietUntil) bits.push('quiet until ' + s.quietUntil);
     $('status').innerHTML = '<i class="' + (s.active ? 'on' : '') + '"></i>' + esc(bits.join(' · '));
-  } catch (e) { if (e.message !== 'not paired') $('status').innerHTML = '<i></i>can’t reach your computer'; }
+    $('offline').classList.remove('show');
+    // it naps when the computer's been left alone a while
+    const rest = s.idleSeconds > 900 ? 'sleep' : 'content';
+    if (rest !== restingMood) { restingMood = rest; if (!busy && !$('av').classList.contains('think')) mood(rest); }
+  } catch (e) {
+    if (e.message === 'not paired') return;
+    $('status').innerHTML = '<i></i>can’t reach your computer';
+    $('offline').classList.add('show');
+  }
 }
+$('retryConn').onclick = async () => { $('retryConn').textContent = 'Trying…'; await refreshStatus(); if (!$('offline').classList.contains('show')) loadHistory(); $('retryConn').textContent = 'Retry'; };
 const ago = s => s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 86400 ? Math.round(s / 3600) + 'h' : Math.round(s / 86400) + 'd';
 
 // ---------- sheets ----------
@@ -675,16 +877,51 @@ async function togglePush() {
   pushState();
 }
 
-$('screenBtn').onclick = () => { open('screenSheet'); loadScreen(); };
-$('screenRefresh').onclick = loadScreen;
-async function loadScreen() {
-  $('screenBody').innerHTML = '<div class="wait">looking at your computer…</div>'; $('screenAt').textContent = '';
-  try {
-    const s = await api('api/screen');
-    $('screenBody').innerHTML = s.images.map(src => '<img src="' + src + '" alt="">').join('');
-    $('screenAt').textContent = s.at;
-  } catch (e) { $('screenBody').innerHTML = '<div class="wait">' + esc(e.message) + '</div>'; }
+// ---------- the computer's screen, live: tap to click, type, keys, scroll ----------
+const scr = { open: false, index: 0, count: 1, busy: false, timer: null };
+function showShot(r) {
+  const s = (r.screens || [])[0];
+  if (s && s.src) { $('shot').src = s.src; scr.index = s.index; }
+  scr.count = r.count || 1;
+  $('screenTabs').innerHTML = scr.count > 1 ? Array.from({ length: scr.count }, (_, i) => '<button data-scr="' + i + '" class="' + (i === scr.index ? 'on' : '') + '">screen ' + (i + 1) + '</button>').join('') : '';
 }
+async function refreshShot() {
+  if (!scr.open || scr.busy || document.hidden) return;
+  try { showShot(await api('api/screen?screen=' + scr.index)); $('live').style.opacity = 1; }
+  catch (e) { $('live').style.opacity = .3; }
+}
+function liveLoop() { clearTimeout(scr.timer); if (!scr.open) return; refreshShot().then(() => scr.timer = setTimeout(liveLoop, 1100)); }
+$('screenBtn').onclick = () => { open('screenSheet'); scr.open = true; liveLoop(); };
+$('screenSheet').querySelector('[data-close]').addEventListener('click', () => { scr.open = false; clearTimeout(scr.timer); $('typeBar').classList.remove('show'); });
+$('screenTabs').onclick = e => { const b = e.target.closest('[data-scr]'); if (b) { scr.index = +b.dataset.scr; refreshShot(); } };
+async function act(body) {
+  scr.busy = true;
+  try { showShot(await api('api/screen/act', { json: Object.assign({ screen: scr.index }, body) })); }
+  catch (e) { toast(e.message); }
+  scr.busy = false;
+}
+// taps: one = click, two quick ones = double-click, hold = right-click
+let tap = null, tapTimer = null;
+const shot = $('shot');
+function spot(e) { const r = shot.getBoundingClientRect(); return { x: (e.clientX - r.left) / r.width, y: (e.clientY - r.top) / r.height, px: e.clientX - r.left, py: e.clientY - r.top }; }
+function ripple(p) { const d = $('tapdot'); d.style.left = p.px + 'px'; d.style.top = p.py + 'px'; d.classList.remove('go'); void d.offsetWidth; d.classList.add('go'); }
+shot.addEventListener('pointerdown', e => { tap = { t: Date.now(), x: e.clientX, y: e.clientY, p: spot(e), held: false }; tap.hold = setTimeout(() => { if (!tap) return; tap.held = true; ripple(tap.p); act({ do: 'right', x: tap.p.x, y: tap.p.y }); }, 550); });
+shot.addEventListener('pointermove', e => { if (tap && Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 10) { clearTimeout(tap.hold); tap = null; } });   // a pan, not a tap
+shot.addEventListener('pointerup', () => {
+  if (!tap) return;
+  clearTimeout(tap.hold);
+  const t = tap; tap = null;
+  if (t.held) return;
+  ripple(t.p);
+  if (tapTimer) { clearTimeout(tapTimer); tapTimer = null; act({ do: 'double', x: t.p.x, y: t.p.y }); return; }
+  tapTimer = setTimeout(() => { tapTimer = null; act({ do: 'click', x: t.p.x, y: t.p.y }); }, 260);
+});
+shot.addEventListener('contextmenu', e => e.preventDefault());
+$('zoomBtn').onclick = () => { $('view').classList.toggle('zoomed'); $('zoomBtn').classList.toggle('on'); $('screenHint').style.display = $('view').classList.contains('zoomed') ? 'none' : ''; };
+$('kbBtn').onclick = () => { $('typeBar').classList.toggle('show'); $('kbBtn').classList.toggle('on'); if ($('typeBar').classList.contains('show')) $('typeText').focus(); };
+$('typeBar').onsubmit = e => { e.preventDefault(); const t = $('typeText').value; if (!t) return; $('typeText').value = ''; act({ do: 'type', text: t }); };
+document.querySelectorAll('[data-key]').forEach(b => b.onclick = () => act({ do: 'key', key: b.dataset.key }));
+document.querySelectorAll('[data-scroll]').forEach(b => b.onclick = () => act({ do: 'scroll', x: 0.5, y: 0.5, dy: +b.dataset.scroll * 400 }));
 
 // ---------- install hint ----------
 const standalone = navigator.standalone || matchMedia('(display-mode: standalone)').matches;
@@ -698,9 +935,17 @@ if ('serviceWorker' in navigator) {
     .catch(err => document.documentElement.dataset.sw = 'failed: ' + err.message);
   navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'refresh' && !busy) loadHistory(); });
 }
+// opening the app clears the badge and the notifications it's already showing
+function clearBadge() {
+  try { if (navigator.clearAppBadge) navigator.clearAppBadge(); } catch (_) {}
+  if ('serviceWorker' in navigator) navigator.serviceWorker.getRegistration().then(r => r && r.getNotifications && r.getNotifications().then(ns => ns.forEach(n => n.close()))).catch(() => {});
+}
+clearBadge();
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
+  clearBadge();
+  if (scr.open) liveLoop();
   refreshStatus();
   if (hiddenAt && Date.now() - hiddenAt > 30000 && !busy && key) loadHistory();
 });
@@ -713,6 +958,7 @@ else {
   if (location.hash === '#screen') $('screenBtn').click();
   if (location.hash === '#controls') $('controlsBtn').click();
   if (location.hash === '#plus') $('photoBtn').click();
+  if (location.hash === '#talk') voiceStart();
 }
 updateButtons();
 })();

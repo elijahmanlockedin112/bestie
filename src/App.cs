@@ -890,9 +890,20 @@ namespace Bestie
             finished.Clear();
         }
 
-        /// <summary>The phone app's icon: the creature, smiling, on a pale tint of its own colour. Any thread (draws on the UI thread).</summary>
-        byte[] PhoneIcon(int size)
+        /// <summary>The phone app's icon and moods: the creature with this face on a pale tint of its own colour. Any
+        /// thread (draws on the UI thread).</summary>
+        byte[] PhoneIcon(int size, string mood)
         {
+            Face face;
+            switch (mood)
+            {
+                case "think": face = Face.Think; break;
+                case "sleep": face = Face.Sleep; break;
+                case "surprised": face = Face.Surprised; break;
+                case "content": face = Face.Content; break;
+                case "normal": face = Face.Normal; break;
+                default: face = Face.Happy; break;
+            }
             return (byte[])Invoke(new Func<byte[]>(delegate
             {
                 using (var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
@@ -903,8 +914,8 @@ namespace Bestie
                         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                         g.Clear(Renderer.Hsl(brain.Looks.Hue, 0.32, 0.90, 255));
                         int inner = (int)(size * 0.86);
-                        using (Bitmap face = Portrait.Make(brain, inner, Face.Happy))
-                            g.DrawImage(face, (size - inner) / 2, (int)(size * 0.06), inner, inner);
+                        using (Bitmap portrait = Portrait.Make(brain, inner, face))
+                            g.DrawImage(portrait, (size - inner) / 2, (int)(size * 0.06), inner, inner);
                     }
                     using (var ms = new System.IO.MemoryStream()) { bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png); return ms.ToArray(); }
                 }
