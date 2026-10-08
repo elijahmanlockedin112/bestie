@@ -158,6 +158,18 @@ namespace Bestie
 
         // ================================================================== what bestie can see
 
+        /// <summary>Asks the office to start one of its listed projects (its static sites need its file server). True if it took it.</summary>
+        public static bool StartLauncher(string id)
+        {
+            try
+            {
+                var s = Get("/api/state", 5000);
+                Send("POST", "/api/launchers/" + Uri.EscapeDataString(id) + "/start", new Dictionary<string, object>(), Json.Str(s, "token"), 60000);
+                return true;
+            }
+            catch (Exception ex) { DebugLog.Write("office: launcher " + id + ": " + ex.Message); return false; }
+        }
+
         /// <summary>Today's totals from the office's last look (false while it's closed).</summary>
         public static bool TodayCounts(out int steps, out int files, out int projects)
         {

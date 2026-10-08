@@ -13,9 +13,39 @@ namespace Bestie
 {
     static class Program
     {
+        /// <summary>Everything Bestie starts (project launchers, claude, powershell) inherits its environment. When it was
+        /// started from a tool session (a Claude Code shell, a terminal) that environment carries the tool's settings:
+        /// NoDefaultCurrentDirectoryInExePath stops batch files from running a sibling script by name (their launchers
+        /// die instantly), and CLAUDECODE makes claude think it's nested. So: the user's own Windows environment.</summary>
+        static void CleanEnvironment()
+        {
+            try
+            {
+                foreach (System.Collections.DictionaryEntry e in Environment.GetEnvironmentVariables())
+                {
+                    string name = (string)e.Key;
+                    if (name.Equals("NoDefaultCurrentDirectoryInExePath", StringComparison.OrdinalIgnoreCase) || name.Equals("CLAUDECODE", StringComparison.OrdinalIgnoreCase)
+                        || name.StartsWith("CLAUDE_", StringComparison.OrdinalIgnoreCase) || name.Equals("ANTHROPIC_BASE_URL", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("GIT_EDITOR", StringComparison.OrdinalIgnoreCase) || name.Equals("GIT_TERMINAL_PROMPT", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("GIT_ASKPASS", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // only if it isn't one of their own saved variables
+                        if (Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.User) == null && Environment.GetEnvironmentVariable(name, EnvironmentVariableTarget.Machine) == null)
+                            Environment.SetEnvironmentVariable(name, null);
+                    }
+                }
+                // PATH as Windows would give it (a tool session prepends its own folders)
+                string machine = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.Machine) ?? "";
+                string user = Environment.GetEnvironmentVariable("Path", EnvironmentVariableTarget.User) ?? "";
+                if (machine.Length > 0) Environment.SetEnvironmentVariable("Path", Environment.ExpandEnvironmentVariables(machine + ";" + user));
+            }
+            catch { }
+        }
+
         [STAThread]
         static int Main(string[] args)
         {
+            CleanEnvironment();
             Native.MakeDpiAware();
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);

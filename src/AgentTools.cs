@@ -41,7 +41,11 @@ namespace Bestie
                 P("task", "string", "the full job, in detail, as they described it"),
                 PE("kind", "code: software in a project folder. other: research, writing or analysis (works in their Downloads folder)", new[] { "code", "other" }),
                 P("project", "string", "for code: an existing project's folder name if it's about one of theirs, else a short kebab-case name for a new one")));
-            t.Add(Tool("start_project", "start one of their apps or servers (synaptic, spark lab, ascent, ffa quiz drill, ai playground lab, ...) and open it in the browser.", R("name"),
+            t.Add(Tool("start_project", "start one of their apps or servers (synaptic, jev day trader, bible study, spark lab, ascent, ...) and open it in the browser. it waits for "
+                + "the server itself and announces when it's up (or what went wrong), so call it once and don't check on it. the jev day trader only ever paper-trades "
+                + "(practice money): starting it is fine.", R("name"),
+                P("name", "string", "the project, as they said it")));
+            t.Add(Tool("stop_project", "stop one of their running servers (by its port), e.g. when they say stop synaptic or shut down the trading bot.", R("name"),
                 P("name", "string", "the project, as they said it")));
             t.Add(Tool("use_computer", "operate their computer yourself (mouse, keyboard, screen) for anything the other tools don't cover: using apps, clicking through "
                 + "websites, settings in apps, filling in things, and finishing what another tool couldn't. it takes over the mouse and keyboard until done; they can "
@@ -63,6 +67,7 @@ namespace Bestie
                 case "play_music": return PlayMusic(Json.Str(a, "kind") ?? "track", Json.Str(a, "title") ?? Json.Str(a, "query") ?? "", Json.Str(a, "artist") ?? "");
                 case "delegate_to_claude": return DelegateToClaude(Json.Str(a, "task") ?? "", Json.Str(a, "project") ?? "", Json.Str(a, "kind") != "other");
                 case "start_project": return StartProject(Json.Str(a, "name") ?? "");
+                case "stop_project": return StopProject(Json.Str(a, "name") ?? "");
                 case "media_control": return MediaControl(Json.Str(a, "action") ?? "", (int)Json.Num(a, "times", 1));
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
@@ -338,20 +343,206 @@ namespace Bestie
             Dictionary<string, object> p = hub.FirstOrDefault(x => Norm(Json.Str(x, "id")) == want || Norm(Json.Str(x, "name")) == want)
                 ?? hub.FirstOrDefault(x => Norm(Json.Str(x, "name")).Contains(want) || Norm(Json.Str(x, "id")).Contains(want) || want.Contains(Norm(Json.Str(x, "id"))));
             if (p != null) return StartHubProject(p);
-            // 2) a project with its own launcher (start-*.cmd / .bat)
+            // 2) a project with its own launcher (start-*.cmd / .bat): it opens its own window, which they can close to stop it
             string dir = ExistingProject(name);
-            if (dir != null)
+            Dictionary<string, object> entry = OfficeLaunchers().FirstOrDefault(x => Norm(Json.Str(x, "id")) == want || Norm(Json.Str(x, "name")) == want)
+                ?? OfficeLaunchers().FirstOrDefault(x => Norm(Json.Str(x, "name")).Contains(want) || Norm(Json.Str(x, "id")).Contains(want));
+            if (dir == null && entry != null) dir = Json.Str(entry, "dir");
+            if (dir != null && Directory.Exists(dir))
             {
                 string launcher = Directory.GetFiles(dir, "start*.cmd").Concat(Directory.GetFiles(dir, "start*.bat"))
                     .Where(f => !f.EndsWith(".example.cmd", StringComparison.OrdinalIgnoreCase)).OrderBy(f => f.Length).FirstOrDefault();
                 if (launcher != null)
                 {
-                    if (!DryRun) Process.Start(new ProcessStartInfo(launcher) { WorkingDirectory = dir, UseShellExecute = true });
-                    return new AssistantToolResult("ran " + Path.GetFileName(launcher) + " in " + dir + " (its window shows where it's running).", "started " + Path.GetFileName(dir), null);
+                    string text = "";
+                    try { text = File.ReadAllText(launcher); } catch { }
+                    Match m = Regex.Match(text, @"(?:PORT=|localhost:|127\.0\.0\.1:)(\d{3,5})", RegexOptions.IgnoreCase);
+                    int port = m.Success ? int.Parse(m.Groups[1].Value) : entry != null ? (int)Json.Num(entry, "port", 0) : 0;
+                    string label = entry != null ? Json.Str(entry, "name") : Path.GetFileName(dir);
+                    return StartWatched(label, dir, port, port > 0 ? "http://localhost:" + port + "/" : null, 90,
+                        () => Process.Start(new ProcessStartInfo(launcher) { WorkingDirectory = dir, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Minimized }),
+                        "ran " + Path.GetFileName(launcher) + " (its window is minimized in the taskbar; closing it stops the server)");
                 }
-                return new AssistantToolResult("found " + dir + " but it has no launcher (start-*.cmd). offer to have claude add one (delegate_to_claude), or use_computer.");
             }
-            return new AssistantToolResult("i don't know a project called \"" + name + "\". hub apps: " + string.Join(", ", hub.Select(x => Json.Str(x, "name")).ToArray()) + ".");
+            // 3) one the agent office knows how to run (port, command, environment)
+            if (entry != null && !Json.Bool(entry, "static", false) && Json.Str(entry, "cmd") != null) return StartFromOffice(entry);
+            if (entry != null && Json.Bool(entry, "static", false))
+            {
+                if (Office.Up && Office.StartLauncher(Json.Str(entry, "id")))
+                    return StartWatched(Json.Str(entry, "name"), Json.Str(entry, "dir"), (int)Json.Num(entry, "port", 0), "http://localhost:" + (int)Json.Num(entry, "port", 0) + (Json.Str(entry, "open") ?? "/"), 30, null, "vibe code central is serving it");
+                string page = Path.Combine(Json.Str(entry, "dir") ?? "", (Json.Str(entry, "open") ?? "index.html").TrimStart('/').Replace('/', '\\'));
+                if (File.Exists(page)) { LaunchUrl(page); return new AssistantToolResult("it's a page, so i opened " + page + " directly.", "opened " + Json.Str(entry, "name"), null); }
+            }
+            if (dir != null) return new AssistantToolResult("found " + dir + " but i don't know how to run it (no start-*.cmd launcher, and it isn't in the agent office's list). have claude add a launcher (delegate_to_claude), or use_computer.");
+            return new AssistantToolResult("i don't know a project called \"" + name + "\". hub apps: " + string.Join(", ", hub.Select(x => Json.Str(x, "name")).ToArray())
+                + ". the office knows: " + string.Join(", ", OfficeLaunchers().Select(x => Json.Str(x, "name")).Take(40).ToArray()) + ".");
+        }
+
+        [System.Runtime.InteropServices.DllImport("iphlpapi.dll")] static extern int GetExtendedTcpTable(IntPtr table, ref int size, bool sort, int af, int tableClass, int reserved);
+
+        /// <summary>The process listening on a local port, IPv4 or IPv6 (node often listens on IPv6 only). 0 if none.</summary>
+        static int PortOwner(int port)
+        {
+            // af, row size, where the port and the pid sit in a row (MIB_TCPROW_OWNER_PID / MIB_TCP6ROW_OWNER_PID)
+            foreach (int[] t in new[] { new[] { 2, 24, 8, 20 }, new[] { 23, 56, 20, 52 } })
+            {
+                int size = 0;
+                GetExtendedTcpTable(IntPtr.Zero, ref size, false, t[0], 3 /* TCP_TABLE_OWNER_PID_LISTENER */, 0);
+                if (size <= 0) continue;
+                IntPtr buf = System.Runtime.InteropServices.Marshal.AllocHGlobal(size);
+                try
+                {
+                    if (GetExtendedTcpTable(buf, ref size, false, t[0], 3, 0) != 0) continue;
+                    int rows = System.Runtime.InteropServices.Marshal.ReadInt32(buf);
+                    for (int i = 0; i < rows; i++)
+                    {
+                        IntPtr row = buf + 4 + i * t[1];
+                        int p = System.Runtime.InteropServices.Marshal.ReadInt32(row + t[2]);
+                        int localPort = ((p & 0xFF) << 8) | ((p >> 8) & 0xFF);   // network byte order
+                        if (localPort == port) return System.Runtime.InteropServices.Marshal.ReadInt32(row + t[3]);
+                    }
+                }
+                finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buf); }
+            }
+            return 0;
+        }
+
+        AssistantToolResult StopProject(string name)
+        {
+            string want = Norm(name);
+            if (want.Length < 2) return new AssistantToolResult("stop which one?");
+            int port = 0; string label = name;
+            var hub = HubProjects().FirstOrDefault(x => Norm(Json.Str(x, "id")) == want || Norm(Json.Str(x, "name")).Contains(want) || Norm(Json.Str(x, "id")).Contains(want));
+            var entry = OfficeLaunchers().FirstOrDefault(x => Norm(Json.Str(x, "id")) == want || Norm(Json.Str(x, "name")).Contains(want) || Norm(Json.Str(x, "id")).Contains(want));
+            if (hub != null) { port = (int)Json.Num(hub, "port", 0); label = Json.Str(hub, "name"); }
+            else if (entry != null) { port = (int)Json.Num(entry, "port", 0); label = Json.Str(entry, "name"); }
+            else
+            {
+                string dir = ExistingProject(name);
+                string launcher = dir == null ? null : Directory.GetFiles(dir, "start*.cmd").OrderBy(f => f.Length).FirstOrDefault();
+                Match m = launcher == null ? Match.Empty : Regex.Match(File.ReadAllText(launcher), @"(?:PORT=|localhost:)(\d{3,5})");
+                if (m.Success) { port = int.Parse(m.Groups[1].Value); label = Path.GetFileName(dir); }
+            }
+            if (port <= 0) return new AssistantToolResult("i don't know which port " + name + " runs on, so i can't find it to stop.");
+            int pid = PortOwner(port);
+            if (pid == 0) return new AssistantToolResult(label + " isn't running (nothing on port " + port + ").");
+            string proc = "";
+            try { proc = Process.GetProcessById(pid).ProcessName.ToLowerInvariant(); } catch { }
+            if (pid == Process.GetCurrentProcess().Id || new[] { "system", "svchost", "lsass", "services", "wininit", "tailscaled", "sunshine" }.Contains(proc))
+                return new AssistantToolResult("port " + port + " belongs to " + proc + ", not " + label + "; leaving it alone.");
+            if (DryRun) return new AssistantToolResult("stopped.");
+            // the whole tree: a keepalive loop or npm wrapper would just start it again otherwise
+            int parent = 0;
+            try
+            {
+                using (var q = new System.Management.ManagementObjectSearcher("SELECT ParentProcessId FROM Win32_Process WHERE ProcessId=" + pid))
+                    foreach (System.Management.ManagementObject o in q.Get()) parent = Convert.ToInt32(o["ParentProcessId"]);
+            }
+            catch { }
+            string parentName = "";
+            try { if (parent > 0) parentName = Process.GetProcessById(parent).ProcessName.ToLowerInvariant(); } catch { }
+            int root = parentName == "cmd" || parentName == "node" || parentName == "npm" ? parent : pid;
+            Process.Start(new ProcessStartInfo("taskkill.exe", "/F /T /PID " + root) { UseShellExecute = false, CreateNoWindow = true }).WaitForExit(8000);
+            Thread.Sleep(800);
+            bool gone = !PortOpen(port);
+            DebugLog.Write("agent: stopped " + label + " (pid " + root + ") -> " + (gone ? "gone" : "still up"));
+            return new AssistantToolResult(gone ? "stopped " + label + "." : label + " is still answering on port " + port + "; something keeps restarting it.", gone ? "stopped " + label : null, null);
+        }
+
+        static readonly Dictionary<string, DateTime> startingNow = new Dictionary<string, DateTime>();
+
+        /// <summary>Starts something that should answer on a port, then (in the background) waits for it: opens it and says
+        /// it's up, or says it didn't come up with the last lines of its log. Never starts the same thing twice in 90 s.</summary>
+        AssistantToolResult StartWatched(string label, string dir, int port, string url, int bootSeconds, Action start, string how)
+        {
+            if (port > 0 && PortOpen(port))
+            {
+                if (url != null) LaunchUrl(url);
+                return new AssistantToolResult(label + " is already running" + (url != null ? "; opened " + url : "") + ".", "opened " + label, null);
+            }
+            string key = (label ?? dir ?? "").ToLowerInvariant();
+            lock (startingNow)
+            {
+                DateTime at;
+                if (startingNow.TryGetValue(key, out at) && (DateTime.UtcNow - at).TotalSeconds < 90)
+                    return new AssistantToolResult(label + " is still starting from " + (int)(DateTime.UtcNow - at).TotalSeconds + " s ago; don't start it again. you'll announce when it's up.");
+                startingNow[key] = DateTime.UtcNow;
+            }
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("start " + label); return new AssistantToolResult("starting."); }
+            DateTime launched = DateTime.Now;
+            try { if (start != null) start(); }
+            catch (Exception ex) { lock (startingNow) startingNow.Remove(key); return new AssistantToolResult("couldn't start " + label + ": " + ex.Message); }
+            DebugLog.Write("agent: starting " + label + (port > 0 ? " (port " + port + ")" : ""));
+            if (port <= 0)
+                return new AssistantToolResult(how + ". it doesn't say which port it uses, so check on it with look_at_screen or run_command if they ask.", "started " + label, null);
+            new Thread(delegate()
+            {
+                var sw = Stopwatch.StartNew();
+                while (sw.Elapsed.TotalSeconds < bootSeconds && !PortOpen(port)) Thread.Sleep(1000);
+                lock (startingNow) startingNow.Remove(key);
+                if (PortOpen(port))
+                {
+                    if (url != null) LaunchUrl(url);
+                    module.Announce(label + " is up" + (sw.Elapsed.TotalSeconds > 4 ? ", took " + (int)sw.Elapsed.TotalSeconds + " seconds" : "") + ".");
+                    return;
+                }
+                string tail = RecentLogTail(dir, launched);
+                DebugLog.Write("agent: " + label + " didn't come up on " + port + (tail != null ? ": " + tail : ""));
+                module.Announce(label + " didn't come up on port " + port + (tail != null ? ". its log says: " + tail : ". nothing in its log either."));
+            }) { IsBackground = true, Name = "bestie-start-watch" }.Start();
+            return new AssistantToolResult(how + ". it should answer on port " + port + " within " + bootSeconds + " s: you'll open it and announce when it's up (or say what went wrong). tell them it's starting; don't check on it yourself.",
+                "starting " + label, null);
+        }
+
+        /// <summary>The last few lines of whatever log the project wrote since it was started (its own log, or ours).</summary>
+        static string RecentLogTail(string dir, DateTime since)
+        {
+            try
+            {
+                var logs = new List<FileInfo>();
+                if (dir != null && Directory.Exists(dir))
+                    foreach (string sub in new[] { "", "data", "logs", ".claude", ".agent-office" })
+                        if (Directory.Exists(Path.Combine(dir, sub))) logs.AddRange(new DirectoryInfo(Path.Combine(dir, sub)).GetFiles("*.log"));
+                string ours = Path.Combine(Home.StateDir, "servers");
+                if (Directory.Exists(ours)) logs.AddRange(new DirectoryInfo(ours).GetFiles("*.log"));
+                FileInfo log = logs.Where(f => f.LastWriteTime >= since.AddSeconds(-2)).OrderByDescending(f => f.LastWriteTime).FirstOrDefault();
+                if (log == null) return null;
+                string[] lines;
+                using (var fs = new FileStream(log.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) using (var sr = new StreamReader(fs)) lines = sr.ReadToEnd().Split('\n');
+                return OpenAIClient.Trunc(string.Join(" / ", lines.Select(l => l.Trim()).Where(l => l.Length > 0).Reverse().Take(3).Reverse().ToArray()), 300);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>The agent office's list of their projects (vibe code central's launchers.json): name, folder, command, port.</summary>
+        static List<Dictionary<string, object>> OfficeLaunchers()
+        {
+            try
+            {
+                string file = Path.Combine(ProjectsDir, "Vibe Code Central", "launchers.json");
+                return ((Json.Parse(File.ReadAllText(file, Encoding.UTF8)) as object[]) ?? new object[0]).OfType<Dictionary<string, object>>().ToList();
+            }
+            catch { return new List<Dictionary<string, object>>(); }
+        }
+
+        /// <summary>Runs an office-listed project's command itself (hidden, output to a log Bestie keeps), with its environment.</summary>
+        AssistantToolResult StartFromOffice(Dictionary<string, object> entry)
+        {
+            string id = Json.Str(entry, "id"), dir = Json.Str(entry, "dir"), cmd = Json.Str(entry, "cmd"), name = Json.Str(entry, "name") ?? id;
+            int port = (int)Json.Num(entry, "port", 0), boot = (int)Json.Num(entry, "boot", 60);
+            if (dir == null || !Directory.Exists(dir)) return new AssistantToolResult(name + "'s folder isn't there (" + dir + ").");
+            string logDir = Path.Combine(Home.StateDir, "servers");
+            Directory.CreateDirectory(logDir);
+            string log = Path.Combine(logDir, id + ".log");
+            return StartWatched(name, dir, port, port > 0 ? "http://localhost:" + port + (Json.Str(entry, "open") ?? "/") : null, Math.Max(30, boot), () =>
+            {
+                var psi = new ProcessStartInfo("cmd.exe", "/d /s /c \"" + cmd + " >> \"" + log + "\" 2>&1\"") { WorkingDirectory = dir, UseShellExecute = false, CreateNoWindow = true };
+                var env = Json.Obj(entry, "env");
+                if (env != null) foreach (var kv in env) psi.EnvironmentVariables[kv.Key] = Convert.ToString(kv.Value);
+                if (port > 0 && !psi.EnvironmentVariables.ContainsKey("PORT")) psi.EnvironmentVariables["PORT"] = port.ToString();
+                File.AppendAllText(log, "\r\n--- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " bestie started: " + cmd + "\r\n");
+                Process.Start(psi);
+            }, "started " + name + " in the background (no window; say \"stop " + name.ToLowerInvariant() + "\" to stop it)");
         }
 
         static List<Dictionary<string, object>> HubProjects()
