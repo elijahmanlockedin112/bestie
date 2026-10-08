@@ -183,6 +183,7 @@ namespace Bestie
                     case "new_ai_chat": return NewAiChat(a, ctx);
                     case "organize_brain_dump": return OrganizeBrainDump(s, ctx);
                     case "time_blocks": return TimeBlocksTool(a);
+                    case "my_routines": return RoutinesTool(a, s, ctx);
                     case "start_brain_dump":
                         module.QueueBrainDump();
                         return new AssistantToolResult("ok: as soon as your reply finishes, i start listening for up to 8 minutes. reply with ONE short line "

@@ -76,6 +76,7 @@ namespace Bestie
             AddPhoneTools(t);
             AddPhoneLinkTools(t);
             AddAlexaTools(t);
+            AddRoutineTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
