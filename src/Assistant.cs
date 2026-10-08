@@ -1609,18 +1609,19 @@ namespace Bestie
                 transcribing = true;
                 AssistantSettings s = settings;
                 string[] words = wakeWords ?? new string[0];
-                // the audio is sent as-is (no re-encode); captures start now, alongside the transcription
                 var timing = new VoiceTiming("wake word");
-                ScreenJob screens = StartScreensIfWanted(s, WavSeconds(wav));
-                tts.Stop();   // ("hm." waits until the transcript shows it really was its name)
-                var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, screens, timing); });
+                // most triggers are false alarms (music, videos, people talking: ~30 an hour), so nothing visible or costly
+                // happens yet: no screenshots, no stopping its voice. only where they pointed is noted now (it looks back
+                // over the last few seconds); the screens are grabbed once the transcript says it really was its name.
+                PointerGesture gesture = LegacyVoicePathForTests ? null : Pointer.Collect(WavSeconds(wav) + 1);
+                var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, gesture, timing); });
                 t.IsBackground = true;
                 t.Name = "bestie-wake";
                 t.Start();
             });
         }
 
-        void HandleWakeAudio(byte[] wav, string[] wakeWords, AssistantSettings s, ScreenJob screens, VoiceTiming timing)
+        void HandleWakeAudio(byte[] wav, string[] wakeWords, AssistantSettings s, PointerGesture gesture, VoiceTiming timing)
         {
             string text;
             try { text = TranscribeAudio(wav, s); }
@@ -1635,7 +1636,13 @@ namespace Bestie
             }
             timing.Mark("transcript");
             transcribing = false;
-            Post(delegate { SpokenTextCore(text, wakeWords, screens, timing, true, true); });
+            Post(delegate
+            {
+                if (!SaysName(text, wakeWords)) { SpokenTextCore(text, wakeWords, null, timing, true, true); return; }   // a false alarm: it stays quiet
+                ScreenJob screens = null;
+                if (gesture != null && (s.AutoLookScreens || gesture.Valid)) screens = ScreenJob.Start(1280, gesture, s.AutoLookScreens);
+                SpokenTextCore(text, wakeWords, screens, timing, true, true);
+            });
         }
 
         /// <summary>Handle already-transcribed speech exactly like a voice message (reply in the bubble, spoken,
