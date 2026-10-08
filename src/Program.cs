@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -53,6 +54,8 @@ namespace Bestie
 
             // developer tools
             if (args.Length >= 2 && args[0] == "--sheet") { Tools.Sheet(args[1]); return 0; }
+            if (args.Length >= 2 && args[0] == "--shopsheet") { Tools.ShopSheet(args[1]); return 0; }
+            if (args.Length >= 2 && args[0] == "--shopwindow") { Tools.ShopWindow(args[1]); return 0; }
             if (args.Length >= 3 && args[0] == "--simulate") { Tools.Simulate(double.Parse(args[1]), args[2]); return 0; }
             if (args.Length >= 2 && args[0] == "--icon") { Tools.WriteIcon(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--diary") { Tools.DiaryImage(args[1]); return 0; }
@@ -160,6 +163,77 @@ namespace Bestie
     static class Tools
     {
         /// <summary>Render a sheet of poses and looks to a PNG, to check the art.</summary>
+        /// <summary>The shop's art on the real creature (from a temp copy of its brain): a full turn of the jump rope,
+        /// reading, eating toast, and every wearable. For checking the drawings.</summary>
+        public static void ShopSheet(string path)
+        {
+            string tmp = Path.Combine(Path.GetTempPath(), "bestie-shopsheet-brain.json");
+            File.Copy(Home.State("brain.json"), tmp, true);
+            var brain = Brain.Load(tmp);
+            var c = new Creature(brain, 0) { S = 2 };
+            var cells = new List<Action<Graphics, float, float>>();
+            var labels = new List<string>();
+            Action<string, Action> add = (label, setup) =>
+            {
+                labels.Add(label);
+                cells.Add((g, x, y) => { setup(); Renderer.DrawCreature(g, c, x, y); });
+            };
+            for (int i = 0; i < 6; i++)
+            {
+                double ti = i * 0.62 / 6;
+                add("rope " + (i * 60) + "°", () => { Clock.T = ti; c.Pose = Pose.JumpRope; c.Face = Face.Happy; c.PreviewWear = new Dictionary<string, string>(); });
+            }
+            add("read", () => { Clock.T = 1.3; c.Pose = Pose.Read; c.Face = Face.Content; c.PageFlip = 0; });
+            add("read (page)", () => { Clock.T = 1.3; c.Pose = Pose.Read; c.Face = Face.Content; c.PageFlip = 0.5; });
+            foreach (double b in new[] { 1, 0.66, 0.33 })
+            {
+                double bb = b;
+                add("toast " + (int)(bb * 100) + "%", () => { Clock.T = 1.3; c.Pose = Pose.Eat; c.Face = Face.Happy; c.Bites = bb; c.PageFlip = 0; });
+            }
+            foreach (string w in new[] { "partyhat", "beanie", "bow", "crown", "shades" })
+            {
+                string ww = w;
+                add(ww, () =>
+                {
+                    Clock.T = 1.3; c.Pose = Pose.Stand; c.Face = Face.Normal; c.Bites = 0;
+                    var item = Shop.Find(ww);
+                    c.PreviewWear = new Dictionary<string, string> { { item.Slot, item.Id } };
+                });
+            }
+            add("crown + shades", () => { c.Pose = Pose.Stand; c.PreviewWear = new Dictionary<string, string> { { "head", "crown" }, { "face", "shades" } }; });
+            add("beanie + rope", () => { Clock.T = 0.31; c.Pose = Pose.JumpRope; c.Face = Face.Happy; c.PreviewWear = new Dictionary<string, string> { { "head", "beanie" } }; });
+            int cell = 170, cols = 6, rows = (cells.Count + cols - 1) / cols;
+            using (var bmp = new Bitmap(cell * cols, cell * rows))
+            using (var g = Graphics.FromImage(bmp))
+            using (var font = new Font("Segoe UI", 10))
+            {
+                g.Clear(Color.FromArgb(238, 240, 245));
+                for (int i = 0; i < cells.Count; i++)
+                {
+                    float x = (i % cols) * cell, y = (i / cols) * cell;
+                    c.Rot = 0; c.Squash = 0; c.LookX = 0.5; c.LookY = 0.2;
+                    cells[i](g, x + cell / 2, y + cell - 30);
+                    g.DrawString(labels[i], font, Brushes.DimGray, x + 6, y + 4);
+                }
+                bmp.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+            }
+            try { File.Delete(tmp); } catch { }
+        }
+
+        /// <summary>The shop window, painted from a temp copy of the brain with some crumbs and things, in three states.</summary>
+        public static void ShopWindow(string pathStem)
+        {
+            string tmp = Path.Combine(Path.GetTempPath(), "bestie-shopwindow-brain.json");
+            File.Copy(Home.State("brain.json"), tmp, true);
+            var brain = Brain.Load(tmp);
+            Clock.T = 0.31;
+            brain.Crumbs = 52; brain.Owned = new List<string> { "jumprope", "beanie" }; brain.Wearing = new Dictionary<string, string> { { "head", "beanie" } };
+            ShopForm.RenderTo(brain, 1.25f, -1, -1, pathStem + "-start.png");
+            ShopForm.RenderTo(brain, 1.25f, 0, 0, pathStem + "-rope.png");
+            ShopForm.RenderTo(brain, 1.25f, 7, 7, pathStem + "-crown.png");
+            try { File.Delete(tmp); } catch { }
+        }
+
         public static void Sheet(string path)
         {
             Clock.T = 1.3;

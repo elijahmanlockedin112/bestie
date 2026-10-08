@@ -24,12 +24,13 @@ namespace Bestie
 
     public enum Mode { Ground, Air, Wall, Ceiling, Held, Hidden, Egg }
     public enum Face { Normal, Happy, Sleep, Dizzy, Surprised, Squint, Content, Think }
-    public enum Pose { Stand, Walk, Sit, Lie, Dance, Sing, Sniff, Peek, Climb, Held, Crouch, Egg, Wave, Exercise, Sunbathe, Spin }
+    public enum Pose { Stand, Walk, Sit, Lie, Dance, Sing, Sniff, Peek, Climb, Held, Crouch, Egg, Wave, Exercise, Sunbathe, Spin, JumpRope, Read, Eat }
 
     public class Particle
     {
-        public string Kind;         // z, heart, star, note, dust, puff, bang, what, sweat, sparkle
+        public string Kind;         // z, heart, star, note, dust, puff, bang, what, sweat, sparkle, crumb
         public double X, Y, VX, VY, Life, MaxLife, Size, Rot;
+        public string Text;         // crumb: "+3"
     }
 
     /// <summary>The little weirdo: body physics, senses and the bits of mind that react to things.
@@ -71,6 +72,10 @@ namespace Bestie
         public double Rot, RotTarget, Tilt, WalkPhase, Blink, Blush, ArmWave, Talk;
         public double Squash, SquashV, Antenna, AntennaV, LookX, LookY, SpinPhase;
         public bool Sunglasses;
+        public double Bites;       // Pose.Eat: how much toast is left (1 = a whole slice)
+        public double PageFlip;    // Pose.Read: >0 while a page is turning
+        /// <summary>The shop's try-on: worn instead of what it really wears (slot -> item id). Null = the real outfit.</summary>
+        public Dictionary<string, string> PreviewWear;
         public double Alpha = 1;
         double blinkTimer = 3, lookTX, lookTY, lastVX, lastAnimX, lastAnimY;
         public bool Moving;
@@ -807,6 +812,14 @@ namespace Bestie
             return new Wait(Math.Min(dur, 2.5), null);
         }
 
+        /// <summary>"+n" and a crumb float up from its head: crumbs earned.</summary>
+        public void EmitCrumbs(int n)
+        {
+            if (n <= 0) return;
+            double hy = Mode == Mode.Ceiling ? Y + BodyH : Y - BodyH;
+            Particles.Add(new Particle { Kind = "crumb", Text = "+" + n, X = X + 6 * S, Y = hy - 10 * S, VX = 4 * S, VY = -22 * S, Life = 1.7, MaxLife = 1.7, Size = 1 });
+        }
+
         public void Emit(string kind, int n)
         {
             double hx = X, hy = Y - BodyH;
@@ -838,6 +851,7 @@ namespace Bestie
             // squash-and-stretch spring
             SquashV += (-140 * Squash - 9 * SquashV) * dt;
             Squash += SquashV * dt;
+            if (PageFlip > 0) PageFlip = Math.Max(0, PageFlip - dt * 1.8);
 
             // antenna / topper spring, pushed around by acceleration
             double accel = (VX - lastVX) / Math.Max(dt, 0.001);

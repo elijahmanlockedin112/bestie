@@ -84,6 +84,12 @@ namespace Bestie
         // react while you dictate / let the assistant see recent dictations (off: it's personal)
         public bool WisprVoice = true, WisprWake = true, WisprListen = true, WisprShare;
         public double Trust;   // -1 (scared of the cursor) .. 1 (loves it)
+        // crumbs (see Crumbs.cs / Shop.cs): earned by focusing, using it and petting it; spent in the shop
+        public int Crumbs, CrumbsEver, ToastsEaten;
+        public List<string> Owned = new List<string>();
+        public Dictionary<string, string> Wearing = new Dictionary<string, string>();   // slot ("head", "face") -> item id
+        public string CrumbDay;
+        public Dictionary<string, int> CrumbsToday = new Dictionary<string, int>();     // reason -> earned today (for the daily caps)
 
         [ScriptIgnore] public string FilePath;
 
@@ -145,6 +151,9 @@ namespace Bestie
             if (Rituals == null) Rituals = new List<Ritual>();
             if (Thoughts == null) Thoughts = new List<Thought>();
             if (WakeNames == null) WakeNames = new List<string> { "bestie" };
+            if (Owned == null) Owned = new List<string>();
+            if (Wearing == null) Wearing = new Dictionary<string, string>();
+            if (CrumbsToday == null) CrumbsToday = new Dictionary<string, int>();
             foreach (var r in Rituals) { if (r.Acts == null) r.Acts = new List<string>(); if (r.Places == null) r.Places = new List<string>(); }
         }
 
@@ -439,6 +448,8 @@ namespace Bestie
             { "count", new[] { "Census", "Headcount", "Tally" } },
             { "boop", new[] { "Boop", "Edge Check" } },
             { "sunbathe", new[] { "Sunbath", "Bask" } },
+            { "jumprope", new[] { "Skip", "Rope Session", "Hop-a-thon" } },
+            { "read", new[] { "Book Club", "Reading Hour", "Chapter" } },
             { "wander", new[] { "Stroll", "Mosey" } },
             { "explore", new[] { "Expedition", "Survey" } },
             { "visit", new[] { "Visit", "Hello Walk" } },

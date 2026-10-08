@@ -70,7 +70,7 @@ namespace Bestie
 
             if (c.Pose == Pose.Egg) { DrawEgg(g, c, s, t); g.Restore(saved); return; }
 
-            double rot = c.Rot + c.Tilt, sq = c.Squash, bob = 0;
+            double rot = c.Rot + c.Tilt, sq = c.Squash, bob = 0, rope = double.NaN;
             int facing = c.Facing;
             double armB = 25, armF = 25;     // arm angles: 0 = straight down, 90 = sideways, 180 = up
             bool moving = c.Moving || c.Pose == Pose.Walk;
@@ -97,6 +97,18 @@ namespace Bestie
                 case Pose.Exercise: armB = armF = 90 + c.Squash * 120; break;
                 case Pose.Spin: facing = Math.Sin(t * 16) > 0 ? 1 : -1; bob = -Math.Abs(Math.Sin(t * 8)) * 3; armB = armF = 100; break;
                 case Pose.Climb: armB = 150 + Math.Sin(c.WalkPhase) * 25; armF = 150 - Math.Sin(c.WalkPhase) * 25; break;
+                case Pose.JumpRope:
+                    {
+                        // one turn of the rope every 0.62 s; it hops exactly when the rope passes under its feet
+                        rope = t * 2 * Math.PI / 0.62;
+                        double under = Math.Max(0, -Math.Cos(rope));
+                        bob = -Math.Pow(under, 1.6) * 9;
+                        sq += Math.Pow(Math.Max(0, Math.Cos(rope)), 6) * 0.12 - under * 0.06;   // crouch to push off, stretch in the air
+                        armB = armF = 52 + Math.Sin(rope) * 14;
+                        break;
+                    }
+                case Pose.Read: sq += 0.12; armB = armF = 72; break;
+                case Pose.Eat: sq += 0.12 + (c.Bites < 1 ? Math.Abs(Math.Sin(t * 13)) * 0.04 : 0); armB = 40; armF = 118; break;   // toast up to its mouth
             }
             if (c.Face == Face.Dizzy) rot += Math.Sin(t * 6) * 7;
             if (c.Vibing) { bob -= Math.Abs(Math.Sin(t * 6.3)) * 2.2; rot += Math.Sin(t * 3.15) * 5; armF = 60 + Math.Sin(t * 6.3) * 20; }   // bopping along to your music
@@ -114,6 +126,12 @@ namespace Bestie
             double lx = (c.LookX * Math.Cos(r) - c.LookY * Math.Sin(r)) * facing;
             double ly = c.LookX * Math.Sin(r) + c.LookY * Math.Cos(r);
             if (c.Pose == Pose.Peek) { lx = 0.5; ly = 0.9; }
+            if (c.Pose == Pose.Read) { lx = 0.35; ly = 0.75; }   // eyes on the page
+            if (c.Pose == Pose.Eat) { lx = 0.6; ly = 0.3; }      // eyes on the toast
+
+            // the rope's back half goes behind everything; its front half is drawn after the body
+            var beforeBody = g.Save();
+            if (!double.IsNaN(rope) && Math.Sin(rope) < 0) DrawRope(g, s, facing, rope);
 
             Color body = Hsl(looks.Hue, looks.Sat, looks.Light, 255);
             Color light = Hsl(looks.Hue, looks.Sat * 0.9, Math.Min(0.9, looks.Light + 0.1), 255);
@@ -146,9 +164,10 @@ namespace Bestie
                 }
             }
 
+            string hat = Worn(c, "head");
             using (var pen = new Pen(dark, 2.1f) { LineJoin = LineJoin.Round })
             {
-                DrawTopper(g, c, looks, t, pen, body, dark);
+                if (hat == null || hat == "bow") DrawTopper(g, c, looks, t, pen, body, dark);   // a hat covers the sprout
 
                 using (var path = BodyPath(looks.Round, t))
                 {
@@ -175,9 +194,245 @@ namespace Bestie
                 DrawArm(g, -21, -17, armB, -1, body, pen);
                 DrawArm(g, 22, -17, armF, 1, body, pen);
                 DrawFace(g, c, looks, t, lx, ly, dark);
+                if (hat != null) DrawHat(g, hat, t, looks);
+                if (c.Pose == Pose.Read) DrawBook(g, c.PageFlip, looks);
+                if (c.Pose == Pose.Eat) DrawToast(g, c.Bites);
                 if (c.Halo > 0.02) DrawHalo(g, c.Halo, t);
             }
+            if (!double.IsNaN(rope) && Math.Sin(rope) >= 0) { g.Restore(beforeBody); DrawRope(g, s, facing, rope); }
             g.Restore(saved);
+        }
+
+        /// <summary>What it has on in a slot (the shop's try-on wins over the real outfit), or null.</summary>
+        public static string Worn(Creature c, string slot)
+        {
+            var wear = c.PreviewWear ?? c.Brain.Wearing;
+            string id;
+            return wear != null && wear.TryGetValue(slot, out id) ? id : null;
+        }
+
+        /// <summary>The jump rope, in unsquashed body units (it shouldn't stretch with the body): from hand to hand through
+        /// a point going round the body. angle 0 = over its head, pi = under its feet.</summary>
+        static void DrawRope(Graphics g, float s, int facing, double angle)
+        {
+            var st = g.Save();
+            g.ScaleTransform(s * facing, s);
+            g.TranslateTransform(0, -3);
+            float hy = -12f + (float)Math.Sin(angle) * 1.5f;
+            var a = new PointF(-29, hy);
+            var b = new PointF(30, hy);
+            float apexY = (float)(-21 - 39 * Math.Cos(angle));
+            float cy = 2 * apexY - hy;                       // quadratic control point that puts the middle at the apex
+            var c1 = new PointF(a.X + (0 - a.X) * 2f / 3, a.Y + (cy - a.Y) * 2f / 3);
+            var c2 = new PointF(b.X + (0 - b.X) * 2f / 3, b.Y + (cy - b.Y) * 2f / 3);
+            using (var shadow = new Pen(Color.FromArgb(70, 60, 20, 30), 2.6f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawBezier(shadow, a.X, a.Y + 0.6f, c1.X, c1.Y + 0.6f, c2.X, c2.Y + 0.6f, b.X, b.Y + 0.6f);
+            using (var rope = new Pen(Hsl(352, 0.72, 0.56, 255), 1.7f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                g.DrawBezier(rope, a, c1, c2, b);
+            using (var wood = new SolidBrush(Hsl(28, 0.45, 0.42, 255)))
+            using (var edge = new Pen(Hsl(28, 0.5, 0.22, 255), 1.1f))
+                foreach (var h in new[] { a, b })
+                {
+                    FillRounded(g, wood, h.X - 2.6f, h.Y - 2, 5.2f, 8.5f, 2.4f);
+                    g.DrawEllipse(edge, h.X - 2.6f, h.Y - 2, 5.2f, 8.5f);
+                }
+            g.Restore(st);
+        }
+
+        /// <summary>Hats, in body units: the top of the head is about y -40.</summary>
+        static void DrawHat(Graphics g, string id, double t, Looks looks)
+        {
+            var st = g.Save();
+            using (var outline = new Pen(Color.FromArgb(255, 52, 40, 48), 1.6f) { LineJoin = LineJoin.Round })
+            {
+                switch (id)
+                {
+                    case "partyhat":
+                        {
+                            g.TranslateTransform(2, -36);
+                            g.RotateTransform(9 + (float)Math.Sin(t * 2.1) * 2);
+                            var cone = new[] { new PointF(-10, 0), new PointF(10, 0), new PointF(0, -27) };
+                            using (var path = new GraphicsPath())
+                            {
+                                path.AddPolygon(cone);
+                                using (var fill = new SolidBrush(Hsl(looks.Hue + 150, 0.7, 0.58, 255))) g.FillPath(fill, path);
+                                var clip = g.Clip;
+                                g.SetClip(path, CombineMode.Intersect);
+                                using (var stripe = new Pen(Color.FromArgb(235, 255, 248, 225), 3.2f))
+                                    for (float y = 2; y > -30; y -= 8) g.DrawLine(stripe, -14, y, 14, y - 7);
+                                g.Clip = clip;
+                                g.DrawPath(outline, path);
+                            }
+                            using (var pom = new SolidBrush(Hsl(48, 0.95, 0.66, 255))) g.FillEllipse(pom, -3.6f, -31, 7.2f, 7.2f);
+                            g.DrawEllipse(outline, -3.6f, -31, 7.2f, 7.2f);
+                            break;
+                        }
+                    case "beanie":
+                        {
+                            using (var dome = new GraphicsPath())
+                            {
+                                dome.AddArc(-19, -55, 38, 34, 180, 180);
+                                dome.CloseFigure();
+                                using (var knit = new SolidBrush(Hsl(8, 0.62, 0.5, 255))) g.FillPath(knit, dome);
+                                g.DrawPath(outline, dome);
+                            }
+                            using (var band = new SolidBrush(Hsl(8, 0.55, 0.42, 255))) FillRounded(g, band, -21, -42, 42, 8, 3.5f);
+                            using (var rib = new Pen(Color.FromArgb(90, 40, 10, 10), 1f))
+                                for (float x = -17; x <= 17; x += 4) g.DrawLine(rib, x, -41, x, -35.5f);
+                            DrawRounded(g, outline, -21, -42, 42, 8, 3.5f);
+                            using (var pom = new SolidBrush(Color.FromArgb(255, 250, 244, 230))) g.FillEllipse(pom, -5.5f, -60, 11, 11);
+                            g.DrawEllipse(outline, -5.5f, -60, 11, 11);
+                            break;
+                        }
+                    case "bow":
+                        {
+                            g.TranslateTransform(9, -39);
+                            g.RotateTransform(-12);
+                            using (var silk = new SolidBrush(Hsl(340, 0.78, 0.66, 255)))
+                            using (var fold = new SolidBrush(Hsl(340, 0.7, 0.52, 255)))
+                            {
+                                foreach (int dir in new[] { -1, 1 })
+                                {
+                                    var loop = new[] { new PointF(0, 0), new PointF(dir * 10, -6), new PointF(dir * 11, 5) };
+                                    g.FillPolygon(silk, loop);
+                                    g.FillPolygon(fold, new[] { new PointF(0, 0), new PointF(dir * 5, -2), new PointF(dir * 5.5f, 2.5f) });
+                                    g.DrawPolygon(outline, loop);
+                                }
+                                g.FillEllipse(fold, -3, -3, 6, 6);
+                                g.DrawEllipse(outline, -3, -3, 6, 6);
+                            }
+                            break;
+                        }
+                    case "crown":
+                        {
+                            g.TranslateTransform(0, -37);
+                            var shape = new[] { new PointF(-13, 0), new PointF(-14, -12), new PointF(-7, -6), new PointF(0, -15), new PointF(7, -6), new PointF(14, -12), new PointF(13, 0) };
+                            using (var gold = new LinearGradientBrush(new PointF(0, -15), new PointF(0, 0), Hsl(48, 0.95, 0.68, 255), Hsl(40, 0.9, 0.48, 255)))
+                                g.FillPolygon(gold, shape);
+                            using (var rim = new Pen(Hsl(38, 0.85, 0.3, 255), 1.5f) { LineJoin = LineJoin.Round }) g.DrawPolygon(rim, shape);
+                            using (var ruby = new SolidBrush(Hsl(350, 0.8, 0.5, 255))) g.FillEllipse(ruby, -2.2f, -5.5f, 4.4f, 4.4f);
+                            using (var sapphire = new SolidBrush(Hsl(215, 0.75, 0.55, 255)))
+                            {
+                                g.FillEllipse(sapphire, -10.5f, -4.5f, 3.4f, 3.4f);
+                                g.FillEllipse(sapphire, 7.1f, -4.5f, 3.4f, 3.4f);
+                            }
+                            float glint = (float)(0.5 + 0.5 * Math.Sin(t * 2.4));
+                            using (var shine = new Pen(Color.FromArgb((int)(170 * glint), 255, 255, 240), 1.2f)) g.DrawLine(shine, -12, -9, -11, -4);
+                            break;
+                        }
+                }
+            }
+            g.Restore(st);
+        }
+
+        /// <summary>Pose.Read: a tiny open book held in front, a page turning now and then.</summary>
+        /// <summary>A shop item on its own (for the shop's rows), centred on (cx, cy), about 30 * scale tall.</summary>
+        public static void DrawItemIcon(Graphics g, string id, float cx, float cy, float scale, Looks looks)
+        {
+            var st = g.Save();
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            g.TranslateTransform(cx, cy);
+            g.ScaleTransform(scale, scale);
+            switch (id)
+            {
+                case "partyhat": case "beanie": case "bow": case "crown":
+                    g.TranslateTransform(id == "bow" ? -9 : 0, id == "partyhat" ? 50 : id == "beanie" ? 47 : id == "bow" ? 39 : 44);
+                    DrawHat(g, id, 0, looks);
+                    break;
+                case "shades":
+                    using (var glass = new SolidBrush(Color.FromArgb(245, 25, 25, 30)))
+                    using (var line = new Pen(Color.FromArgb(255, 34, 30, 40), 1.8f))
+                    {
+                        FillRounded(g, glass, -14, -4, 12, 8, 3);
+                        FillRounded(g, glass, 2, -4, 12, 8, 3);
+                        g.DrawLine(line, -2, -2, 2, -2);
+                        using (var shine = new Pen(Color.FromArgb(150, 255, 255, 255), 1.1f)) { g.DrawLine(shine, -12, -2, -9, -3); g.DrawLine(shine, 4, -2, 7, -3); }
+                    }
+                    break;
+                case "jumprope":
+                    using (var rope = new Pen(Hsl(352, 0.72, 0.56, 255), 1.8f) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+                        g.DrawBezier(rope, -11, -6, -14, 16, 14, 16, 11, -6);
+                    using (var wood = new SolidBrush(Hsl(28, 0.45, 0.42, 255)))
+                    {
+                        FillRounded(g, wood, -14, -14, 5.5f, 10, 2.5f);
+                        FillRounded(g, wood, 8.5f, -14, 5.5f, 10, 2.5f);
+                    }
+                    break;
+                case "book":
+                    g.ScaleTransform(1.3f, 1.3f);
+                    DrawBook(g, 0, looks, true);
+                    break;
+                case "toast":
+                    g.ScaleTransform(1.5f, 1.5f);
+                    g.TranslateTransform(-19, 18);
+                    DrawToast(g, 1);
+                    break;
+            }
+            g.Restore(st);
+        }
+
+        static void DrawBook(Graphics g, double pageFlip, Looks looks) { DrawBook(g, pageFlip, looks, false); }
+
+        static void DrawBook(Graphics g, double pageFlip, Looks looks, bool centred)
+        {
+            var st = g.Save();
+            if (!centred) g.TranslateTransform(5, -9);
+            using (var cover = new SolidBrush(Hsl(looks.Hue + 200, 0.5, 0.42, 255)))
+            using (var page = new SolidBrush(Color.FromArgb(255, 252, 248, 236)))
+            using (var ink = new Pen(Color.FromArgb(150, 90, 80, 90), 0.8f))
+            using (var edge = new Pen(Color.FromArgb(255, 52, 40, 48), 1.3f) { LineJoin = LineJoin.Round })
+            {
+                FillRounded(g, cover, -13, -7, 26, 13, 2);
+                g.FillPolygon(page, new[] { new PointF(-11.5f, -6), new PointF(0, -4.5f), new PointF(0, 4.5f), new PointF(-11.5f, 4) });
+                g.FillPolygon(page, new[] { new PointF(11.5f, -6), new PointF(0, -4.5f), new PointF(0, 4.5f), new PointF(11.5f, 4) });
+                for (int i = 0; i < 3; i++)
+                {
+                    g.DrawLine(ink, -9.5f, -3 + i * 2.4f, -2, -2.2f + i * 2.4f);
+                    g.DrawLine(ink, 2, -2.2f + i * 2.4f, 9.5f, -3 + i * 2.4f);
+                }
+                if (pageFlip > 0)
+                {
+                    // the turning page sweeps from right to left
+                    float k = (float)(1 - pageFlip);
+                    float px = 11.5f - 23 * k;
+                    g.FillPolygon(page, new[] { new PointF(0, -4.5f), new PointF(px, -7.5f + (float)Math.Sin(k * Math.PI) * -3), new PointF(px, 3.5f), new PointF(0, 4.5f) });
+                    g.DrawPolygon(ink, new[] { new PointF(0, -4.5f), new PointF(px, -7.5f + (float)Math.Sin(k * Math.PI) * -3), new PointF(px, 3.5f), new PointF(0, 4.5f) });
+                }
+                g.DrawLine(edge, 0, -4.5f, 0, 4.5f);
+                DrawRounded(g, edge, -13, -7, 26, 13, 2);
+            }
+            g.Restore(st);
+        }
+
+        /// <summary>Pose.Eat: a slice of toast at its mouth; bites come off the top right as it eats.</summary>
+        static void DrawToast(Graphics g, double left)
+        {
+            if (left <= 0) return;
+            var st = g.Save();
+            g.TranslateTransform(19, -18);   // between its hand and its mouth
+            g.RotateTransform(-14);
+            using (var slice = new GraphicsPath())
+            {
+                slice.AddArc(-7, -9, 7, 6, 180, 90);
+                slice.AddArc(0, -9, 7, 6, 270, 90);
+                slice.AddLine(7, -6, 6.5f, 6);
+                slice.AddLine(6.5f, 6, -6.5f, 6);
+                slice.CloseFigure();
+                var clip = g.Clip;
+                using (var keep = new Region(slice))
+                {
+                    // each bite takes a round chunk out of the corner
+                    int bites = (int)Math.Round((1 - left) * 3);
+                    for (int i = 0; i < bites; i++)
+                        using (var bite = new GraphicsPath()) { bite.AddEllipse(1 - i * 5.5f, -12 + i * 4, 9, 9); keep.Exclude(bite); }
+                    g.SetClip(keep, CombineMode.Intersect);
+                    using (var crust = new SolidBrush(Color.FromArgb(255, 196, 132, 62))) g.FillRectangle(crust, -8, -10, 16, 17);
+                    using (var crumb = new SolidBrush(Color.FromArgb(255, 246, 214, 150))) g.FillRectangle(crumb, -5.5f, -6.5f, 11, 11);
+                    using (var butter = new SolidBrush(Color.FromArgb(230, 255, 236, 120))) g.FillRectangle(butter, -3, -3, 5, 4);
+                    g.Clip = clip;
+                }
+            }
+            g.Restore(st);
         }
 
         /// <summary>A golden angel halo floating over its head: "i'm listening".</summary>
@@ -334,7 +589,7 @@ namespace Bestie
                     g.FillEllipse(cheek, exF + 1, -19, 7, 3.6f);
                 }
 
-                if (c.Sunglasses)
+                if (c.Sunglasses || Worn(c, "face") == "shades")
                 {
                     using (var glass = new SolidBrush(Color.FromArgb(245, 25, 25, 30)))
                     {
@@ -467,6 +722,11 @@ namespace Bestie
             using (var p = Rounded(x, y, w, h, r)) g.FillPath(b, p);
         }
 
+        static void DrawRounded(Graphics g, Pen pen, float x, float y, float w, float h, float r)
+        {
+            using (var p = Rounded(x, y, w, h, r)) g.DrawPath(pen, p);
+        }
+
         public static GraphicsPath Rounded(float x, float y, float w, float h, float r)
         {
             var p = new GraphicsPath();
@@ -567,6 +827,19 @@ namespace Bestie
                     case "sweat":
                         using (var b = new SolidBrush(Color.FromArgb(a, 110, 180, 255))) g.FillEllipse(b, x - 2.5f * s, y - 3 * s, 5 * s, 6.5f * s);
                         break;
+                    case "crumb":
+                        {
+                            // "+3" and a little crumb, floating up: crumbs earned
+                            using (var crust = new SolidBrush(Color.FromArgb(a, 214, 150, 72)))
+                            using (var edge = new Pen(Color.FromArgb(a, 120, 70, 30), 1f))
+                            {
+                                g.FillEllipse(crust, x - 4 * s, y - 3 * s, 8 * s, 6.5f * s);
+                                g.DrawEllipse(edge, x - 4 * s, y - 3 * s, 8 * s, 6.5f * s);
+                            }
+                            using (var ink = new SolidBrush(Color.FromArgb(a, 120, 70, 30)))
+                                g.DrawString(p.Text ?? "+1", GetFont(HandFont, 15 * s, FontStyle.Bold), ink, x + 5 * s, y - 10 * s);
+                            break;
+                        }
                     case "shell":
                         var st = g.Save();
                         g.TranslateTransform(x, y);

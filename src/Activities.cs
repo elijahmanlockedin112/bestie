@@ -11,7 +11,7 @@ namespace Bestie
     public partial class Creature
     {
         public static readonly string[] Acts = { "wander", "nap", "dance", "peek", "sniff", "climb", "patrol", "sit", "explore",
-            "spin", "sing", "count", "visit", "exercise", "boop", "sunbathe" };
+            "spin", "sing", "count", "visit", "exercise", "boop", "sunbathe", "jumprope", "read" };
 
         IEnumerator<Wait> current;
         Wait wait;
@@ -87,7 +87,7 @@ namespace Bestie
         void ResetPose()
         {
             if (Mode == Mode.Egg) return;
-            Pose = Pose.Stand; Face = Face.Normal; Tilt = 0; Sunglasses = false; ArmWave = 0;
+            Pose = Pose.Stand; Face = Face.Normal; Tilt = 0; Sunglasses = false; ArmWave = 0; Bites = 0; PageFlip = 0;
         }
 
         void StepMind(double dt)
@@ -209,6 +209,9 @@ namespace Bestie
                 case "exercise": w = 0.2 * energy; break;
                 case "boop": w = walls && Brain.Edges.Count > 0 ? 0.25 : 0; break;
                 case "sunbathe": w = planks ? 0.15 + t.Bold * 0.3 : 0; break;
+                // shop toys: only once it owns them, and a little more than the old favorites (it's new)
+                case "jumprope": w = Brain.Owned.Contains("jumprope") ? (0.3 + t.Silly * 0.3) * (0.4 + energy) * (night ? 0.4 : 1) : 0; break;
+                case "read": w = Brain.Owned.Contains("book") ? 0.3 + (1 - energy) * 0.4 + (night ? 0.25 : 0) : 0; break;
                 default: w = 0.2; break;
             }
             if (userAway && (a == "explore" || a == "climb" || a == "sunbathe")) w *= 1.5;
@@ -343,11 +346,13 @@ namespace Bestie
                 case "exercise": return "exercise";
                 case "boop": return "booping the edge of the world";
                 case "sunbathe": return "sunbathing";
+                case "jumprope": return "jump rope";
+                case "read": return "reading my tiny book";
                 default: return "a stroll";
             }
         }
 
-        static readonly HashSet<string> HereActs = new HashSet<string> { "wander", "patrol", "sit", "spin", "count", "exercise", "visit" };
+        static readonly HashSet<string> HereActs = new HashSet<string> { "wander", "patrol", "sit", "spin", "count", "exercise", "visit", "jumprope" };
 
         string ChoosePlace(string act, Dictionary<Seg, Planner.Node> reach)
         {
@@ -481,8 +486,76 @@ namespace Bestie
                 case "exercise": return Exercise(place);
                 case "boop": return Boop(place);
                 case "sunbathe": return Sunbathe(place);
+                case "jumprope": return JumpRope();
+                case "read": return Read(place);
                 default: return Wander(place);
             }
+        }
+
+        // ---------- shop toys ----------
+
+        IEnumerable<Wait> JumpRope()
+        {
+            if (!Brain.Owned.Contains("jumprope")) { yield return Say("i don't have a jump rope. the shop has one. (30 crumbs.)", false, 0); yield break; }
+            if (Mode != Mode.Ground) yield break;
+            MarkPlace();
+            if (Rng.Chance(0.5)) yield return Say(Fresh(Lines.JumpRopeStart, 10), false, 0);
+            Pose = Pose.JumpRope; Face = Face.Happy;
+            double end = Clock.T + Rng.Range(6, 12);
+            int hops = 0;
+            while (Clock.T < end)
+            {
+                yield return Pause(0.62 * 4);
+                hops += 4;
+                if (Rng.Chance(0.3)) Say(hops + ".", true, 0.9);   // counting, of course
+            }
+            Pose = Pose.Stand; Face = Face.Content; Squash = -0.2;
+            Emit("sweat", 1);
+            if (Rng.Chance(0.7)) yield return Say(Fresh(Lines.JumpRopeEnd, 10), false, 0);
+        }
+
+        IEnumerable<Wait> Read(string place)
+        {
+            if (!Brain.Owned.Contains("book")) { yield return Say("i'd read, but i don't own a book. yet.", false, 0); yield break; }
+            foreach (var w in GoTo(place, false)) yield return w;
+            if (Mode != Mode.Ground) yield break;
+            MarkPlace();
+            Pose = Pose.Read; Face = Face.Content;
+            double end = Clock.T + Rng.Range(15, 35);
+            bool said = false;
+            while (Clock.T < end)
+            {
+                yield return Pause(Rng.Range(3, 6));
+                PageFlip = 1;
+                if (!said && Rng.Chance(0.35)) { said = true; Say(Fresh(Lines.Reading, 15), Rng.Chance(0.5), 0); }
+            }
+            Pose = Pose.Stand;
+            if (Rng.Chance(0.4)) yield return Say(Fresh(Lines.ReadEnd, 15), false, 0);
+        }
+
+        /// <summary>It just bought toast. It has thought about toast its whole life.</summary>
+        public void EatToast() { Interrupt(EatToastRoutine(), "toast"); }
+
+        IEnumerable<Wait> EatToastRoutine()
+        {
+            if (Mode != Mode.Ground) yield return Until(() => Mode == Mode.Ground, 8);
+            Pose = Pose.Sit; Face = Face.Surprised; Bites = 1;
+            Emit("bang", 1);
+            yield return Say(Brain.ToastsEaten == 0 ? "is this... toast?" : Rng.Pick("toast. again. what a life.", "the toast has returned."), false, 1.8);
+            Pose = Pose.Eat; Face = Face.Happy;
+            for (int i = 0; i < 3; i++)
+            {
+                yield return Pause(1.2);
+                Bites = Math.Max(0, Bites - 1 / 3.0);
+                Squash = 0.12;
+            }
+            Brain.ToastsEaten++;
+            Pose = Pose.Sit; Face = Face.Content; Blush = 1;
+            Emit("heart", 3);
+            yield return Say(Brain.ToastsEaten == 1 ? "i have had toast. 7 out of 7. i'll never be the same."
+                : Rng.Pick("still 7 out of 7.", "toast never misses.", "crunchy. warm. perfect. 7 out of 7."), false, 0);
+            Journal.Add(Brain.ToastsEaten == 1 ? "i had toast. for the first time ever. it was everything." : "i had toast (#" + Brain.ToastsEaten + ").");
+            yield return Pause(1.5);
         }
 
         void Completed(string act, string place, bool asked)

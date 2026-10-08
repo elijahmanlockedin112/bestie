@@ -724,7 +724,7 @@ namespace Bestie
             AssistantSettings s = p.Settings;
             int turn = ++turnCounter;
             currentPhone = p.Phone;
-            if (!p.Tentative) Behavior.Ask(p.Phone != null ? "phone" : p.Voice ? "voice" : "typed");
+            if (!p.Tentative) { Behavior.Ask(p.Phone != null ? "phone" : p.Voice ? "voice" : "typed"); Crumbs.Earn("ask", 1); }
             StripOldImages(turn);
             history.Add(new AssistantChatMsg(Msg("user", BuildUserContent(p, s)), true, turn));
             TrimHistory(s.MaxHistoryMessages);
@@ -1279,6 +1279,8 @@ namespace Bestie
             if (personality.Length > 0) sb.Append("\n\n## you, lately\n").Append(personality);
             sb.Append("\n\n").Append(s.AutoLookScreens ? "screenshots of their screens come with this message." : "no screenshots come with this message.");
             sb.Append("\ntime blocks: ").Append(TimeBlocks.Describe());
+            string shopLife = Crumbs.Summary();
+            if (shopLife != null) sb.Append('\n').Append(shopLife);
             string routines = AssistantTools.RoutineNames();
             if (routines != null) sb.Append("\ntheir saved routines (say the name = my_routines run): ").Append(routines);
             if (Quiet.On) sb.Append("\nquiet time is ON until ").Append(When.Clock(Quiet.Until)).Append(" (you still answer when they talk to you).");

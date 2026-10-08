@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem, shopItem;
         PhoneServer phone;
         double calendarCheck = 20, blockCheck;
         int calendarChecking;
@@ -74,6 +74,7 @@ namespace Bestie
             try { assistant = new AssistantModule(this, this); }
             catch (Exception ex) { DebugLog.Write("assistant failed to start: " + ex); }
             c.PeekRequest = () => assistant != null && assistant.Peek();
+            StartCrumbs();
             try { StartSessions(); }
             catch (Exception ex) { DebugLog.Write("ai sessions failed to start: " + ex); }
             try { StartTimeBlocks(); }
@@ -166,6 +167,7 @@ namespace Bestie
             {
                 blockCheck = 0.4;
                 TimeBlocks.Tick();
+                Crumbs.FocusTick(0.4);   // focus time pays crumbs
                 if (TimeBlocks.BreakLocked && !BreakOverlay.Active && leaveAt < 0) BreakOverlay.Show();
                 BreakOverlay.Tick();
                 if (BreakOverlay.Active) { KeepOnTop(); bubble.KeepOnTop(); }   // it keeps you company on the break screen
@@ -308,7 +310,7 @@ namespace Bestie
             }
             else if (dragging) c.Release();
             else if (send && assistant != null && assistant.IsBrainDumping) assistant.StopListening(true);   // a click while it listens to a brain dump: that's everything
-            else if (send) c.Pet();
+            else if (send) { c.Pet(); Crumbs.Earn("pet", 1); }
             mouseDown = dragging = holdTalking = false;
         }
 
@@ -367,6 +369,7 @@ namespace Bestie
             calendarItem = Add("let me see my calendar…", null, ConnectCalendar);
             forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
             Add(brain.Name + "'s diary", null, OpenDiary);
+            shopItem = Add("shop…", null, OpenShop);
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             quietItem = Add("be quiet for an hour", null, ToggleQuiet);
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
@@ -389,6 +392,7 @@ namespace Bestie
                 quietItem.Checked = Quiet.On;
                 brainDumpItem.Text = assistant != null && assistant.IsBrainDumping ? "that's everything (organize it)" : "brain dump…";
                 startupItem.Checked = StartsWithWindows();
+                shopItem.Text = "shop… (" + brain.Crumbs + " " + Shop.Currency + ")";
             };
         }
 
@@ -438,6 +442,7 @@ namespace Bestie
             TimeBlocks.PhaseStarted += phase =>
             {
                 Behavior.Block(phase == "break" ? "break started" : "focus block started");
+                if (phase == "break") Crumbs.FocusBlockEnded();   // a bonus if they really did most of it
                 if (phase == "break")
                     Announce(Rng.Pick("break time. " + TimeBlocks.BreakMinutes + " minutes. stand up, drink some water, look at something far away.",
                         "break! " + TimeBlocks.BreakMinutes + " minutes. go be a person for a bit.", "that's " + TimeBlocks.FocusMinutes + " minutes. break time. stretch something."));
@@ -465,6 +470,36 @@ namespace Bestie
                 Process.Start(new ProcessStartInfo(BrainDump.IndexPath) { UseShellExecute = true });
             }
             catch (Exception ex) { DebugLog.Write("brain dumps: " + ex.Message); c.Say("couldn't open them. they're in my folder, under notes\\brain dumps.", false, 0); }
+        }
+
+        // ---- crumbs and the shop ----
+
+        ShopForm shop;
+
+        void StartCrumbs()
+        {
+            Crumbs.Init(brain, a => OnUi(a));
+            Crumbs.OpenShop = OpenShop;
+            Crumbs.Earned += (n, why) =>
+            {
+                c.EmitCrumbs(n);
+                if (why == "block") c.Say(Rng.Pick("a whole focus block. here, " + n + " crumbs.", "you finished the block. +" + n + " crumbs for the team."), false, 0);
+            };
+            Crumbs.Bought += item =>
+            {
+                c.Glow(1.5);
+                if (item.Kind == "snack") { c.EatToast(); return; }
+                c.Emit("sparkle", 5);
+                c.Say(item.Kind == "wear" ? Rng.Pick("ooh. the " + item.Name + ". how do i look.", "the " + item.Name + ". i feel like a new superintendent.")
+                    : Rng.Pick("a " + item.Name + "! i'll use it when you're not looking. and when you are.", "the " + item.Name + ". this changes my whole schedule."), false, 0);
+            };
+        }
+
+        void OpenShop()
+        {
+            if (shop == null || shop.IsDisposed) shop = new ShopForm(brain, DeviceDpi / 96f);
+            shop.Show();
+            shop.Activate();
         }
 
         void OpenDiary()
