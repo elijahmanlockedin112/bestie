@@ -134,6 +134,45 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 .screen .wait{color:#8e8e93;font:13px var(--mono);padding:40px 16px;text-align:center}
 .notebody{white-space:pre-wrap;font-size:15.5px;padding-top:12px}
 
+/* controls */
+.np{font:13px var(--mono);color:var(--muted);text-align:center;margin:18px 0 14px;min-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.media{display:flex;justify-content:center;gap:22px;margin-bottom:6px}
+.media button{width:56px;height:56px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center}
+.media button.big{width:68px;height:68px;background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.media button:active{opacity:.7}
+.media .icon{width:24px;height:24px}
+.vol{display:flex;align-items:center;gap:12px;padding:6px 0 4px}
+.vol input{flex:1;accent-color:var(--accent);height:28px}
+.vol .pct{font:13px var(--mono);color:var(--muted);min-width:40px;text-align:right}
+.vol button{color:var(--muted)}
+.vol button.on{color:var(--accent)}
+.act{display:flex;align-items:center;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);width:100%;text-align:left}
+.act:last-child{border-bottom:0}
+.act:active{opacity:.6}
+.act .icon{color:var(--muted);flex:none}
+.act .main{flex:1;min-width:0}
+.act .sub{font:12.5px var(--mono);color:var(--muted);margin-top:2px}
+.act .chev{color:var(--faint);width:16px;height:16px}
+.switch{width:44px;height:26px;border-radius:13px;background:var(--line);position:relative;flex:none;transition:background .2s}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .2s}
+.switch.on{background:var(--accent)}
+.switch.on::after{transform:translateX(18px)}
+.got{font:12.5px var(--mono);color:var(--muted);padding:6px 0}
+.got button{color:var(--accent);font:inherit;margin-left:8px}
+
+/* the + menu */
+.menu{position:fixed;inset:0;background:rgba(0,0,0,.35);display:none;align-items:flex-end;z-index:15}
+.menu.open{display:flex}
+.menu .card{width:100%;background:var(--sheet);border-radius:16px 16px 0 0;padding:8px 16px calc(var(--bottom) + 12px)}
+.menu .act{font-size:16.5px}
+.menu .cancel{width:100%;padding:14px;margin-top:6px;border-radius:12px;background:var(--bubble);font-weight:600}
+
+/* files under a reply */
+.file{display:flex;align-items:center;gap:10px;border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-top:8px;color:var(--fg);text-decoration:none;max-width:320px}
+.file .icon{color:var(--accent);flex:none}
+.file span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file small{font:12px var(--mono);color:var(--muted)}
+
 /* pairing */
 .pair{position:fixed;inset:0;background:var(--bg);display:none;flex-direction:column;justify-content:center;padding:32px 28px calc(var(--bottom) + 40px);z-index:20}
 .pair.show{display:flex}
@@ -150,6 +189,7 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 <header>
   <img src="icon-180.png" alt="">
   <div class="who"><b>{{NAME}}</b><div class="status" id="status"><i></i>connecting…</div></div>
+  <button class="hbtn" id="controlsBtn" aria-label="Controls"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   <button class="hbtn" id="screenBtn" aria-label="See your computer screen"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
   <button class="hbtn" id="savedBtn" aria-label="Saved"><svg class="icon" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"/></svg></button>
 </header>
@@ -176,6 +216,44 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
   <div class="top"><b>Saved</b><button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="body" id="savedBody"></div>
 </section>
+<section class="sheet" id="controlsSheet">
+  <div class="top"><b>Controls</b><button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="body">
+    <div class="np" id="np">nothing playing</div>
+    <div class="media">
+      <button data-media="previous" aria-label="Previous"><svg class="icon" viewBox="0 0 24 24"><path d="M6 5v14M19 5L9 12l10 7V5z"/></svg></button>
+      <button data-media="play_pause" class="big" aria-label="Play or pause"><svg class="icon" viewBox="0 0 24 24"><path d="M7 5v14l11-7L7 5z"/></svg></button>
+      <button data-media="next" aria-label="Next"><svg class="icon" viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7V5z"/></svg></button>
+    </div>
+    <div class="sec"><span>Volume</span><span id="outName"></span></div>
+    <div class="vol">
+      <button id="muteBtn" aria-label="Mute"><svg class="icon" viewBox="0 0 24 24"><path d="M5 9v6h4l5 4V5L9 9H5z"/><path d="M17 9a4 4 0 0 1 0 6"/></svg></button>
+      <input type="range" id="vol" min="0" max="100" step="1">
+      <span class="pct" id="volPct">–</span>
+    </div>
+    <div class="sec"><span>Computer</span></div>
+    <button class="act" data-act="lock"><svg class="icon" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span class="main">Lock the screen</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="act" data-act="desktop"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/></svg><span class="main">Show the desktop</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="act" data-act="quiet"><svg class="icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8"/><path d="M4 4l16 16"/></svg><span class="main">Quiet for an hour<div class="sub" id="quietSub">{{NAME}} stops talking out loud</div></span><span class="switch" id="quietSw"></span></button>
+    <button class="act" data-act="sleep"><svg class="icon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><span class="main">Put it to sleep</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <div class="sec"><span>Clipboard</span></div>
+    <button class="act" data-act="clip_to_pc"><svg class="icon" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="2"/><path d="M12 9v6M9 12l3 3 3-3"/></svg><span class="main">Send my clipboard to the PC</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="act" data-act="clip_from_pc"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="11" rx="2"/><path d="M12 9v9M9 15l3 3 3-3"/></svg><span class="main">Copy the PC's clipboard</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <div class="sec"><span>Files</span></div>
+    <button class="act" data-act="send_file"><svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg><span class="main">Send a photo or file to the PC<div class="sub">it lands in Downloads\From phone</div></span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <div id="gotFiles"></div>
+    <div class="sec"><span>Notifications</span></div>
+    <button class="act" data-act="push"><svg class="icon" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 8-3 8h18s-3-1-3-8M10 20a2 2 0 0 0 4 0"/></svg><span class="main">Notify me when I'm away<div class="sub" id="pushSub">reminders, finished jobs and replies</div></span><span class="switch" id="pushSw"></span></button>
+  </div>
+</section>
+<div class="menu" id="plusMenu">
+  <div class="card">
+    <button class="act" data-plus="photo"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 8"/></svg><span class="main">Ask about a photo</span></button>
+    <button class="act" data-plus="file"><svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg><span class="main">Send a photo or file to the PC</span></button>
+    <button class="cancel" data-plus="cancel">Cancel</button>
+  </div>
+</div>
+<input type="file" id="sendFile" multiple hidden>
 <section class="sheet" id="noteSheet">
   <div class="top"><button class="hbtn" data-back aria-label="Back"><svg class="icon" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b id="noteTitle"></b></div>
   <div class="body"><div class="notebody bestie" id="noteBody"></div></div>
@@ -315,6 +393,7 @@ async function send(text, opts = {}) {
     if (t.error) { body.innerHTML = '<p class="err">' + esc(t.error) + '</p>'; }
     else {
       body.innerHTML = md(t.reply);
+      fileChips(d, t.files);
       const p = playButton(t.reply); d.appendChild(p);
       if (opts.voice) speak(t.reply, p);
     }
@@ -408,7 +487,53 @@ async function finishRecording() {
 }
 
 // ---------- photo ----------
-$('photoBtn').onclick = () => { unlockAudio(); $('file').click(); };
+$('photoBtn').onclick = () => { unlockAudio(); $('plusMenu').classList.add('open'); };
+$('plusMenu').onclick = e => {
+  const b = e.target.closest('[data-plus]');
+  if (!b && e.target !== $('plusMenu')) return;
+  $('plusMenu').classList.remove('open');
+  if (b && b.dataset.plus === 'photo') $('file').click();
+  if (b && b.dataset.plus === 'file') $('sendFile').click();
+};
+
+// ---------- files to the pc ----------
+function upload(f, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', 'api/upload');
+    x.setRequestHeader('X-Bestie-Key', key);
+    x.setRequestHeader('X-File-Name', encodeURIComponent(f.name || 'photo.jpg'));
+    x.upload.onprogress = e => e.lengthComputable && onProgress && onProgress(e.loaded / e.total);
+    x.onload = () => { let d = {}; try { d = JSON.parse(x.responseText); } catch (_) {} x.status === 200 ? resolve(d) : reject(new Error(d.error || 'upload failed (' + x.status + ')')); };
+    x.onerror = () => reject(new Error('can’t reach your computer'));
+    x.send(f);
+  });
+}
+function openOnPc(name) { api('api/control', { json: { action: 'open', value: name } }).then(r => toast(r.message || 'opened')).catch(e => toast(e.message)); }
+$('sendFile').onchange = async () => {
+  const files = [...$('sendFile').files]; $('sendFile').value = '';
+  for (const f of files) {
+    const note = document.createElement('div'); note.className = 'note'; note.textContent = 'sending ' + f.name + '…'; clearEmpty(); log.appendChild(note); scrollDown(true);
+    try {
+      const r = await upload(f, p => note.textContent = 'sending ' + f.name + '… ' + Math.round(p * 100) + '%');
+      note.innerHTML = esc('sent ' + r.name + ' to your PC · ' + r.folder) + ' ';
+      const b = document.createElement('button'); b.className = 'play'; b.style.margin = '0 0 0 6px'; b.textContent = 'open on pc'; b.onclick = () => openOnPc(r.name);
+      note.appendChild(b);
+      const got = document.createElement('div'); got.className = 'got'; got.textContent = r.name; const ob = document.createElement('button'); ob.textContent = 'open on pc'; ob.onclick = () => openOnPc(r.name); got.appendChild(ob); $('gotFiles').prepend(got);
+    } catch (e) { note.textContent = 'couldn’t send ' + f.name + ': ' + e.message; }
+  }
+};
+
+// ---------- files from the pc (under a reply) ----------
+function fileChips(el, files) {
+  for (const f of files || []) {
+    const a = document.createElement('a'); a.className = 'file'; a.target = '_blank'; a.rel = 'noopener';
+    a.href = f.url + '&k=' + encodeURIComponent(key);
+    a.innerHTML = '<svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg><span>' + esc(f.name) + '</span><small>' + size(f.size) + '</small>';
+    el.appendChild(a);
+  }
+}
+const size = n => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
 $('file').onchange = async () => {
   const f = $('file').files[0]; $('file').value = '';
   if (!f) return;
@@ -481,6 +606,75 @@ $('savedBody').addEventListener('click', async e => {
   }
 });
 
+// ---------- controls ----------
+let volTimer = null;
+function showControls(s) {
+  if (!s) return;
+  $('np').textContent = s.playing ? s.playing : 'nothing playing on spotify';
+  if (typeof s.volume === 'number' && document.activeElement !== $('vol')) { $('vol').value = s.volume; $('volPct').textContent = s.volume + '%'; }
+  $('muteBtn').classList.toggle('on', !!s.muted);
+  $('outName').textContent = s.output ? s.output.replace(/\s*\(.*\)$/, '').slice(0, 28) : '';
+  $('quietSw').classList.toggle('on', !!s.quietUntil);
+  $('quietSub').textContent = s.quietUntil ? 'quiet until ' + s.quietUntil : NAME + ' stops talking out loud';
+  if (s.message) toast(s.message);
+}
+const control = (action, value) => api('api/control', { json: { action, value: value == null ? '' : String(value) } }).then(showControls).catch(e => toast(e.message));
+$('controlsBtn').onclick = () => { unlockAudio(); open('controlsSheet'); api('api/control').then(showControls).catch(() => {}); pushState(); };
+document.querySelectorAll('[data-media]').forEach(b => b.onclick = () => control('media', b.dataset.media));
+$('vol').oninput = () => { $('volPct').textContent = $('vol').value + '%'; clearTimeout(volTimer); volTimer = setTimeout(() => control('volume', $('vol').value), 120); };
+$('muteBtn').onclick = () => control($('muteBtn').classList.contains('on') ? 'unmute' : 'mute');
+$('controlsSheet').addEventListener('click', async e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const a = b.dataset.act;
+  if (a === 'lock' || a === 'desktop') control(a);
+  if (a === 'quiet') control('quiet', $('quietSw').classList.contains('on') ? 'off' : 'on');
+  if (a === 'sleep' && confirm('Put your computer to sleep? You’ll need to wake it up yourself.')) control('sleep');
+  if (a === 'send_file') $('sendFile').click();
+  if (a === 'clip_to_pc') {
+    try { const t = await navigator.clipboard.readText(); control('clipboard_set', t); }
+    catch (_) { toast('allow paste to send your clipboard'); }
+  }
+  if (a === 'clip_from_pc') {
+    try {
+      const got = api('api/control', { json: { action: 'clipboard_get' } });
+      if (window.ClipboardItem && navigator.clipboard.write) await navigator.clipboard.write([new ClipboardItem({ 'text/plain': got.then(r => new Blob([r.clipboard || ''], { type: 'text/plain' })) })]);
+      else { const r = await got; await navigator.clipboard.writeText(r.clipboard || ''); }
+      const r = await got; toast(r.clipboard ? 'copied ' + r.clipboard.length + ' characters from your PC' : 'the PC’s clipboard has no text');
+    } catch (err) { toast('couldn’t copy: ' + err.message); }
+  }
+  if (a === 'push') togglePush();
+});
+
+// ---------- notifications ----------
+const b64uBytes = s => { s = s.replace(/-/g, '+').replace(/_/g, '/'); while (s.length % 4) s += '='; return Uint8Array.from(atob(s), c => c.charCodeAt(0)); };
+async function pushSub() { if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null; const reg = await navigator.serviceWorker.ready; return reg.pushManager.getSubscription(); }
+async function pushState() {
+  let on = false;
+  try { on = typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!(await pushSub()); } catch (_) {}
+  $('pushSw').classList.toggle('on', on);
+  $('pushSub').textContent = on ? 'on: reminders, finished jobs and replies' : (standalone || !/iPhone|iPad/.test(navigator.userAgent)) ? 'reminders, finished jobs and replies' : 'add ' + NAME + ' to your Home Screen first';
+}
+async function togglePush() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') {
+    toast(/iPhone|iPad/.test(navigator.userAgent) && !standalone ? 'Add ' + NAME + ' to your Home Screen, open it from there, then turn this on' : 'this browser can’t do notifications', 4000); return;
+  }
+  try {
+    const existing = await pushSub();
+    if ($('pushSw').classList.contains('on') && existing) {
+      await existing.unsubscribe(); await api('api/push/unsubscribe', { json: { endpoint: existing.endpoint } }); toast('notifications off'); pushState(); return;
+    }
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') { toast('notifications are blocked: Settings → Notifications → ' + NAME, 4000); return; }
+    const { key: vapid } = await api('api/push/key');
+    const reg = await navigator.serviceWorker.ready;
+    const sub = existing || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uBytes(vapid) });
+    await api('api/push/subscribe', { json: sub.toJSON() });
+    await api('api/push/test', { json: {} });
+    toast('notifications on. a test one is on its way.');
+  } catch (err) { toast('couldn’t turn on notifications: ' + err.message, 4000); }
+  pushState();
+}
+
 $('screenBtn').onclick = () => { open('screenSheet'); loadScreen(); };
 $('screenRefresh').onclick = loadScreen;
 async function loadScreen() {
@@ -497,7 +691,19 @@ const standalone = navigator.standalone || matchMedia('(display-mode: standalone
 if (!standalone && /iPhone|iPad/.test(navigator.userAgent) && !localStorage.getItem('bestie-install-x')) $('install').classList.add('show');
 $('installX').onclick = () => { $('install').classList.remove('show'); localStorage.setItem('bestie-install-x', '1'); };
 
-document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshStatus(); });
+// offline copy + notifications; a tapped notification (or coming back after a while) shows what happened since
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js')
+    .then(() => navigator.serviceWorker.ready).then(reg => document.documentElement.dataset.sw = reg.active ? 'active' : 'installed')
+    .catch(err => document.documentElement.dataset.sw = 'failed: ' + err.message);
+  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'refresh' && !busy) loadHistory(); });
+}
+let hiddenAt = 0;
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); return; }
+  refreshStatus();
+  if (hiddenAt && Date.now() - hiddenAt > 30000 && !busy && key) loadHistory();
+});
 setInterval(() => { if (!document.hidden) refreshStatus(); }, 20000);
 
 if (!key) showPair();
@@ -505,6 +711,8 @@ else {
   loadHistory(); refreshStatus();
   if (location.hash === '#saved') $('savedBtn').click();
   if (location.hash === '#screen') $('screenBtn').click();
+  if (location.hash === '#controls') $('controlsBtn').click();
+  if (location.hash === '#plus') $('photoBtn').click();
 }
 updateButtons();
 })();

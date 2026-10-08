@@ -180,6 +180,12 @@ namespace Bestie
 
         PhoneTurn currentPhone;   // the phone turn the worker is on (worker thread only)
 
+        /// <summary>The phone message being answered right now (tools run on the worker, so this is safe there), or null.</summary>
+        internal PhoneTurn CurrentPhone { get { return currentPhone; } }
+
+        /// <summary>Set by the app: also sends something it announces to the phone (it decides whether they're away).</summary>
+        internal static Action<string> PhoneNotify;
+
         /// <summary>A message from the phone app. It runs like a typed message (same memory, tools, history and
         /// transcript), but the answer goes back to the phone: nothing is said out loud or popped up here. Any thread.</summary>
         internal PhoneTurn SubmitFromPhone(string text, string imageDataUrl, bool voice)
@@ -1485,6 +1491,8 @@ namespace Bestie
         public void Announce(string line)
         {
             if (string.IsNullOrWhiteSpace(line)) return;
+            Action<string> phone = PhoneNotify;
+            if (phone != null) { try { phone(line); } catch (Exception ex) { DebugLog.Write("assistant: phone notify: " + ex.Message); } }
             RunOnUi(delegate
             {
                 if (disposed) return;

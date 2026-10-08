@@ -89,6 +89,12 @@ namespace Bestie
                         { "name", brain.Name }, { "hue", brain.Looks.Hue },
                         { "playing", c.NowPlaying != null ? c.NowPlaying.Artist + " – " + c.NowPlaying.Title : null } },
                         PhoneIcon);
+                    // what it announces (reminders, finished jobs, heads-ups) also goes to the phone when they've stepped away
+                    string creatureName = brain.Name;
+                    AssistantModule.PhoneNotify = line =>
+                    {
+                        if (phone != null && phone.PushCount > 0 && Native.IdleSeconds() > 120) phone.Push(creatureName, line, "notice", "./");
+                    };
                 }
                 catch (Exception ex) { DebugLog.Write("phone app failed to start: " + ex); }
             }

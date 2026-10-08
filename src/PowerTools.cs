@@ -332,7 +332,7 @@ namespace Bestie
         // ================================================================== files
 
         /// <summary>Full path, or null (with why) for folders that belong to windows or to installed apps.</summary>
-        static string SafePath(string p, out string error)
+        internal static string SafePath(string p, out string error)
         {
             error = null;
             try
@@ -368,7 +368,7 @@ namespace Bestie
             return File.Exists(full) || Directory.Exists(full) ? new List<string> { full } : new List<string>();
         }
 
-        static string FreeName(string target)
+        internal static string FreeName(string target)
         {
             if (!File.Exists(target) && !Directory.Exists(target)) return target;
             string dir = Path.GetDirectoryName(target), stem = Path.GetFileNameWithoutExtension(target), ext = Path.GetExtension(target);
