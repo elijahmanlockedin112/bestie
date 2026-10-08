@@ -23,7 +23,7 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const isFile = url.includes('/api/file');
-    if (!isFile) for (const w of wins) { if ('focus' in w) { w.postMessage({ type: 'refresh' }); return w.focus(); } }
+    if (!isFile) for (const w of wins) { if ('focus' in w) { w.postMessage({ type: 'refresh', url }); return w.focus(); } }
     return self.clients.openWindow(url);
   })());
 });

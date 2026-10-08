@@ -126,7 +126,8 @@ namespace Bestie
                 P("time", "string", "clock time as they said it: '6:45 am', '6:45 pm', '18:45', 'noon'. keep their am/pm; leave it off if they didn't say"),
                 P("date", "string", "optional: 'today', 'tomorrow', a weekday like 'friday', or yyyy-mm-dd. omit for the next time that clock time comes around"),
                 P("minutes", "number", "only for relative reminders: minutes from now (2 hours = 120)"),
-                P("repeat", "string", "for reminders that come back: 'daily' (every night/morning), 'weekdays', 'weekends', 'weekly', or days like 'mon,thu'. needs a time. omit for one-time")));
+                P("repeat", "string", "for reminders that come back: 'daily' (every night/morning), 'weekdays', 'weekends', 'weekly', or days like 'mon,thu'. needs a time. omit for one-time"),
+                P("only_at_computer", "boolean", "true when it only makes sense at the computer ('remind me around 7 when i'm at my computer', computer chores): if they're away at that time it waits for them to sit down (up to 4 hours) instead of going to their phone")));
             t.Add(Tool("list_reminders", "list pending reminders.", R()));
             t.Add(Tool("cancel_reminder", "cancel a reminder.", R("match"), P("match", "string", "reminder id or part of its text")));
             bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
@@ -600,10 +601,12 @@ namespace Bestie
                 if (time.Length == 0) return new AssistantToolResult("not set: a repeating reminder needs a clock time (like \"7:39 pm\").");
                 if (!When.RepeatsOn(repeat, due.DayOfWeek)) due = When.NextRepeat(repeat, due.Hour, due.Minute, now);   // start on a day it repeats
             }
-            AssistantReminder r = module.Reminders.Add(due.ToUniversalTime(), text, repeat);
+            bool atComputer = Json.Bool(a, "only_at_computer", false);
+            AssistantReminder r = module.Reminders.Add(due.ToUniversalTime(), text, repeat, atComputer);
             string when = repeat.Length > 0 ? When.DescribeRepeat(repeat) + " at " + When.Clock(due) + " (first one " + WhenText(r.DueUtc) + ")" : WhenText(r.DueUtc);
-            return new AssistantToolResult("reminder " + r.Id + " set: " + when + " (" + When.Until(due, now) + " until the " + (repeat.Length > 0 ? "first" : "") + " one). tell them exactly that."
-                    + (assumed != null ? " " + assumed + " mention that." : ""),
+            return new AssistantToolResult("reminder " + r.Id + " set: " + when + " (" + When.Until(due, now) + " until the " + (repeat.Length > 0 ? "first" : "") + " one)"
+                    + (atComputer ? ", only when they're at the computer: if they're away then, it waits up to 4 hours for them to sit down" : ", on the computer and (when they're away from it) their phone")
+                    + ". tell them exactly that." + (assumed != null ? " " + assumed + " mention that." : ""),
                 "reminder " + when + ": " + text, "you asked me to remind you " + when + ": " + text);
         }
 
@@ -614,7 +617,7 @@ namespace Bestie
             var sb = new StringBuilder("pending reminders:");
             foreach (AssistantReminder r in list)
                 sb.Append("\n- " + r.Id + (string.IsNullOrEmpty(r.Repeat) ? " " + WhenText(r.DueUtc)
-                    : " " + When.DescribeRepeat(r.Repeat) + " at " + When.Clock(r.DueUtc.ToLocalTime()) + " (next " + WhenText(r.DueUtc) + ")") + ": " + r.Text);
+                    : " " + When.DescribeRepeat(r.Repeat) + " at " + When.Clock(r.DueUtc.ToLocalTime()) + " (next " + WhenText(r.DueUtc) + ")") + (r.AtComputer ? " [when at the computer]" : "") + ": " + r.Text);
             return new AssistantToolResult(sb.ToString());
         }
 
@@ -869,6 +872,8 @@ namespace Bestie
         public string Text;
         /// <summary>"" for once, else "daily" / "weekdays" / "weekends" / "mon,thu" (see When.ParseRepeat).</summary>
         public string Repeat = "";
+        /// <summary>Only when they're at the computer: due and they're away, it waits (up to AtComputerWindow) for them to come back.</summary>
+        public bool AtComputer;
     }
 
     /// <summary>Reminders persisted in .state\reminders.json, checked every ~15 s on a timer thread.
@@ -879,6 +884,7 @@ namespace Bestie
         readonly Action<AssistantReminder, bool> onFire;
         readonly object gate = new object();
         readonly List<AssistantReminder> items = new List<AssistantReminder>();
+        static readonly TimeSpan AtComputerWindow = TimeSpan.FromHours(4);
         Timer timer;
         int nextId = 1;
         int ticking;
@@ -901,13 +907,16 @@ namespace Bestie
 
         public AssistantReminder Add(DateTime dueUtc, string text) { return Add(dueUtc, text, ""); }
 
-        public AssistantReminder Add(DateTime dueUtc, string text, string repeat)
+        public AssistantReminder Add(DateTime dueUtc, string text, string repeat) { return Add(dueUtc, text, repeat, false); }
+
+        public AssistantReminder Add(DateTime dueUtc, string text, string repeat, bool atComputer)
         {
             var r = new AssistantReminder();
             r.CreatedUtc = DateTime.UtcNow;
             r.DueUtc = dueUtc;
             r.Text = text;
             r.Repeat = repeat ?? "";
+            r.AtComputer = atComputer;
             lock (gate)
             {
                 r.Id = "r" + (nextId++).ToString(CultureInfo.InvariantCulture);
@@ -956,8 +965,19 @@ namespace Bestie
                 lock (gate)
                 {
                     DateTime now = DateTime.UtcNow;
+                    bool here = Native.IdleSeconds() < 120;
                     foreach (AssistantReminder r in items.Where(x => x.DueUtc <= now).OrderBy(x => x.DueUtc).ToList())
                     {
+                        if (r.AtComputer && !here)
+                        {
+                            // it waits for them to sit down, for a while; after that it's missed (a repeating one tries again next time)
+                            if (now - r.DueUtc < AtComputerWindow) continue;
+                            DebugLog.Write("assistant: " + r.Id + " passed without them at the computer");
+                            if (string.IsNullOrEmpty(r.Repeat)) items.Remove(r);
+                            else { DateTime l = r.DueUtc.ToLocalTime(); r.DueUtc = When.NextRepeat(r.Repeat, l.Hour, l.Minute, DateTime.Now).ToUniversalTime(); }
+                            Save();
+                            continue;
+                        }
                         due.Add(new KeyValuePair<AssistantReminder, DateTime>(r, r.DueUtc));
                         if (string.IsNullOrEmpty(r.Repeat)) { items.Remove(r); continue; }
                         // a repeating one stays: on to its next time (same clock time, so daylight saving can't drift it)
@@ -972,7 +992,8 @@ namespace Bestie
                     double minsLate = (DateTime.UtcNow - kv.Value).TotalMinutes;
                     // a repeating one missed by hours (the computer was off) just waits for next time
                     if (!string.IsNullOrEmpty(r.Repeat) && minsLate > 6 * 60) { DebugLog.Write("assistant: skipped a missed repeat of " + r.Id); continue; }
-                    try { onFire(r, minsLate > 2); }
+                    // (one that waited for them to sit down isn't "late": it's right on cue)
+                    try { onFire(r, minsLate > 2 && !r.AtComputer); }
                     catch (Exception ex) { DebugLog.Write("assistant: reminder fire: " + ex.Message); }
                 }
                 Action ticked = Ticked;
@@ -1007,6 +1028,7 @@ namespace Bestie
                     r.DueUtc = due.ToUniversalTime();
                     r.CreatedUtc = created.ToUniversalTime();
                     r.Repeat = Json.Str(d, "repeat") ?? "";
+                    r.AtComputer = Json.Bool(d, "atComputer", false);
                     items.Add(r);
                     int n;
                     if (r.Id.StartsWith("r") && int.TryParse(r.Id.Substring(1), out n) && n >= nextId) nextId = n + 1;
@@ -1028,6 +1050,7 @@ namespace Bestie
                     d["created"] = r.CreatedUtc.ToString("o", CultureInfo.InvariantCulture);
                     d["text"] = r.Text;
                     if (!string.IsNullOrEmpty(r.Repeat)) d["repeat"] = r.Repeat;
+                    if (r.AtComputer) d["atComputer"] = true;
                     arr.Add(d);
                 }
                 var root = new Dictionary<string, object>();

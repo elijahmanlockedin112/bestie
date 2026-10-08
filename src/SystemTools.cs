@@ -18,7 +18,13 @@ namespace Bestie
                 + "in your bubble, and \"x finished\" notices wait and come as one summary afterwards. use it when they want you to stop going off, snooze, or "
                 + "be quiet for a while; minutes 0 turns it off.", R("minutes"),
                 P("minutes", "number", "how long, e.g. 60 for an hour. 0 = talk again now")));
-            t.Add(Tool("sound_output", "see or change which speakers or headphones the computer plays sound through, with the volume and mute state. use it first "
+            t.Add(Tool("dont_ask", "change what you do without asking them first. when they say you don't need to ask before something (\"don't ask before using chrome\", "
+                + "\"you can always run that\"), add it; when they want you to ask again, undo it; 'list' says what's on it. music/video apps, the time, weather and the "
+                + "calculator never ask already. buying, sending, deleting and signing in always ask, whatever is on the list.", R("kind"),
+                PE("kind", "an app you may use_computer in freely, a command you may run_command freely, or list", new[] { "app", "command", "list" }),
+                P("value", "string", "the app's name ('chrome', 'discord') or the exact command"),
+                P("undo", "boolean", "true to start asking again")));
+            t.Add(Tool("sound_output","see or change which speakers or headphones the computer plays sound through, with the volume and mute state. use it first "
                 + "whenever they can't hear something (it's often playing through the wrong or a virtual device) or want sound on other speakers or headphones.", R("action"),
                 PE("action", "list the outputs, or switch the default output", new[] { "list", "set" }),
                 P("device", "string", "for set: part of the device name, as list showed it, e.g. 'realtek' or 'headphones'")));
@@ -45,6 +51,12 @@ namespace Bestie
                 }
                 case "sound_output":
                     return SoundOutputTool(Json.Str(a, "action") ?? "list", Json.Str(a, "device") ?? "");
+                case "dont_ask":
+                {
+                    string kind = Json.Str(a, "kind") ?? "list";
+                    string result = Trust.Change(kind, Json.Str(a, "value") ?? "", Json.Bool(a, "undo", false));
+                    return new AssistantToolResult(result + " tell them in a few words.", kind == "list" ? null : result, null);
+                }
             }
             return null;
         }

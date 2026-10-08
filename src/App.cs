@@ -89,11 +89,18 @@ namespace Bestie
                         { "name", brain.Name }, { "hue", brain.Looks.Hue },
                         { "playing", c.NowPlaying != null ? c.NowPlaying.Artist + " – " + c.NowPlaying.Title : null } },
                         PhoneIcon);
+                    // drop a file (or a link, or text) on the creature: it goes to the phone
+                    AllowDrop = true;
+                    DragEnter += (s, de) => { if (de.Data.GetDataPresent(DataFormats.FileDrop) || de.Data.GetDataPresent(DataFormats.UnicodeText)) de.Effect = DragDropEffects.Copy; };
+                    DragDrop += (s, de) => SendToPhone(de.Data, "dropped");
+                    ClipWatch.Start();
                     // what it announces (reminders, finished jobs, heads-ups) also goes to the phone when they've stepped away
                     string creatureName = brain.Name;
                     AssistantModule.PhoneNotify = line =>
                     {
-                        if (phone != null && phone.PushCount > 0 && Native.IdleSeconds() > 120) phone.Push(creatureName, line, "notice", "./");
+                        if (Native.IdleSeconds() <= 120) return;   // they're right here: the computer says it
+                        NoteWhileAway(line);                       // and says it again when they're back
+                        if (phone != null && phone.PushCount > 0) phone.Push(creatureName, line, "notice", "./");
                     };
                 }
                 catch (Exception ex) { DebugLog.Write("phone app failed to start: " + ex); }
@@ -150,6 +157,7 @@ namespace Bestie
             SettleFinished();
             AnnounceFinished();
             QuietTick();
+            HomeTick();
             MaybeBeNosy();
             CheckHoldToTalk();
             CheckCalendarHeadsUps(dt);
@@ -336,6 +344,19 @@ namespace Bestie
             Add("my brain dumps", null, OpenBrainDumps);
             menu.Items.Add(new ToolStripSeparator());
             Add("ai sessions", "Ctrl+Alt+A", ToggleSessions);
+            var toPhone = new ToolStripMenuItem("send to my phone");
+            var clipItem = new ToolStripMenuItem("what i copied");
+            clipItem.Click += (s, e) => { try { SendToPhone(Clipboard.GetDataObject(), "copied"); } catch (Exception ex) { DebugLog.Write("menu: " + ex); } };
+            var fileItem = new ToolStripMenuItem("a file…");
+            fileItem.Click += (s, e) =>
+            {
+                using (var dlg = new OpenFileDialog { Title = "send to your phone", Multiselect = true, InitialDirectory = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads") })
+                    if (dlg.ShowDialog() == DialogResult.OK) { var d = new DataObject(); var list = new System.Collections.Specialized.StringCollection(); list.AddRange(dlg.FileNames); d.SetFileDropList(list); SendToPhone(d, "picked"); }
+            };
+            toPhone.DropDownItems.Add(clipItem);
+            toPhone.DropDownItems.Add(fileItem);
+            toPhone.DropDownItems.Add(new ToolStripMenuItem("(or drop a file on me)") { Enabled = false });
+            menu.Items.Add(toPhone);
             Add(brain.Name + " on your phone…", null, () =>
             {
                 if (phone == null) { c.Say("my phone line didn't start. check the log.", false, 0); return; }
@@ -576,7 +597,7 @@ namespace Bestie
             System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { BrowserBridge.Stop(); } catch { } });   // it can take seconds; the process exits anyway
             step("wake word", () => { if (wake != null) wake.Dispose(); });
             step("wispr", () => { if (wispr != null) wispr.Dispose(); if (wisprCapture != null && wisprCapture.Active) wisprCapture.End(); });
-            step("sessions", () => { AiSessions.Stop(); Office.Stop(); Behavior.Stop(); if (phone != null) phone.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
+            step("sessions", () => { AiSessions.Stop(); Office.Stop(); Behavior.Stop(); ClipWatch.Stop(); if (phone != null) phone.Stop(); if (sessHotkey != null) sessHotkey.Dispose(); if (sessPanel != null) sessPanel.Close(); if (sessHandle != null) sessHandle.Close(); });
             step("tray", () => { if (tray != null) { tray.Visible = false; tray.Dispose(); } bubble.Close(); });
             base.OnFormClosing(e);
         }
@@ -928,6 +949,109 @@ namespace Bestie
         {
             if (Quiet.On) { Quiet.Hold(brief); return; }
             Announce(line);
+        }
+
+        // ---- to the phone: files, links, text, a copied picture ----
+
+        void SendToPhone(IDataObject data, string how)
+        {
+            if (phone == null) { c.Say("my phone line isn't up. right-click me → " + brain.Name + " on your phone… to set it up.", false, 0); return; }
+            if (data == null) { c.Say("there's nothing there to send.", false, 0); return; }
+            var sent = new List<string>();
+            string problem = null;
+            if (data.GetDataPresent(DataFormats.FileDrop))
+            {
+                foreach (string f in ((string[])data.GetData(DataFormats.FileDrop) ?? new string[0]).Take(20))
+                {
+                    if (System.IO.Directory.Exists(f)) { problem = "folders don't fit through the phone line; send the files inside."; continue; }
+                    string p = phone.SendFileToPhone(f, true);
+                    if (p == null) sent.Add(System.IO.Path.GetFileName(f)); else problem = p;
+                }
+            }
+            else if (data.GetDataPresent(DataFormats.Bitmap))
+            {
+                // a copied picture (a screenshot, an image from a page): saved as a png first
+                try
+                {
+                    var img = data.GetData(DataFormats.Bitmap) as Image;
+                    if (img != null)
+                    {
+                        string dir = System.IO.Path.Combine(Home.Root, "to phone");
+                        System.IO.Directory.CreateDirectory(dir);
+                        string file = System.IO.Path.Combine(dir, "picture " + DateTime.Now.ToString("yyyy-MM-dd HHmmss") + ".png");
+                        img.Save(file, System.Drawing.Imaging.ImageFormat.Png);
+                        string p = phone.SendFileToPhone(file, true);
+                        if (p == null) sent.Add("the picture"); else problem = p;
+                    }
+                }
+                catch (Exception ex) { problem = "couldn't save that picture: " + ex.Message; }
+            }
+            else if (data.GetDataPresent(DataFormats.UnicodeText))
+            {
+                string text = data.GetData(DataFormats.UnicodeText) as string;
+                if (!string.IsNullOrWhiteSpace(text)) { phone.SendTextToPhone(text); sent.Add(text.Trim().StartsWith("http") ? "the link" : "the text"); }
+            }
+            if (sent.Count == 0) { c.Say(problem ?? "there's nothing there to send.", false, 0); return; }
+            string what = sent.Count == 1 ? sent[0] : sent.Count + " files";
+            Journal.Add("sent " + what + " to your phone.");
+            c.Emit("sparkle", 3);
+            c.Say("sent " + what + " to your phone." + (phone.PushCount == 0 ? " it's in the app under saved → from your pc." : ""), false, 0);
+        }
+
+        // ---- coming home: what they added from the phone and what they missed, front and centre ----
+
+        bool homeAway;
+        HashSet<string> todosBefore = new HashSet<string>();
+        DateTime lastHomeAt = DateTime.MinValue, lastTodoSnap = DateTime.MinValue;
+        double nextHomeCheck;
+        readonly List<string> missedWhileAway = new List<string>();
+
+        /// <summary>Something it announced while they were away (any thread): it comes up again when they're back.</summary>
+        void NoteWhileAway(string line)
+        {
+            lock (missedWhileAway) if (missedWhileAway.Count < 8 && !missedWhileAway.Contains(line)) missedWhileAway.Add(line);
+        }
+
+        static HashSet<string> OpenTodos()
+        {
+            try { return new HashSet<string>(Todos.Load().Where(t => !t.Done).Select(t => t.Text)); }
+            catch { return new HashSet<string>(); }
+        }
+
+        void HomeTick()
+        {
+            if (Clock.T < nextHomeCheck) return;
+            nextHomeCheck = Clock.T + 2;
+            DateTime now = DateTime.Now;
+            bool slept = lastHomeAt != DateTime.MinValue && (now - lastHomeAt).TotalSeconds > 90;   // the computer was asleep or off
+            lastHomeAt = now;
+            double idle = Native.IdleSeconds();
+            if (!homeAway)
+            {
+                if (idle > 300 || slept) { homeAway = true; if (!slept) todosBefore = OpenTodos(); return; }
+                if ((now - lastTodoSnap).TotalSeconds > 30) { todosBefore = OpenTodos(); lastTodoSnap = now; }
+                return;
+            }
+            if (idle > 5) return;
+            // they're back
+            homeAway = false;
+            HashSet<string> current = OpenTodos();
+            List<string> fresh = current.Where(t => !todosBefore.Contains(t)).ToList();
+            todosBefore = current; lastTodoSnap = now;
+            List<string> missed;
+            lock (missedWhileAway) { missed = missedWhileAway.ToList(); missedWhileAway.Clear(); }
+            if (fresh.Count == 0 && missed.Count == 0) return;
+            var sb = new System.Text.StringBuilder("welcome back.");
+            if (fresh.Count > 0)
+            {
+                WidgetManager.Request("todo", true, null);
+                sb.Append(" you added ").Append(fresh.Count == 1 ? "one thing" : fresh.Count + " things").Append(" to your list while you were out: ")
+                  .Append(string.Join(", ", fresh.Take(4).ToArray())).Append(fresh.Count > 4 ? ", and " + (fresh.Count - 4) + " more" : "").Append(". it's on your desktop.");
+            }
+            if (missed.Count > 0)
+                sb.Append(" while you were away: ").Append(string.Join(" … ", missed.Take(3).Select(m => m.TrimEnd('.')).ToArray())).Append(missed.Count > 3 ? " … and " + (missed.Count - 3) + " more." : ".");
+            Journal.Add("you came back to " + fresh.Count + " new to-do(s) and " + missed.Count + " thing(s) you'd missed.");
+            Announce(sb.ToString());
         }
 
         double nextQuietCheck;

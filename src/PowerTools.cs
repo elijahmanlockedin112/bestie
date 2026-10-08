@@ -492,6 +492,21 @@ namespace Bestie
         // only the display ones: Format-Volume wipes a drive, Out-File writes one, Out-Printer prints
         static readonly HashSet<string> ReadShapers = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "format-table", "format-list", "format-wide", "format-custom", "format-hex", "out-string", "out-host", "out-null", "out-gridview" };
+        static readonly HashSet<string> SafeMethods = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "ToString", "ToShortTimeString", "ToShortDateString", "ToLongTimeString", "ToLongDateString", "ToUniversalTime", "ToLocalTime",
+            "AddDays", "AddHours", "AddMinutes", "AddSeconds", "AddMonths", "AddYears", "Subtract", "ToUpper", "ToLower", "ToUpperInvariant",
+            "ToLowerInvariant", "Trim", "TrimStart", "TrimEnd", "Split", "Substring", "Replace", "Contains", "StartsWith", "EndsWith", "IndexOf",
+            "PadLeft", "PadRight", "Equals", "CompareTo", "GetType", "Round", "Floor", "Ceiling", "Abs", "Join", "Format", "Max", "Min",
+        };
+        // type -> members it may use (empty: any)
+        static readonly Dictionary<string, string[]> SafeStatics = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
+        {
+            { "math", new string[0] }, { "timespan", new string[0] }, { "datetime", new[] { "Now", "Today", "UtcNow", "Parse", "DaysInMonth", "IsLeapYear" } },
+            { "string", new[] { "Join", "Format", "IsNullOrEmpty", "IsNullOrWhiteSpace", "Concat" } }, { "timezoneinfo", new[] { "Local", "Utc" } },
+            { "environment", new[] { "MachineName", "UserName", "OSVersion", "ProcessorCount", "TickCount", "TickCount64", "Is64BitOperatingSystem", "GetFolderPath", "Version" } },
+            { "net.dns", new[] { "GetHostName" } },
+        };
         static readonly HashSet<string> ReadCommands = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "ipconfig", "ping", "whoami", "hostname", "systeminfo", "tasklist", "netstat", "nslookup", "where.exe", "ls", "dir", "gci", "gc", "cat", "type", "gps", "ps",
@@ -502,15 +517,27 @@ namespace Bestie
         /// redirection, scripts, method calls, .NET calls or nested commands.</summary>
         internal static bool ReadOnlyCommand(string cmd)
         {
-            if (Regex.IsMatch(cmd, @"[>`&]|\$\(|@\(|\[[\w.]+\]::|\.\w+\s*\(|\b(iex|icm|invoke|start|saps|set|new|remove|rm|del|erase|rd|rmdir|mv|move|cp|copy|ren|rename|add|clear|stop|kill|restart|disable|enable|install|uninstall|out-file|tee|export|import|register|unregister|reg|sc|schtasks|net|netsh|shutdown|format|diskpart|bcdedit|wmic|cmd|powershell|pwsh|curl|wget|iwr|irm)\b(?!-)", RegexOptions.IgnoreCase))
+            // a command word, not a parameter ("-Format"), a property ("$x.Format") or part of a cmdlet name ("Format-Table")
+            if (Regex.IsMatch(cmd, @"[>`&]|\$\(|@\(|(?<![-.$\w])(iex|icm|invoke|start|saps|set|new|remove|rm|del|erase|rd|rmdir|mv|move|cp|copy|ren|rename|add|clear|stop|kill|restart|disable|enable|install|uninstall|out-file|tee|export|import|register|unregister|reg|sc|schtasks|net|netsh|shutdown|format|diskpart|bcdedit|wmic|cmd|powershell|pwsh|curl|wget|iwr|irm)\b(?!-)", RegexOptions.IgnoreCase))
                 return false;
+            // method calls only from a short list of ones that just read or reshape a value (time, text, numbers)
+            foreach (Match m in Regex.Matches(cmd, @"\.(\w+)\s*\("))
+                if (!SafeMethods.Contains(m.Groups[1].Value)) return false;
+            foreach (Match m in Regex.Matches(cmd, @"\[([\w.]+)\]::(\w+)"))
+            {
+                string type = m.Groups[1].Value.ToLowerInvariant();
+                if (type.StartsWith("system.")) type = type.Substring(7);
+                string[] members;
+                if (!SafeStatics.TryGetValue(type, out members) || (members.Length > 0 && !members.Contains(m.Groups[2].Value, StringComparer.OrdinalIgnoreCase))) return false;
+            }
             if (Regex.IsMatch(cmd, @"powercfg\s+/(?!list|l\b|query|q\b|batteryreport|energy|a\b|availablesleepstates|requests)", RegexOptions.IgnoreCase)) return false;
             // secrets never go out in a reply without them seeing the command first
             if (Regex.IsMatch(cmd, @"\.env\b|\.ssh|credential|password|passwd|secret|token|apikey|api_key|\.pem\b|\.key\b|wallet|cookies|login data|about-me", RegexOptions.IgnoreCase)) return false;
             foreach (string segment in Regex.Split(cmd, @"[|;\n{}()]"))
             {
                 string first = segment.Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
-                if (first == null || first.StartsWith("$") || first.StartsWith("-") || first.StartsWith("'") || first.StartsWith("\"") || Regex.IsMatch(first, @"^[\d.]+$")) continue;
+                if (first == null || first.StartsWith("$") || first.StartsWith("-") || first.StartsWith("'") || first.StartsWith("\"") || first.StartsWith(".") || first.StartsWith("[")
+                    || first.StartsWith(",") || first.StartsWith("+") || Regex.IsMatch(first, @"^[\d.]+$")) continue;   // values, members and checked static calls
                 int dash = first.IndexOf('-');
                 if (dash > 0 && ReadVerbs.Contains(first.Substring(0, dash).ToLowerInvariant())) continue;
                 if (ReadShapers.Contains(first)) continue;
@@ -526,14 +553,16 @@ namespace Bestie
             if (command.Length == 0) return new AssistantToolResult("run what?");
             if (command.Length > 2000) return new AssistantToolResult("keep it to one short command.");
             bool readOnly = ReadOnlyCommand(command);
-            if (!readOnly)
+            if (!readOnly && !Trust.CommandTrusted(command))
             {
-                int ok = module.AskUser("run this on your computer?\n\n" + OpenAIClient.Trunc(command, 400) + (why.Length > 0 ? "\n\n(" + OpenAIClient.Trunc(why, 160) + ")" : ""), AssistantCalendar.ConfirmTimeoutMs);
+                int ok = module.AskUser("run this on your computer?\n\n" + OpenAIClient.Trunc(command, 400) + (why.Length > 0 ? "\n\n(" + OpenAIClient.Trunc(why, 160) + ")" : "")
+                    + "\n\nyes also means i won't ask about this exact command again.", AssistantCalendar.ConfirmTimeoutMs);
                 if (ok != 1)
                 {
                     Journal.Add("i asked to run a command (" + OpenAIClient.Trunc(command, 80) + "). " + (ok == 0 ? "you said no." : "you didn't answer."));
                     return new AssistantToolResult(ok == 0 ? "they said no, so it didn't run." : "they didn't answer, so it didn't run.");
                 }
+                Trust.TrustCommand(command);
             }
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("command " + command); return new AssistantToolResult("ran."); }
             string script = "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.Encoding]::UTF8; " + command;

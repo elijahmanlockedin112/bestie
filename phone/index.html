@@ -167,6 +167,28 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 .menu .act{font-size:16.5px}
 .menu .cancel{width:100%;padding:14px;margin-top:6px;border-radius:12px;background:var(--bubble);font-weight:600}
 
+/* saved / from your pc */
+.seg{flex:none;display:flex;gap:2px;margin:10px 16px 0;padding:3px;border:1px solid var(--line);border-radius:11px}
+.seg button{flex:1;padding:7px 0;border-radius:8px;font-size:14px;font-weight:600;color:var(--muted);position:relative}
+.seg button.on{background:var(--bubble);color:var(--fg)}
+.newdot{display:none;width:8px;height:8px;border-radius:50%;background:var(--accent);position:absolute;top:7px;right:12px}
+.newdot.show{display:block}
+.hbtn{position:relative}
+.hbtn .newdot{top:8px;right:8px}
+.row .ic{color:var(--muted);flex:none;margin-top:1px}
+.row .ic .icon{width:20px;height:20px}
+.row .x{color:var(--faint);padding:2px 0 2px 8px}
+.row .x .icon{width:16px;height:16px}
+.clip{white-space:pre-wrap;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.secbtn{font:11px var(--mono);color:var(--accent);text-transform:none;letter-spacing:0}
+
+/* notifications ask */
+.notify{flex:none;display:none;align-items:center;gap:10px;padding:10px 6px 10px 14px;border-bottom:1px solid var(--line);font-size:14px;color:var(--muted)}
+.notify.show{display:flex}
+.notify span{flex:1}
+.allow{background:var(--accent);color:#fff;border-radius:999px;padding:7px 13px;font-size:13.5px;font-weight:600;white-space:nowrap}
+.act .allow{flex:none}
+
 /* mood avatar */
 header img.think{animation:bob 1.1s ease-in-out infinite}
 @keyframes bob{50%{transform:translateY(-3px) rotate(-3deg)}}
@@ -248,13 +270,14 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
   <div class="who"><b>{{NAME}}</b><div class="status" id="status"><i></i>connecting…</div></div>
   <button class="hbtn" id="controlsBtn" aria-label="Controls"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   <button class="hbtn" id="screenBtn" aria-label="See your computer screen"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
-  <button class="hbtn" id="savedBtn" aria-label="Saved"><svg class="icon" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"/></svg></button>
+  <button class="hbtn" id="savedBtn" aria-label="Saved"><svg class="icon" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"/></svg><i class="newdot" id="savedDot"></i></button>
 </header>
 <div class="install" id="install">
   <svg class="icon" viewBox="0 0 24 24"><path d="M12 3v12M8 7l4-4 4 4"/><path d="M6 11H5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-1"/></svg>
-  <span>Tap <b>Share</b>, then <b>Add to Home Screen</b> to keep {{NAME}} as an app.</span>
+  <span>Tap <b>Share</b>, then <b>Add to Home Screen</b>. {{NAME}} becomes an app, and that's also what lets it send you notifications.</span>
   <button class="hbtn" id="installX" aria-label="Dismiss"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
 </div>
+<div class="notify" id="notifyBar"><span>Get reminders and replies on this phone, even when you're away from the computer.</span><button class="allow" id="notifyAllow">Allow notifications</button><button class="hbtn" id="notifyX" aria-label="Not now"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
 <div class="offline" id="offline"><span>Can't reach your computer. Is it on, with Tailscale on this phone?</span><button id="retryConn">Retry</button></div>
 <main id="log"></main>
 <div class="chips" id="chips"></div>
@@ -273,7 +296,9 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
 
 <section class="sheet" id="savedSheet">
   <div class="top"><b>Saved</b><button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="seg"><button data-seg="saved" class="on">Saved</button><button data-seg="pc">From your PC<i class="newdot" id="segDot"></i></button></div>
   <div class="body" id="savedBody"></div>
+  <div class="body" id="pcBody" style="display:none"></div>
 </section>
 <section class="sheet" id="controlsSheet">
   <div class="top"><b>Controls</b><button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
@@ -297,6 +322,7 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
     <button class="act" data-act="sleep"><svg class="icon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><span class="main">Put it to sleep</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     <div class="sec"><span>Clipboard</span></div>
     <button class="act" data-act="clip_to_pc"><svg class="icon" viewBox="0 0 24 24"><rect x="7" y="4" width="10" height="16" rx="2"/><path d="M12 9v6M9 12l3 3 3-3"/></svg><span class="main">Send my clipboard to the PC</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+    <button class="act" data-act="link_to_pc"><svg class="icon" viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg><span class="main">Open a link on the PC<div class="sub">the link you copied on this phone</div></span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     <button class="act" data-act="clip_from_pc"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="11" rx="2"/><path d="M12 9v9M9 15l3 3 3-3"/></svg><span class="main">Copy the PC's clipboard</span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
     <div class="sec"><span>Files</span></div>
     <button class="act" data-act="send_file"><svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M12 18v-6M9 15l3-3 3 3"/></svg><span class="main">Send a photo or file to the PC<div class="sub">it lands in Downloads\From phone</div></span><svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
@@ -322,7 +348,7 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
     <button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
   <div class="tabs" id="screenTabs"></div>
   <div class="body" id="screenBody"><div class="view" id="view"><img id="shot" alt=""><span class="tapdot" id="tapdot"></span></div><div class="hint" id="screenHint">tap to click · hold to right-click · double-tap to double-click<br>turn sideways for a bigger view</div></div>
-  <form class="typebar" id="typeBar"><input id="typeText" placeholder="Type on your computer" autocomplete="off" autocapitalize="off" enterkeyhint="send"><button>Type</button></form>
+  <form class="typebar" id="typeBar"><input id="typeText" placeholder="Tap a spot above, then type here" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="enter"><button>Enter</button></form>
   <div class="tools">
     <button id="zoomBtn"><svg class="icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5M11 8v6M8 11h6"/></svg>zoom</button>
     <button id="kbBtn"><svg class="icon" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>type</button>
@@ -585,7 +611,7 @@ async function vmListen() {
   const rec = vm.rec = new MediaRecorder(vm.stream, type ? { mimeType: type } : undefined);
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.start(250);
-  let floor = 0.006, frames = 0, voiced = 0, speaking = false, quietSince = 0;
+  let floor = 0.006, frames = 0, voiced = 0, speaking = false, quietSince = 0, talkStart = 0;
   const started = performance.now();
   const tick = () => {
     if (!vm.on || vm.rec !== rec) return;
@@ -594,10 +620,12 @@ async function vmListen() {
     const rms = Math.sqrt(sum / buf.length), now = performance.now();
     if (++frames < 18) floor = Math.max(floor * 0.85 + rms * 0.15, 0.004);   // the first ~300 ms learns how loud the room is
     $('vmLevel').style.transform = 'scale(' + (1 + Math.min(rms * 9, 0.7)).toFixed(3) + ')';
-    if (rms > Math.max(floor * 3, 0.018)) { voiced++; quietSince = 0; if (!speaking && voiced > 5) { speaking = true; vmSet('hearing', 'Go on…'); } }
+    if (rms > Math.max(floor * 3, 0.018)) { voiced++; quietSince = 0; if (!speaking && voiced > 5) { speaking = true; talkStart = now; vmSet('hearing', 'Go on…'); } }
     else { voiced = Math.max(0, voiced - 1); if (speaking && !quietSince) quietSince = now; }
-    if (speaking && quietSince && now - quietSince > 950) return finish();   // they stopped talking
-    if (speaking && now - started > 60000) return finish();
+    // a quick question ends after about a second of quiet; a long list gets more room to think of the next thing
+    const patience = speaking && now - talkStart > 5000 ? 1900 : 950;
+    if (speaking && quietSince && now - quietSince > patience) return finish();   // they stopped talking
+    if (speaking && now - started > 120000) return finish();
     if (!speaking && now - started > 20000) { vmStopMic(); return vmListen(); }   // nothing said: start a fresh clip
     vm.raf = requestAnimationFrame(tick);
   };
@@ -767,6 +795,7 @@ async function refreshStatus() {
     if (s.quietUntil) bits.push('quiet until ' + s.quietUntil);
     $('status').innerHTML = '<i class="' + (s.active ? 'on' : '') + '"></i>' + esc(bits.join(' · '));
     $('offline').classList.remove('show');
+    if (typeof s.inboxNewest === 'number') { inboxNewest = s.inboxNewest; showInboxDot(); }
     // it naps when the computer's been left alone a while
     const rest = s.idleSeconds > 900 ? 'sleep' : 'content';
     if (rest !== restingMood) { restingMood = rest; if (!busy && !$('av').classList.contains('think')) mood(rest); }
@@ -784,7 +813,70 @@ const open = id => $(id).classList.add('open'), close = id => $(id).classList.re
 document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => close(b.closest('.sheet').id));
 document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => close('noteSheet'));
 
-$('savedBtn').onclick = () => { open('savedSheet'); loadSaved(); };
+$('savedBtn').onclick = () => { open('savedSheet'); showSeg(segNow); };
+let segNow = 'saved', inboxNewest = 0;
+function showSeg(which) {
+  segNow = which;
+  document.querySelectorAll('[data-seg]').forEach(b => b.classList.toggle('on', b.dataset.seg === which));
+  $('savedBody').style.display = which === 'saved' ? '' : 'none';
+  $('pcBody').style.display = which === 'pc' ? '' : 'none';
+  if (which === 'saved') loadSaved(); else loadPc();
+}
+document.querySelectorAll('[data-seg]').forEach(b => b.onclick = () => showSeg(b.dataset.seg));
+function markInboxSeen() { localStorage.setItem('bestie-inbox-seen', String(inboxNewest)); $('savedDot').classList.remove('show'); $('segDot').classList.remove('show'); }
+function showInboxDot() {
+  const seen = +(localStorage.getItem('bestie-inbox-seen') || 0), fresh = inboxNewest > seen;
+  $('savedDot').classList.toggle('show', fresh); $('segDot').classList.toggle('show', fresh);
+}
+const ICON = {
+  file: '<svg class="icon" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>',
+  link: '<svg class="icon" viewBox="0 0 24 24"><path d="M10 14a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1"/><path d="M14 10a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1"/></svg>',
+  text: '<svg class="icon" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>',
+  tab: '<svg class="icon" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/></svg>',
+  dl: '<svg class="icon" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  x: '<svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+};
+let pcData = null;
+async function loadPc() {
+  const body = $('pcBody');
+  if (!body.innerHTML) body.innerHTML = '<p class="none">loading…</p>';
+  try { pcData = await api('api/fromPc'); } catch (e) { body.innerHTML = '<p class="none">can’t reach your computer</p>'; return; }
+  const d = pcData;
+  let h = '<div class="sec"><span>Sent to this phone</span>' + (d.inbox.length ? '<button class="secbtn" data-inbox-clear>clear</button>' : '') + '</div>';
+  h += d.inbox.length ? d.inbox.map((i, n) => '<div class="row" data-inbox="' + n + '"><span class="ic">' + ICON[i.kind] + '</span><div class="main"><div class="' + (i.kind === 'text' ? 'clip' : '') + '">' + esc(i.kind === 'file' ? i.name : i.kind === 'link' ? i.text.replace(/^https?:\/\/(www\.)?/, '') : i.text) + '</div><div class="sub">' + (i.kind === 'file' ? size(i.size) + ' · ' : i.kind === 'text' ? 'tap to copy · ' : '') + esc(i.when) + '</div></div><button class="x" data-inbox-x="' + esc(i.id) + '" aria-label="Remove">' + ICON.x + '</button></div>').join('')
+    : '<p class="none">nothing yet. on your PC, drop a file on ' + esc(NAME) + ', or right-click it → send to my phone.</p>';
+  h += '<div class="sec"><span>Tabs on your PC</span><span>' + d.tabs.length + '</span></div>';
+  h += d.tabs.length ? d.tabs.slice(0, 12).map((t, n) => '<div class="row" data-tab="' + n + '"><span class="ic">' + ICON.tab + '</span><div class="main"><div class="clip" style="-webkit-line-clamp:2">' + esc(t.title || t.url) + '</div><div class="sub">' + esc(t.host) + '</div></div></div>').join('')
+    : '<p class="none">no browser tabs (the ' + esc(NAME) + ' browser extension isn’t connected).</p>';
+  h += '<div class="sec"><span>Recent downloads</span></div>';
+  h += d.downloads.length ? d.downloads.map((f, n) => '<div class="row" data-dl="' + n + '"><span class="ic">' + ICON.dl + '</span><div class="main">' + esc(f.name) + '<div class="sub">' + size(f.size) + ' · ' + esc(f.when) + '</div></div></div>').join('') : '<p class="none">your downloads folder is empty.</p>';
+  h += '<div class="sec"><span>Copied on your PC</span></div>';
+  h += d.copies.length ? d.copies.map((c, n) => '<div class="row" data-copy="' + n + '"><span class="ic">' + ICON.text + '</span><div class="main"><div class="clip">' + esc(c.text) + '</div><div class="sub">tap to copy · ' + esc(c.when) + '</div></div></div>').join('')
+    : '<p class="none">copy something on your PC and it shows up here (passwords never do).</p>';
+  body.innerHTML = h;
+  inboxNewest = d.inbox.length ? d.inbox[0].at : 0; markInboxSeen();
+}
+const openUrl = url => { const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; document.body.appendChild(a); a.click(); a.remove(); };
+$('pcBody').addEventListener('click', async e => {
+  const d = pcData; if (!d) return;
+  const x = e.target.closest('[data-inbox-x]'), clr = e.target.closest('[data-inbox-clear]');
+  if (x || clr) { try { await api('api/inbox', { json: clr ? { action: 'clear' } : { id: x.dataset.inboxX } }); loadPc(); } catch (err) { toast(err.message); } return; }
+  const inb = e.target.closest('[data-inbox]'), tab = e.target.closest('[data-tab]'), dl = e.target.closest('[data-dl]'), cp = e.target.closest('[data-copy]');
+  if (inb) {
+    const i = d.inbox[+inb.dataset.inbox];
+    if (i.kind === 'file') { if (i.url) openUrl(i.url + '&k=' + encodeURIComponent(key)); else toast('that file isn’t on your PC anymore'); }
+    else if (i.kind === 'link') openUrl(i.text);
+    else navigator.clipboard.writeText(i.text).then(() => toast('copied')).catch(() => toast('couldn’t copy'));
+  }
+  if (tab) openUrl(d.tabs[+tab.dataset.tab].url);
+  if (cp) navigator.clipboard.writeText(d.copies[+cp.dataset.copy].text).then(() => toast('copied to this phone')).catch(() => toast('couldn’t copy'));
+  if (dl) {
+    // the tap's permission to open a tab doesn't survive waiting for the link, so open the tab first and fill it in
+    const w = window.open('', '_blank');
+    try { const r = await api('api/download', { json: { name: d.downloads[+dl.dataset.dl].name } }); const u = r.url + '&k=' + encodeURIComponent(key); if (w) w.location = u; else openUrl(u); }
+    catch (err) { if (w) w.close(); toast(err.message); }
+  }
+});
 async function loadSaved(data) {
   const body = $('savedBody');
   if (!data) { if (!body.innerHTML) body.innerHTML = '<p class="none">loading…</p>'; try { data = await api('api/saved'); } catch (e) { body.innerHTML = '<p class="none">can’t reach your computer</p>'; return; } }
@@ -793,7 +885,7 @@ async function loadSaved(data) {
   h += '<form class="add" id="todoAdd"><input id="todoText" placeholder="Add a to-do" enterkeyhint="done" autocomplete="off"></form>';
   h += data.todos.length ? data.todos.map(t => '<div class="row' + (t.done ? ' done' : '') + '" data-todo="' + esc(t.text) + '" data-done="' + t.done + '"><div class="check' + (t.done ? ' on' : '') + '">' + (t.done ? '<svg class="icon" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg>' : '') + '</div><div class="main">' + esc(t.text) + '</div></div>').join('') : '<p class="none">nothing on the list</p>';
   h += '<div class="sec"><span>Reminders</span><span>' + data.reminders.length + '</span></div>';
-  h += data.reminders.length ? data.reminders.map(r => '<div class="row"><div class="main">' + esc(r.text) + '<div class="sub">' + esc(r.when) + (r.repeat ? ' · ' + esc(r.repeat) : '') + '</div></div></div>').join('') : '<p class="none">no reminders coming up. ask ' + esc(NAME) + ' to set one.</p>';
+  h += data.reminders.length ? data.reminders.map(r => '<div class="row"><div class="main">' + esc(r.text) + '<div class="sub">' + esc(r.when) + (r.repeat ? ' · ' + esc(r.repeat) : '') + (r.atComputer ? ' · when you’re at your pc' : '') + '</div></div></div>').join('') : '<p class="none">no reminders coming up. ask ' + esc(NAME) + ' to set one.</p>';
   h += '<div class="sec"><span>Notes</span><span>' + data.notes.length + '</span></div>';
   h += data.notes.length ? data.notes.map(n => '<div class="row" data-note="' + esc(n.name) + '"><div class="main"><b style="font-weight:600">' + esc(n.title) + '</b><div class="pre">' + esc(n.preview) + '</div><div class="sub">' + esc(n.when) + '</div></div></div>').join('') : '<p class="none">no notes yet. say “make a note…”</p>';
   body.innerHTML = h;
@@ -845,6 +937,13 @@ $('controlsSheet').addEventListener('click', async e => {
     } catch (err) { toast('couldn’t copy: ' + err.message); }
   }
   if (a === 'push') togglePush();
+  if (a === 'link_to_pc') {
+    let t = '';
+    try { t = (await navigator.clipboard.readText()).trim(); } catch (_) {}
+    const m = t.match(/https?:\/\/\S+/);
+    const url = m ? m[0] : (prompt('Link to open on your PC:', 'https://') || '').trim();
+    if (/^https?:\/\/\S+$/.test(url)) control('open_url', url); else if (url && url !== 'https://') toast('that isn’t a web link');
+  }
 });
 
 // ---------- notifications ----------
@@ -853,9 +952,18 @@ async function pushSub() { if (!('serviceWorker' in navigator) || !('PushManager
 async function pushState() {
   let on = false;
   try { on = typeof Notification !== 'undefined' && Notification.permission === 'granted' && !!(await pushSub()); } catch (_) {}
-  $('pushSw').classList.toggle('on', on);
-  $('pushSub').textContent = on ? 'on: reminders, finished jobs and replies' : (standalone || !/iPhone|iPad/.test(navigator.userAgent)) ? 'reminders, finished jobs and replies' : 'add ' + NAME + ' to your Home Screen first';
+  const sw = $('pushSw');
+  // off: a clear button that asks right away; on: a switch to turn them off
+  sw.className = on ? 'switch on' : 'allow';
+  sw.textContent = on ? '' : 'Allow';
+  $('pushSub').textContent = on ? 'on: reminders, finished jobs and replies' : (standalone || !/iPhone|iPad/.test(navigator.userAgent)) ? 'reminders, finished jobs and replies when you’re away' : 'first add ' + NAME + ' to your Home Screen (Share → Add to Home Screen)';
+  // the banner at the top: once, in the home-screen app, until they allow or say not now
+  const ask = !on && standalone && typeof Notification !== 'undefined' && Notification.permission !== 'denied' && !localStorage.getItem('bestie-notify-x');
+  $('notifyBar').classList.toggle('show', ask);
+  return on;
 }
+$('notifyAllow').onclick = () => { unlockAudio(); togglePush(); };
+$('notifyX').onclick = () => { localStorage.setItem('bestie-notify-x', '1'); $('notifyBar').classList.remove('show'); };
 async function togglePush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') {
     toast(/iPhone|iPad/.test(navigator.userAgent) && !standalone ? 'Add ' + NAME + ' to your Home Screen, open it from there, then turn this on' : 'this browser can’t do notifications', 4000); return;
@@ -918,8 +1026,24 @@ shot.addEventListener('pointerup', () => {
 });
 shot.addEventListener('contextmenu', e => e.preventDefault());
 $('zoomBtn').onclick = () => { $('view').classList.toggle('zoomed'); $('zoomBtn').classList.toggle('on'); $('screenHint').style.display = $('view').classList.contains('zoomed') ? 'none' : ''; };
-$('kbBtn').onclick = () => { $('typeBar').classList.toggle('show'); $('kbBtn').classList.toggle('on'); if ($('typeBar').classList.contains('show')) $('typeText').focus(); };
-$('typeBar').onsubmit = e => { e.preventDefault(); const t = $('typeText').value; if (!t) return; $('typeText').value = ''; act({ do: 'type', text: t }); };
+$('kbBtn').onclick = () => {
+  $('typeBar').classList.toggle('show'); $('kbBtn').classList.toggle('on');
+  if ($('typeBar').classList.contains('show')) { $('typeText').value = ''; typedSent = ''; $('typeText').focus(); }
+};
+// live typing: what you type shows up on the computer as you type (sent in little bursts); return presses enter there
+let typedSent = '', typeTimer = null, typeChain = Promise.resolve();
+const typeAct = body => typeChain = typeChain.then(() => api('api/screen/act', { json: Object.assign({ screen: scr.index }, body) }).then(showShot).catch(err => toast(err.message)));
+function flushTyping() {
+  clearTimeout(typeTimer);
+  const now = $('typeText').value;
+  let same = 0;
+  while (same < now.length && same < typedSent.length && now[same] === typedSent[same]) same++;
+  if (typedSent.length > same) typeAct({ do: 'key', key: 'backspace', times: typedSent.length - same });
+  if (now.length > same) typeAct({ do: 'type', text: now.slice(same) });
+  typedSent = now;
+}
+$('typeText').addEventListener('input', () => { clearTimeout(typeTimer); typeTimer = setTimeout(flushTyping, 220); });
+$('typeBar').onsubmit = e => { e.preventDefault(); flushTyping(); typeAct({ do: 'key', key: 'enter' }); $('typeText').value = ''; typedSent = ''; };
 document.querySelectorAll('[data-key]').forEach(b => b.onclick = () => act({ do: 'key', key: b.dataset.key }));
 document.querySelectorAll('[data-scroll]').forEach(b => b.onclick = () => act({ do: 'scroll', x: 0.5, y: 0.5, dy: +b.dataset.scroll * 400 }));
 
@@ -933,7 +1057,11 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js')
     .then(() => navigator.serviceWorker.ready).then(reg => document.documentElement.dataset.sw = reg.active ? 'active' : 'installed')
     .catch(err => document.documentElement.dataset.sw = 'failed: ' + err.message);
-  navigator.serviceWorker.addEventListener('message', e => { if (e.data && e.data.type === 'refresh' && !busy) loadHistory(); });
+  navigator.serviceWorker.addEventListener('message', e => {
+    if (!e.data || e.data.type !== 'refresh') return;
+    if (!busy) loadHistory();
+    if ((e.data.url || '').includes('#inbox')) { open('savedSheet'); showSeg('pc'); }
+  });
 }
 // opening the app clears the badge and the notifications it's already showing
 function clearBadge() {
@@ -959,6 +1087,8 @@ else {
   if (location.hash === '#controls') $('controlsBtn').click();
   if (location.hash === '#plus') $('photoBtn').click();
   if (location.hash === '#talk') voiceStart();
+  if (location.hash === '#inbox') { open('savedSheet'); showSeg('pc'); }
+  pushState();
 }
 updateButtons();
 })();

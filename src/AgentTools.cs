@@ -448,8 +448,9 @@ namespace Bestie
             task = task.Trim();
             if (task.Length < 4) return new AssistantToolResult("do what on the computer?");
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("computer " + (small ? "(small) " : "") + task); return new AssistantToolResult("done."); }
-            // small, harmless jobs just go (with a tight step budget, esc, and the banner). anything bigger: they say yes first.
-            if (!small)
+            // small, harmless jobs just go (with a tight step budget, esc, and the banner), and so do jobs in places they
+            // don't need to be asked about (music, video, quick look-ups, apps they trust). anything else: they say yes first.
+            if (!small && !Trust.SafeComputerTask(task))
             {
                 int ok = module.AskUser("ok to take over your mouse and keyboard for: " + OpenAIClient.Trunc(task, 140) + "? (esc stops me)", AssistantCalendar.ConfirmTimeoutMs);
                 if (ok != 1)

@@ -434,6 +434,10 @@ namespace Bestie
                 case "GET /api/control": SendJson(s, ControlState(null)); return;
                 case "POST /api/upload": Upload(r, s); return;
                 case "GET /api/file": SendOffered(r, s); return;
+                case "GET /api/inbox": SendJson(s, InboxJson()); return;
+                case "POST /api/inbox": InboxChange(r, s); return;
+                case "GET /api/fromPc": SendJson(s, new Dictionary<string, object> { { "inbox", InboxJson() }, { "tabs", TabsJson() }, { "downloads", DownloadsJson() }, { "copies", ClipWatch.Recent() } }); return;
+                case "POST /api/download": GetDownload(r, s); return;
                 case "GET /api/push/key": SendJson(s, new Dictionary<string, object> { { "key", vapidPublic != null ? WebPush.B64u(vapidPublic) : null }, { "phones", PushCount } }); return;
                 case "POST /api/push/subscribe": Subscribe(r, s); return;
                 case "POST /api/push/unsubscribe": Unsubscribe(r, s); return;
@@ -635,6 +639,7 @@ namespace Bestie
             };
             int steps, files, projects;
             if (Office.TodayCounts(out steps, out files, out projects)) d["agents"] = steps + " agent steps today";
+            d["inboxNewest"] = InboxNewest();
             return d;
         }
 
@@ -709,7 +714,8 @@ namespace Bestie
                         string key = (Json.Str(b, "key") ?? "").ToLowerInvariant();
                         var allowed = new[] { "enter", "esc", "backspace", "tab", "up", "down", "left", "right", "space", "delete", "pageup", "pagedown", "home", "end" };
                         if (!allowed.Contains(key)) { SendError(s, 400, "that key isn't on the phone's keypad"); return; }
-                        ComputerAgent.Input.Key(new[] { key.ToUpperInvariant() });
+                        int times = Math.Max(1, Math.Min(200, (int)Json.Num(b, "times", 1)));
+                        for (int k = 0; k < times; k++) { ComputerAgent.Input.Key(new[] { key.ToUpperInvariant() }); if (times > 1) Thread.Sleep(8); }
                         break;
                     }
                     default: SendError(s, 400, "do what?"); return;
@@ -729,7 +735,7 @@ namespace Bestie
             var todos = Todos.Load().Where(t => !t.Done || (t.DoneOn.HasValue && t.DoneOn.Value.Date == DateTime.Today))
                 .Select(t => (object)new Dictionary<string, object> { { "text", t.Text }, { "done", t.Done } }).ToArray();
             var reminders = assistant.PendingReminders().OrderBy(x => x.DueUtc).Take(30)
-                .Select(x => (object)new Dictionary<string, object> { { "text", x.Text }, { "when", When.Describe(x.DueUtc.ToLocalTime(), DateTime.Now) }, { "repeat", When.DescribeRepeat(x.Repeat) } }).ToArray();
+                .Select(x => (object)new Dictionary<string, object> { { "text", x.Text }, { "when", When.Describe(x.DueUtc.ToLocalTime(), DateTime.Now) }, { "repeat", When.DescribeRepeat(x.Repeat) }, { "atComputer", x.AtComputer } }).ToArray();
             var notes = new List<object>();
             try
             {
@@ -843,6 +849,14 @@ namespace Bestie
                         SendJson(s, st);
                         return;
                     }
+                    case "open_url":
+                    {
+                        Uri u;
+                        if (!Uri.TryCreate(value.Trim(), UriKind.Absolute, out u) || (u.Scheme != "http" && u.Scheme != "https")) { message = "that isn't a web link"; break; }
+                        Process.Start(new ProcessStartInfo(u.AbsoluteUri) { UseShellExecute = true });
+                        message = "opened on your pc";
+                        break;
+                    }
                     case "open":
                     {
                         // only something that came from the phone
@@ -930,6 +944,147 @@ namespace Bestie
             DebugLog.Write("phone: sent " + info.Name + " to the phone");
         }
 
+        // ================================================================== the inbox: things sent from the computer to the phone
+
+        sealed class InboxItem { public string Id, Kind, Name, Text, Path; public long Size; public DateTime At; }
+        readonly List<InboxItem> inbox = new List<InboxItem>();
+        bool inboxLoaded;
+        static string InboxPath { get { return Home.State("phone-inbox.json"); } }
+
+        void LoadInbox()
+        {
+            if (inboxLoaded) return;
+            inboxLoaded = true;
+            try
+            {
+                if (!File.Exists(InboxPath)) return;
+                foreach (var o in Json.Arr(Json.Obj(File.ReadAllText(InboxPath, Encoding.UTF8)), "items"))
+                {
+                    var d = o as Dictionary<string, object>;
+                    DateTime at;
+                    if (d == null || !DateTime.TryParse(Json.Str(d, "at"), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out at)) continue;
+                    inbox.Add(new InboxItem { Id = Json.Str(d, "id"), Kind = Json.Str(d, "kind"), Name = Json.Str(d, "name"), Text = Json.Str(d, "text"), Path = Json.Str(d, "path"), Size = (long)Json.Num(d, "size", 0), At = at.ToUniversalTime() });
+                }
+            }
+            catch (Exception ex) { DebugLog.Write("phone: inbox load: " + ex.Message); }
+        }
+
+        void SaveInbox()
+        {
+            var items = inbox.Select(i => (object)new Dictionary<string, object> {
+                { "id", i.Id }, { "kind", i.Kind }, { "name", i.Name }, { "text", i.Text }, { "path", i.Path }, { "size", i.Size }, { "at", i.At.ToString("o", CultureInfo.InvariantCulture) } }).ToArray();
+            try { File.WriteAllText(InboxPath, Json.Write(new Dictionary<string, object> { { "items", items } }), new UTF8Encoding(false)); }
+            catch (Exception ex) { DebugLog.Write("phone: inbox save: " + ex.Message); }
+        }
+
+        void AddToInbox(InboxItem item)
+        {
+            item.Id = Guid.NewGuid().ToString("N").Substring(0, 12);
+            item.At = DateTime.UtcNow;
+            lock (inbox)
+            {
+                LoadInbox();
+                inbox.Insert(0, item);
+                while (inbox.Count > 40) inbox.RemoveAt(inbox.Count - 1);
+                SaveInbox();
+            }
+        }
+
+        /// <summary>A file from the computer for the phone: in the app's inbox, and a notification if they get them.
+        /// Returns a problem, or null.</summary>
+        public string SendFileToPhone(string path, bool notify)
+        {
+            if (!File.Exists(path)) return "that file isn't there.";
+            long size = new FileInfo(path).Length;
+            if (size > MaxFile) return Path.GetFileName(path) + " is over 300 MB, too big to send.";
+            AddToInbox(new InboxItem { Kind = "file", Name = Path.GetFileName(path), Path = path, Size = size });
+            if (notify) Push(Json.Str(CreatureInfo(), "name") ?? "Bestie", "sent you " + Path.GetFileName(path) + ". tap to get it.", "inbox", "./#inbox");
+            DebugLog.Write("phone: put " + Path.GetFileName(path) + " in the phone's inbox");
+            return null;
+        }
+
+        /// <summary>Text or a link from the computer for the phone.</summary>
+        public void SendTextToPhone(string text)
+        {
+            text = (text ?? "").Trim();
+            if (text.Length == 0) return;
+            if (text.Length > 20000) text = text.Substring(0, 20000);
+            bool link = Regex.IsMatch(text, @"^https?://\S+$");
+            AddToInbox(new InboxItem { Kind = link ? "link" : "text", Text = text, Name = link ? text : OpenAIClient.Trunc(text.Replace("\n", " "), 80) });
+            Push(Json.Str(CreatureInfo(), "name") ?? "Bestie", (link ? "sent you a link: " : "sent you: ") + OpenAIClient.Trunc(text.Replace("\n", " "), 120), "inbox", "./#inbox");
+        }
+
+        object InboxJson()
+        {
+            lock (inbox)
+            {
+                LoadInbox();
+                return inbox.Select(i => (object)new Dictionary<string, object> {
+                    { "id", i.Id }, { "kind", i.Kind }, { "name", i.Name }, { "text", i.Kind == "file" ? null : i.Text }, { "size", i.Size },
+                    { "when", Ago(i.At) }, { "at", (long)(i.At - new DateTime(1970, 1, 1)).TotalMilliseconds },
+                    { "url", i.Kind == "file" && i.Path != null && File.Exists(i.Path) ? Offer(i.Path) : null } }).ToArray();
+            }
+        }
+
+        static string Ago(DateTime utc)
+        {
+            TimeSpan t = DateTime.UtcNow - utc;
+            if (t.TotalMinutes < 1) return "just now";
+            if (t.TotalHours < 1) return (int)t.TotalMinutes + "m ago";
+            if (t.TotalDays < 1) return (int)t.TotalHours + "h ago";
+            return utc.ToLocalTime().ToString("MMM d", CultureInfo.InvariantCulture).ToLowerInvariant();
+        }
+
+        long InboxNewest() { lock (inbox) { LoadInbox(); return inbox.Count == 0 ? 0 : (long)(inbox[0].At - new DateTime(1970, 1, 1)).TotalMilliseconds; } }
+
+        void InboxChange(Request r, Stream s)
+        {
+            var b = BodyJson(r);
+            string id = Json.Str(b, "id");
+            lock (inbox)
+            {
+                LoadInbox();
+                if (Json.Str(b, "action") == "clear") inbox.Clear(); else inbox.RemoveAll(i => i.Id == id);
+                SaveInbox();
+            }
+            SendJson(s, InboxJson());
+        }
+
+        // ================================================================== more from the computer: tabs, downloads, recent copies
+
+        static object TabsJson()
+        {
+            BrowserBridge b = BrowserBridge.Instance;
+            if (b == null || !b.Connected) return new object[0];
+            return b.GetTabs().Where(t => t.Url != null && (t.Url.StartsWith("http://") || t.Url.StartsWith("https://")) && !t.Url.Contains("127.0.0.1") && !t.Url.Contains("localhost"))
+                .OrderByDescending(t => t.LastAccessed).Take(20)
+                .Select(t => { Uri u; Uri.TryCreate(t.Url, UriKind.Absolute, out u); return (object)new Dictionary<string, object> { { "title", t.Title }, { "url", t.Url }, { "host", u != null ? u.Host.Replace("www.", "") : "" } }; })
+                .ToArray();
+        }
+
+        static string DownloadsDir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"); } }
+
+        static object DownloadsJson()
+        {
+            try
+            {
+                return new DirectoryInfo(DownloadsDir).GetFiles().Where(f => (f.Attributes & (FileAttributes.Hidden | FileAttributes.System)) == 0
+                        && !new[] { ".crdownload", ".part", ".tmp", ".partial", ".ini" }.Contains(f.Extension.ToLowerInvariant()))
+                    .OrderByDescending(f => f.LastWriteTimeUtc).Take(15)
+                    .Select(f => (object)new Dictionary<string, object> { { "name", f.Name }, { "size", f.Length }, { "when", Ago(f.LastWriteTimeUtc) } }).ToArray();
+            }
+            catch { return new object[0]; }
+        }
+
+        void GetDownload(Request r, Stream s)
+        {
+            string name = Path.GetFileName(Json.Str(BodyJson(r), "name") ?? "");
+            string full = Path.Combine(DownloadsDir, name);
+            if (name.Length == 0 || !File.Exists(full)) { SendError(s, 404, "that download isn't there anymore"); return; }
+            if (new FileInfo(full).Length > MaxFile) { SendError(s, 413, "that's over 300 MB"); return; }
+            SendJson(s, new Dictionary<string, object> { { "url", Offer(full) } });
+        }
+
         // ================================================================== notifications setup
 
         void Subscribe(Request r, Stream s)
@@ -987,15 +1142,14 @@ namespace Bestie
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("to phone " + full); return new AssistantToolResult("sent."); }
             string url = srv.Offer(full), fileName = Path.GetFileName(full);
             PhoneTurn turn = module.CurrentPhone;
+            srv.SendFileToPhone(full, turn == null);   // also kept in the phone app's inbox
             if (turn != null)
             {
                 turn.AddFile(fileName, size, url);
                 return new AssistantToolResult("sent " + fileName + " (" + Bytes(size) + ") to their phone; it shows under your reply for them to tap.", "sent " + fileName + " to your phone", null);
             }
-            if (srv.PushCount == 0)
-                return new AssistantToolResult("they aren't in the phone app and haven't turned on its notifications, so it can't reach the phone. tell them to ask from the phone app, or turn on notifications in its controls.");
-            srv.Push(module.Host.CreatureName ?? "Bestie", "sent you " + fileName + ". tap to open it.", "file", url + "&k=" + srv.Key);
-            return new AssistantToolResult("sent " + fileName + " to their phone as a notification; tapping it opens the file.", "sent " + fileName + " to your phone", null);
+            return new AssistantToolResult("sent " + fileName + " to their phone: it's in the phone app's inbox (Saved → From your PC)"
+                + (srv.PushCount > 0 ? ", and a notification is on its way." : ". they haven't turned on phone notifications, so tell them it's waiting in the app."), "sent " + fileName + " to your phone", null);
         }
     }
 }
