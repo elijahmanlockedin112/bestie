@@ -31,7 +31,8 @@ namespace Bestie
         public static readonly string[] Sniff = { "sniff sniff.", "smells like {smell}.", "{plank} smells like {smell}.", "hm. {smell}." };
         public static readonly string[] Peek = { "it's a long way down.", "hello down there.", "hm. far.", "i see the floor. it sees me." };
         public static readonly string[] ClimbStart = { "going up.", "i am a mountain goat.", "don't watch. or do." };
-        public static readonly string[] Ceiling = { "i'm upside down. everything's fine.", "the ceiling is nice. who knew.", "blood rushing to my everything." };
+        public static readonly string[] Spin = { "whoa.", "the room is spinning. is that normal.", "wheee.", "that was a good spin.", "everything is moving. except me. wait." };
+        public static readonly string[] Ceiling ={ "i'm upside down. everything's fine.", "the ceiling is nice. who knew.", "blood rushing to my everything." };
         public static readonly string[] Patrol = { "all clear.", "nothing to report.", "the perimeter is secure.", "no intruders. except the arrow." };
         public static readonly string[] Explore = { "what's over here.", "adventure time.", "i've never been over there.", "going on a trip." };
         public static readonly string[] Songs = { "♪ la la la ♪", "♪ i am small ♪ the screen is tall ♪", "♪ {plank}, {plank}, you're my favorite plank ♪",

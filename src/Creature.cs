@@ -578,7 +578,7 @@ namespace Bestie
             Brain.Pickups++;
             Pose = Pose.Held;
             Face = Brain.Trust > 0.2 ? Face.Happy : Face.Surprised;
-            if (Rng.Chance(0.7)) Say(Rng.Pick(Lines.PickedUp), false, 0);
+            if (Rng.Chance(0.7)) Say(Fresh(Lines.PickedUp, 0), false, 0);
         }
 
         void UpdateHeld(double dt)
@@ -590,7 +590,7 @@ namespace Bestie
             X = p.X + grabDX; Y = p.Y + grabDY;
             RotTarget = Math.Max(-35, Math.Min(35, -heldVX / (40 * S)));
             WalkPhase += dt * 9;   // legs kick
-            if (Clock.T - heldSince > 6 && Rng.Chance(dt * 0.08)) Say(Rng.Pick(Lines.HeldLong), false, 0);
+            if (Clock.T - heldSince > 6 && Rng.Chance(dt * 0.08)) Say(Fresh(Lines.HeldLong, 0), false, 0);
         }
 
         public void Release()
@@ -780,6 +780,16 @@ namespace Bestie
         public Wait Say(string text, bool thought, double seconds, bool priority = false)
         {
             if (string.IsNullOrEmpty(text)) return null;
+            if (!priority)
+            {
+                // its own idle talk never repeats a line within 12 minutes (it used to loop: "hi, arrow." five times in ten);
+                // what it says because of something real (a reply, being picked up) always shows
+                double at;
+                if (chatter && text.Length >= 6 && lineSaidAt.TryGetValue(text, out at) && Clock.T - at < 12 * 60) return null;
+                lineSaidAt[text] = Clock.T;
+                if (lineSaidAt.Count > 400)
+                    foreach (string old in lineSaidAt.Where(kv => Clock.T - kv.Value > 30 * 60).Select(kv => kv.Key).ToList()) lineSaidAt.Remove(old);
+            }
             if (!priority && Speaking && BubbleText != null && !BubbleThought)
             {
                 if (!thought) { afterTalk = text; afterTalkSeconds = seconds; }

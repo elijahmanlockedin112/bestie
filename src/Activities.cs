@@ -39,6 +39,28 @@ namespace Bestie
         static Wait Pause(double s) { return new Wait(s, null); }
         static Wait Until(Func<bool> cond, double timeout) { return new Wait(timeout, cond); }
 
+        readonly Dictionary<string[], double> poolSaidAt = new Dictionary<string[], double>();
+        readonly Dictionary<string, double> lineSaidAt = new Dictionary<string, double>();   // filled by Say
+        bool chatter;
+
+        /// <summary>A line from pool, or null (say nothing) if it said one of these in the last few minutes; never the same
+        /// line twice within half an hour. Keeps the little quips from turning into a loop ("hi, arrow." five times in ten minutes).
+        /// minutes = 0: a reaction to something that really happened (a bonk, a pet): always says something, just not the same thing.</summary>
+        string Fresh(string[] pool, double minutes)
+        {
+            double at;
+            if (minutes > 0 && poolSaidAt.TryGetValue(pool, out at) && Clock.T - at < minutes * 60) return null;
+            var choices = pool.Where(l => !lineSaidAt.TryGetValue(l, out at) || Clock.T - at > 30 * 60).ToList();
+            if (choices.Count == 0)
+            {
+                if (minutes > 0) return null;
+                choices.Add(pool.OrderBy(l => lineSaidAt.TryGetValue(l, out at) ? at : 0).First());   // the one said longest ago
+            }
+            string line = Rng.Pick(choices);
+            poolSaidAt[pool] = Clock.T;
+            return line;
+        }
+
         IEnumerable<Wait> Sequence(params Func<Wait>[] steps)
         {
             foreach (var s in steps) { var w = s(); if (w != null) yield return w; }
@@ -106,8 +128,10 @@ namespace Bestie
             while (current != null && (wait == null || wait.Done()) && guard++ < 25)
             {
                 bool more;
+                chatter = true;   // what it says in here is its own idle talk (see Say)
                 try { more = current.MoveNext(); }
                 catch (Exception ex) { DebugLog.Write("activity crashed: " + ex); more = false; }
+                finally { chatter = false; }
                 if (!more)
                 {
                     try { current.Dispose(); } catch { }
@@ -144,8 +168,12 @@ namespace Bestie
             string time = Brain.TimeBucket(Clock.Wall);
             var reach = Planner.Reachable(this);
 
-            foreach (var r in Brain.Rituals.Where(x => Clock.Unix - x.LastDone > 40 * 60 && x.Acts.Count > 0).OrderBy(x => Rng.Next()))
-                if (Rng.Chance(r.When == time ? 0.4 : 0.01)) return RunRitual(r);
+            // a tradition is a time-of-day thing, once a day: "the Morning Big Climb" only in the morning, and never three in a row.
+            // (it used to get a small chance at every pick, any time, which added up to morning rituals at 5 pm.)
+            double lastAny = Brain.Rituals.Count > 0 ? Brain.Rituals.Max(x => x.LastDone) : 0;
+            if (Clock.Unix - lastAny > 45 * 60)
+                foreach (var r in Brain.Rituals.Where(x => x.Acts.Count > 0 && (string.IsNullOrEmpty(x.When) || x.When == time) && !DoneToday(x)).OrderBy(x => Rng.Next()))
+                    if (Rng.Chance(0.4)) return RunRitual(r);
 
             var options = Acts.Select(a => new KeyValuePair<string, double>(a, BaseWeight(a, reach, time))).Where(kv => kv.Value > 0).ToList();
             if (options.Count == 0) return Perform("sit", "here", false);
@@ -547,7 +575,7 @@ namespace Bestie
                 int side;
                 if (!AtWall(out side)) yield break;
                 StartClimb(side);
-                if (Rng.Chance(0.3)) Say(Rng.Pick(Lines.ClimbStart), false, 0);
+                if (Rng.Chance(0.3)) Say(Fresh(Lines.ClimbStart, 10), false, 0);
                 yield return Until(() => Mode != Mode.Wall, 60);
             }
         }
@@ -597,7 +625,7 @@ namespace Bestie
             foreach (var w in GoTo(place, false)) yield return w;
             if (Mode != Mode.Ground) yield break;
             MarkPlace();
-            if (Rng.Chance(0.6)) yield return Say(Rng.Pick(Lines.NapStart), false, 0);
+            if (Rng.Chance(0.6)) yield return Say(Fresh(Lines.NapStart, 20), false, 0);
             Pose = Pose.Lie; Face = Face.Sleep;
             if (Support != null && Support.Kind == SegKind.Plank) Brain.App(Support.App).Naps++;
             string time = Brain.TimeBucket(Clock.Wall);
@@ -611,7 +639,7 @@ namespace Bestie
             }
             energy = 1;
             Pose = Pose.Stand; Face = Face.Normal; Squash = -0.2;
-            if (Rng.Chance(0.6)) yield return Say(Rng.Pick(Lines.Wake), false, 0);
+            if (Rng.Chance(0.6)) yield return Say(Fresh(Lines.Wake, 20), false, 0);
         }
 
         IEnumerable<Wait> Dance(string place)
@@ -620,7 +648,7 @@ namespace Bestie
             if (Mode != Mode.Ground) yield break;
             MarkPlace();
             Pose = Pose.Dance; Face = Face.Happy;
-            if (Rng.Chance(0.5)) Say(Rng.Pick(Lines.Dance), false, 0);
+            if (Rng.Chance(0.5)) Say(Fresh(Lines.Dance, 10), false, 0);
             double end = Clock.T + Rng.Range(5, 10);
             while (Clock.T < end) { Emit("note", 1); yield return Pause(0.7); }
             Pose = Pose.Stand; Face = Face.Normal;
@@ -638,7 +666,7 @@ namespace Bestie
             if (Mode != Mode.Ground || Support == null) yield break;
             Facing = side; Pose = Pose.Peek;
             yield return Pause(1.2);
-            yield return Say(Rng.Pick(Lines.Peek), false, 0);
+            yield return Say(Fresh(Lines.Peek, 10), false, 0);
             yield return Pause(Rng.Range(1.5, 3.5));
             if (Support != null && Support.App != null) Brain.App(Support.App).EdgesKnown = true;
         }
@@ -673,13 +701,13 @@ namespace Bestie
             if (!AtWall(out side)) yield break;
             markedPlace = place;
             StartClimb(side);
-            if (Rng.Chance(0.6)) Say(Rng.Pick(Lines.ClimbStart), false, 0);
+            if (Rng.Chance(0.6)) Say(Fresh(Lines.ClimbStart, 10), false, 0);
             bool top = Rng.Chance(0.35 + Brain.Traits.Bold * 0.5);
             if (!top) ClimbTo(Y - Rng.Range(150, 500) * S);
             yield return Until(() => Mode != Mode.Wall || !Climbing, 60);
             if (Mode == Mode.Ceiling)
             {
-                yield return Say(Rng.Pick(Lines.Ceiling), false, 0);
+                yield return Say(Fresh(Lines.Ceiling, 10), false, 0);
                 CeilingWalkTo(X - WallSide * Rng.Range(150, 600) * S);
                 yield return Until(() => !MotorBusy || Mode != Mode.Ceiling, 30);
                 yield return Pause(Rng.Range(0.5, 2));
@@ -710,7 +738,7 @@ namespace Bestie
             yield return Until(() => !MotorBusy || Mode != Mode.Ground, 20);
             if (Mode != Mode.Ground) yield break;
             Pose = Pose.Wave;
-            yield return Say(Rng.Pick(Lines.Patrol), false, 0);
+            yield return Say(Fresh(Lines.Patrol, 10), false, 0);
         }
 
         IEnumerable<Wait> Sit(string place)
@@ -730,11 +758,11 @@ namespace Bestie
 
         IEnumerable<Wait> Explore(string place)
         {
-            if (Rng.Chance(0.6)) yield return Say(Rng.Pick(Lines.Explore), false, 0);
+            if (Rng.Chance(0.6)) yield return Say(Fresh(Lines.Explore, 10), false, 0);
             foreach (var w in GoTo(place, true)) yield return w;
             if (!navOk)
             {
-                if (Mode == Mode.Ground && Rng.Chance(0.5)) yield return Say(Rng.Pick(Lines.Unreachable), false, 0);
+                if (Mode == Mode.Ground && Rng.Chance(0.5)) yield return Say(Fresh(Lines.Unreachable, 15), false, 0);
                 yield break;
             }
             MarkPlace();
@@ -751,7 +779,8 @@ namespace Bestie
             Pose = Pose.Spin;
             yield return Pause(Rng.Range(1.8, 3));
             Pose = Pose.Stand; Face = Face.Dizzy;
-            yield return Say(Rng.Pick("whoa.", "the room is spinning. is that normal.", "again. no. never again."), false, 0);
+            // (it used to say "again. no. never again." here, which sounds like something went wrong. it just spun.)
+            yield return Say(Fresh(Lines.Spin, 8), false, 0);
             yield return Pause(1.5);
         }
 
@@ -826,7 +855,7 @@ namespace Bestie
             MarkPlace();
             LookAt(CursorX, CursorY, 3);
             Face = Face.Happy;
-            yield return Say(Rng.Pick(Lines.Visit), false, 0);
+            yield return Say(Fresh(Lines.Visit, 15), false, 0);
             if (Brain.Trust > 0.4) Emit("heart", 1);
             yield return Pause(1.5);
         }
@@ -846,7 +875,7 @@ namespace Bestie
                 yield return Pause(0.45);
             }
             Pose = Pose.Stand;
-            if (Rng.Chance(0.6)) yield return Say(Rng.Pick(Lines.Exercise), false, 0);
+            if (Rng.Chance(0.6)) yield return Say(Fresh(Lines.Exercise, 15), false, 0);
         }
 
         IEnumerable<Wait> Boop(string place)
@@ -871,7 +900,7 @@ namespace Bestie
             if (Mode != Mode.Ground || Support == null || Support.Kind != SegKind.Plank) yield break;
             MarkPlace();
             Pose = Pose.Sunbathe; Sunglasses = true; Face = Face.Content;
-            if (Rng.Chance(0.7)) yield return Say(Rng.Pick(Lines.Sunbathe), false, 0);
+            if (Rng.Chance(0.7)) yield return Say(Fresh(Lines.Sunbathe, 15), false, 0);
             yield return Pause(Rng.Range(15, 45));
         }
 
@@ -883,7 +912,7 @@ namespace Bestie
         {
             Face = Face.Squint; Squash = 0.45; SquashV = 0; Tilt = -side * 8;
             Emit("star", 5);
-            yield return Say(Rng.Pick(Lines.Bonk), false, 1.4);
+            yield return Say(Fresh(Lines.Bonk, 0), false, 1.4);
             yield return Pause(0.6);
             Face = Face.Normal; Tilt = 0; Facing = -side;
             string sideWord = side < 0 ? "left" : "right";
@@ -902,7 +931,7 @@ namespace Bestie
             if (height > 350 * S)
             {
                 Face = Face.Dizzy;
-                yield return Say(Rng.Pick(Lines.HardLanding), false, 1.6);
+                yield return Say(Fresh(Lines.HardLanding, 0), false, 1.6);
                 yield return Pause(1.0);
                 Face = Face.Normal;
             }
@@ -951,15 +980,23 @@ namespace Bestie
         {
             Face = Face.Happy; Squash = -0.35;
             Emit("heart", 2);
-            yield return Say(Rng.Pick(Lines.Welcome), false, 0);
+            yield return Say(Fresh(Lines.Welcome, 0), false, 0);
             yield return Pause(1.5);
         }
 
         IEnumerable<Wait> PetReaction()
         {
             Face = Face.Happy; Blush = 1; Squash = 0.15;
-            if (Rng.Chance(0.45)) yield return Say(Rng.Pick(Lines.Petted), false, 1.8);
+            if (Rng.Chance(0.45)) yield return Say(Fresh(Lines.Petted, 0), false, 1.8);
             yield return Pause(1.4);
+        }
+
+        /// <summary>Already done since midnight (its last run, in local time).</summary>
+        static bool DoneToday(Ritual r)
+        {
+            if (r.LastDone <= 0) return false;
+            DateTime last = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc).AddSeconds(r.LastDone).ToLocalTime();
+            return last.Date == Clock.Wall.Date;
         }
 
         IEnumerable<Wait> RunRitual(Ritual r)
@@ -980,7 +1017,7 @@ namespace Bestie
             r.Done++;
             r.LastDone = Clock.Unix;
             Pose = Pose.Wave;
-            yield return Say(Rng.Pick("tradition.", "perfect as always.", "and scene."), false, 1.8);
+            yield return Say(r.Done == 1 ? "and that's how it's done." : Rng.Pick("tradition.", "perfect as always.", "and scene."), false, 1.8);
             Journal.Add("did " + r.Name + " (" + (r.Done == 1 ? "the first time on purpose" : "time #" + r.Done) + ").");
             if (Clock.Simulated) SimLog("*** performed ritual " + r.Name);
             ritualRunning = null;

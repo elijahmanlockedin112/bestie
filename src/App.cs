@@ -946,10 +946,13 @@ namespace Bestie
 
         /// <summary>An FYI nobody asked for (a session or an office job finished): said out loud, unless it's quiet
         /// time, when it waits for the summary afterwards.</summary>
+        /// <summary>News about their coding agents and claude sessions (a job finished, a plan to approve, stuck).</summary>
         void Notify(string line, string brief)
         {
             if (Quiet.On) { Quiet.Hold(brief); return; }
             Announce(line);
+            // stepped away? the echo says it too ("atlas finished the maze solver", heard from the kitchen)
+            if (assistant != null) assistant.AlexaNotice(brain.Name + " here. " + line, false, true);
         }
 
         // ---- to the phone: files, links, text, a copied picture ----

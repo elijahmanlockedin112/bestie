@@ -26,6 +26,7 @@ namespace Bestie
         static Dictionary<string, object> state, overview;   // the last look (null while the office is closed)
         static readonly Dictionary<string, string> statuses = new Dictionary<string, string>();   // task id -> status
         static bool primed;
+        static DateTime lastProviderCheck = DateTime.MinValue;
         static Thread watcher;
         static readonly AutoResetEvent wake = new AutoResetEvent(false);
         static volatile bool stopping;
@@ -115,6 +116,14 @@ namespace Bestie
             Dictionary<string, object> s = Get("/api/state", 5000), o = null;
             try { o = Get("/api/overview", 10000); }
             catch (Exception ex) { DebugLog.Write("office: overview: " + ex.Message); }
+            // the office only checks claude's sign-in now and then: after they log in again, ask it to look (every few minutes while signed out)
+            if (!SignedIn(s, "claude") && (DateTime.UtcNow - lastProviderCheck).TotalMinutes > 3)
+            {
+                lastProviderCheck = DateTime.UtcNow;
+                try { Send("POST", "/api/providers/refresh", new Dictionary<string, object>(), Json.Str(s, "token"), 60000); s = Get("/api/state", 5000); }
+                catch (Exception ex) { DebugLog.Write("office: provider refresh: " + ex.Message); }
+                if (SignedIn(s, "claude")) DebugLog.Write("office: claude is signed in again");
+            }
             var lines = new List<string>();
             lock (gate)
             {

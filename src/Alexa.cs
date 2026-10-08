@@ -54,6 +54,36 @@ namespace Bestie
             return Friendly(status, error, deviceName);
         }
 
+        /// <summary>Runs one of their alexa routines through a voice monkey routine trigger, by name. Returns "" when it
+        /// worked, else a friendly line (with the routine triggers they do have).</summary>
+        public static string Trigger(string token, string routine)
+        {
+            token = (token ?? "").Trim();
+            if (token.Length == 0) return "there's no voice monkey token in my settings yet.";
+            string problem;
+            List<string[]> all = Devices(token, out problem);
+            if (problem != null) return problem;
+            List<string[]> triggers = all.Where(d => d[2] == "routines" || d[2] == "routine").ToList();
+            if (triggers.Count == 0) return "there are no routine triggers on voice monkey yet. " + RoutineSteps;
+            string want = Squash(routine);
+            string[] hit = triggers.FirstOrDefault(d => Squash(d[1]) == want || Squash(d[0]) == want)
+                ?? (want.Length >= 3 ? triggers.FirstOrDefault(d => Squash(d[1]).Contains(want) || want.Contains(Squash(d[1]))) : null);
+            if (hit == null) return "no routine trigger called \"" + routine + "\". there's: " + string.Join(", ", triggers.Select(d => d[1]).ToArray()) + ".";
+            int status; string error;
+            Call("trigger", "POST", Json.Write(new Dictionary<string, object> { { "token", token }, { "device", hit[0] } }), null, out status, out error);
+            return status == 200 && error == null ? "" : Friendly(status, error, hit[1]);
+        }
+
+        /// <summary>The names of their routine triggers (empty if none or it couldn't ask).</summary>
+        public static List<string> Routines(string token)
+        {
+            string problem;
+            return Devices(token, out problem).Where(d => d[2] == "routines" || d[2] == "routine").Select(d => d[1]).ToList();
+        }
+
+        public const string RoutineSteps = "to add one: app.voicemonkey.io → routine triggers → add (name it, e.g. \"party mode\"), then in the alexa app make a routine: "
+            + "when this happens: smart home → voice monkey → that trigger; then any actions (play spotify on party time, lights, ...).";
+
         /// <summary>The account's devices as (id, name, capability). problem is set (and the list empty) if it couldn't ask.</summary>
         public static List<string[]> Devices(string token, out string problem)
         {
@@ -210,12 +240,17 @@ namespace Bestie
         void AddAlexaTools(List<object> t)
         {
             t.Add(Tool("alexa_say", "say something out loud right now on their alexa (the echo called party time, through voice monkey): when they ask you to "
-                + "announce something on the alexa or party time, or tell someone in the house something. for later, use set_reminder with on_alexa.", R("text"),
+                + "announce something on the alexa or party time, or tell someone in the house something (works from their phone too: 'tell the house i'm on my way'). "
+                + "for later, use set_reminder with on_alexa (with repeat for a daily wake-up call).", R("text"),
                 P("text", "string", "exactly what the alexa should say, short and natural")));
+            t.Add(Tool("alexa_routine", "run one of their alexa routines (through a voice monkey routine trigger): whatever they wired it to, like playing spotify on "
+                + "party time, lights, a good-night routine. empty name lists the ones they have.", R(),
+                P("name", "string", "the routine as they said it ('party mode', 'good night'); empty to list them")));
         }
 
         AssistantToolResult AlexaTool(string name, Dictionary<string, object> a, AssistantSettings s)
         {
+            if (name == "alexa_routine") return AlexaRoutine((Json.Str(a, "name") ?? "").Trim(), s);
             if (name != "alexa_say") return null;
             string text = (Json.Str(a, "text") ?? "").Trim();
             if (text.Length == 0) return new AssistantToolResult("say what?");
@@ -226,6 +261,22 @@ namespace Bestie
             string problem = Alexa.Say(s.AlexaToken, s.AlexaDevice, text);
             if (problem.Length > 0) return new AssistantToolResult("it didn't go through: " + problem);
             return new AssistantToolResult("said it on " + s.AlexaDevice + ".", "alexa: " + text, null);
+        }
+
+        AssistantToolResult AlexaRoutine(string routine, AssistantSettings s)
+        {
+            if (s == null || s.AlexaToken.Length == 0)
+                return new AssistantToolResult("the alexa isn't connected yet: settings → alexa row needs a voice monkey token. tell them that.");
+            if (routine.Length == 0)
+            {
+                List<string> names = Alexa.Routines(s.AlexaToken);
+                return new AssistantToolResult(names.Count == 0 ? "they have no routine triggers yet. " + Alexa.RoutineSteps + " tell them in a sentence or two."
+                    : "their alexa routines you can run: " + string.Join(", ", names.ToArray()) + ".");
+            }
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("alexa routine " + routine); return new AssistantToolResult("ran it."); }
+            string problem = Alexa.Trigger(s.AlexaToken, routine);
+            if (problem.Length > 0) return new AssistantToolResult("it didn't run: " + problem);
+            return new AssistantToolResult("ran their \"" + routine + "\" alexa routine.", "alexa: " + routine, null);
         }
     }
 }
