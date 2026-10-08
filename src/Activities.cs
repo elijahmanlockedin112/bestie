@@ -1119,7 +1119,10 @@ namespace Bestie
         {
             yield return Pause(Rng.Range(1.5, 3));
             Pose = Pose.Stand; Face = Face.Normal; Squash = -0.25;
-            yield return Say(Rng.Pick("*yawn*", "i'm back.", "what did i miss.", "morning. probably.", "hello again."), false, 0);
+            // a greeting that fits the clock ("morning. probably." at 5 pm made no sense)
+            string tb = Brain.TimeBucket(Clock.Wall);
+            string fits = tb == "dawn" || tb == "morning" ? "morning. probably." : tb == "afternoon" ? "afternoon already?" : tb == "evening" ? "evening. i think." : "it's late. hi.";
+            yield return Say(Rng.Pick("*yawn*", "i'm back.", "what did i miss.", fits, "hello again."), false, 0);
             Journal.Add("woke up in " + DescribePlace(PlaceKeyHere()) + ".");
         }
 
