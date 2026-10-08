@@ -36,6 +36,11 @@ namespace Bestie
         readonly ComboBox modelBox, effortBox, transcribeBox, voiceBox, engineBox, openAiVoiceBox, ttsModelBox, elevenVoiceBox;
         readonly TextBox elevenKeyBox;
         readonly CheckBox elevenEarsBox;
+        readonly TextBox alexaTokenBox, alexaDeviceBox;
+        readonly ComboBox alexaWhenBox;
+        readonly Label alexaStatus;
+        readonly Button alexaTestButton;
+        static readonly string[] AlexaWhenLabels = { "say them on it when i'm away from the computer", "always say them on it too", "only when i ask" };
         readonly List<string> elevenVoiceIds = new List<string>();
         readonly CheckBox speakBox, screenBox, tabsBox, autoLookBox, nosyBox, speakNosyBox;
         readonly NumericUpDown rateBox, historyBox, nosyMinutesBox;
@@ -176,6 +181,31 @@ namespace Bestie
             gainBar.ValueChanged += delegate { gainLabel.Text = gainBar.Value + "%"; };
             Row("", Lbl("loudness", Ink, S(70)), gainBar, gainLabel);
             Row("", Note("no key, or the big outside is down? i use the windows voice instead.", Muted));
+
+            // --- alexa (voice monkey): reminders out loud on their echo
+            alexaTokenBox = new TextBox();
+            alexaTokenBox.UseSystemPasswordChar = true;
+            alexaTokenBox.Width = S(210);
+            bool hadAlexaToken = s.AlexaToken.Length > 0;
+            alexaTokenBox.HandleCreated += delegate { SendMessage(alexaTokenBox.Handle, 0x1501, new IntPtr(1), hadAlexaToken ? "token saved (paste to replace)" : "voice monkey token"); };
+            alexaTestButton = Btn("test", delegate { OnTestAlexa(); });
+            var alexaHow = new LinkLabel();
+            alexaHow.AutoSize = true;
+            alexaHow.Font = small;
+            alexaHow.Text = "how do i set this up?";
+            alexaHow.LinkColor = Warm;
+            alexaHow.Margin = new Padding(S(6), S(6), 0, 0);
+            alexaHow.LinkClicked += delegate { MessageBox.Show(this, Alexa.SetupSteps, "alexa setup", MessageBoxButtons.OK, MessageBoxIcon.Information); };
+            Row("alexa", alexaTokenBox, alexaTestButton, alexaHow);
+            alexaDeviceBox = new TextBox();
+            alexaDeviceBox.Width = S(210);
+            alexaDeviceBox.Text = s.AlexaDevice ?? Alexa.DefaultDevice;
+            Row("", Lbl("speaker", Ink, S(70)), alexaDeviceBox);
+            alexaWhenBox = Combo(AlexaWhenLabels, null, false, S(330));
+            alexaWhenBox.SelectedIndex = s.AlexaWhen == "always" ? 1 : s.AlexaWhen == "asked" ? 2 : 0;
+            Row("", Lbl("reminders", Ink, S(70)), alexaWhenBox);
+            alexaStatus = Note(hadAlexaToken ? "connected through voice monkey." : "say reminders out loud on your echo. free; needs the voice monkey alexa skill.", Muted);
+            Row("", alexaStatus);
 
             // --- hotkeys
             string[] hkNames = { "chat", "voice", "screenshot" };
@@ -515,6 +545,37 @@ namespace Bestie
             t.Start();
         }
 
+        void OnTestAlexa()
+        {
+            string token = AssistantSettings.CleanKey(alexaTokenBox.Text);
+            if (token.Length == 0) token = s.AlexaToken;
+            if (token.Length == 0) { alexaStatus.Text = "paste your voice monkey token first. (\"how do i set this up?\" has the steps.)"; alexaStatus.ForeColor = Bad; return; }
+            string device = alexaDeviceBox.Text.Trim().Length > 0 ? alexaDeviceBox.Text.Trim() : Alexa.DefaultDevice;
+            string name = "bestie";
+            try { name = owner.Host.CreatureName ?? name; } catch { }
+            bool typed = alexaTokenBox.Text.Trim().Length > 0;
+            alexaTestButton.Enabled = false;
+            alexaStatus.ForeColor = Muted;
+            alexaStatus.Text = "asking " + device + " to say hi…";
+            var t = new Thread(delegate()
+            {
+                string problem = Alexa.Say(token, device, "hi, it's " + name + ". i can talk on this alexa now.");
+                try
+                {
+                    BeginInvoke((MethodInvoker)delegate
+                    {
+                        if (IsDisposed) return;
+                        alexaTestButton.Enabled = true;
+                        alexaStatus.Text = problem.Length == 0 ? device + " should be talking now." + (typed ? " press save to keep it." : "") : problem;
+                        alexaStatus.ForeColor = problem.Length == 0 ? Good : Bad;
+                    });
+                }
+                catch { }
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
         /// <summary>One free call: GET /models/{model}. Checks the key and that the model exists.</summary>
         internal static string TestKey(string baseUrl, string key, string model, out bool ok)
         {
@@ -567,6 +628,10 @@ namespace Bestie
             n.TtsModel = ttsModelBox.Text.Trim().Length > 0 ? ttsModelBox.Text.Trim() : AssistantSettings.DefaultTtsModel;
             n.TtsVoice = voiceBox.SelectedIndex <= 0 ? "" : voiceBox.Text;
             n.TtsRate = (int)rateBox.Value;
+            string newAlexa = AssistantSettings.CleanKey(alexaTokenBox.Text);
+            if (newAlexa.Length > 0) n.SetAlexaToken(newAlexa);
+            n.AlexaDevice = alexaDeviceBox.Text.Trim().Length > 0 ? alexaDeviceBox.Text.Trim() : Alexa.DefaultDevice;
+            n.AlexaWhen = alexaWhenBox.SelectedIndex == 1 ? "always" : alexaWhenBox.SelectedIndex == 2 ? "asked" : "away";
 
             string[] hk = new string[3];
             for (int i = 0; i < 3; i++)

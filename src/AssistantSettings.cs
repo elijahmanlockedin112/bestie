@@ -68,6 +68,9 @@ namespace Bestie
         public bool AutoMemory = true;          // "remember things from our chats automatically"
         public bool WakeWord = true;            // "listen for my wake word (hey <name>)"
         public bool FollowUp = true;            // after a spoken answer, keep listening a few seconds (no wake word needed)
+        public string AlexaTokenProtected = ""; // voice monkey token, DPAPI + base64
+        public string AlexaDevice = Alexa.DefaultDevice;   // the voice monkey speaker (linked to their echo)
+        public string AlexaWhen = "away";       // reminders out loud on the alexa: "away" (stepped away from the computer) | "always" | "asked" (only when asked)
 
         public const string DefaultNosySkipList =
             "1password, bitwarden, keepass, lastpass, dashlane, inprivate, incognito, private browsing, bank, banking, paypal, venmo, " +
@@ -124,6 +127,10 @@ namespace Bestie
                 s.AutoMemory = Json.Bool(d, "autoMemory", true);
                 s.WakeWord = Json.Bool(d, "wakeWord", true);
                 s.FollowUp = Json.Bool(d, "followUp", true);
+                s.AlexaTokenProtected = Json.Str(d, "alexaTokenProtected") ?? "";
+                s.AlexaDevice = NonEmpty(Json.Str(d, "alexaDevice"), Alexa.DefaultDevice);
+                string aw = Json.Str(d, "alexaWhen");
+                s.AlexaWhen = aw == "always" || aw == "asked" ? aw : "away";
                 s.TtsVoice = Json.Str(d, "ttsVoice") ?? "";
                 s.TtsRate = Clamp((int)Json.Num(d, "ttsRate", 0), -10, 10);
                 string hk = Json.Str(d, "hotkeyChat"); s.HotkeyChat = hk == null ? DefaultHotkeyChat : hk.Trim();
@@ -169,6 +176,9 @@ namespace Bestie
             d["autoMemory"] = AutoMemory;
             d["wakeWord"] = WakeWord;
             d["followUp"] = FollowUp;
+            d["alexaTokenProtected"] = AlexaTokenProtected ?? "";
+            d["alexaDevice"] = AlexaDevice ?? Alexa.DefaultDevice;
+            d["alexaWhen"] = AlexaWhen ?? "away";
             d["ttsVoice"] = TtsVoice ?? "";
             d["ttsRate"] = TtsRate;
             d["hotkeyChat"] = HotkeyChat ?? "";
@@ -231,6 +241,15 @@ namespace Bestie
         {
             key = CleanKey(key);
             ElevenKeyProtected = key.Length == 0 ? "" : Protect(key);
+        }
+
+        /// <summary>The Voice Monkey token for the alexa (decrypted), or "".</summary>
+        public string AlexaToken { get { return Unprotect(AlexaTokenProtected); } }
+
+        public void SetAlexaToken(string token)
+        {
+            token = CleanKey(token);
+            AlexaTokenProtected = token.Length == 0 ? "" : Protect(token);
         }
 
         /// <summary>ElevenLabs voice if chosen and its key exists.</summary>

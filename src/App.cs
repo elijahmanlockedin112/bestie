@@ -701,6 +701,7 @@ namespace Bestie
                         OnUi(() =>
                         {
                             Announce("heads up: “" + title + "” in " + mins + " minute" + (mins == 1 ? "" : "s") + ". " + Rng.Pick("i'll hold the fort.", "don't be late. i'll know.", "the building will manage."));
+                            if (assistant != null) assistant.AlexaNotice(brain.Name + " here. heads up: " + title + " in " + mins + " minute" + (mins == 1 ? "" : "s") + ".", false);
                             c.Glow(3);
                             Journal.Add("reminded you about “" + ev.Title + "” (" + ev.Start.ToString("h:mm tt").ToLowerInvariant() + ").");
                         });

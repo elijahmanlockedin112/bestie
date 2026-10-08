@@ -127,7 +127,8 @@ namespace Bestie
                 P("date", "string", "optional: 'today', 'tomorrow', a weekday like 'friday', or yyyy-mm-dd. omit for the next time that clock time comes around"),
                 P("minutes", "number", "only for relative reminders: minutes from now (2 hours = 120)"),
                 P("repeat", "string", "for reminders that come back: 'daily' (every night/morning), 'weekdays', 'weekends', 'weekly', or days like 'mon,thu'. needs a time. omit for one-time"),
-                P("only_at_computer", "boolean", "true when it only makes sense at the computer ('remind me around 7 when i'm at my computer', computer chores): if they're away at that time it waits for them to sit down (up to 4 hours) instead of going to their phone")));
+                P("only_at_computer", "boolean", "true when it only makes sense at the computer ('remind me around 7 when i'm at my computer', computer chores): if they're away at that time it waits for them to sit down (up to 4 hours) instead of going to their phone"),
+                P("on_alexa", "boolean", "true when they say to remind them on the alexa / party time / out loud in the house: it's also said there even if they're at the computer. (when they've stepped away, reminders go to the alexa anyway if it's connected)")));
             t.Add(Tool("list_reminders", "list pending reminders.", R()));
             t.Add(Tool("cancel_reminder", "cancel a reminder.", R("match"), P("match", "string", "reminder id or part of its text")));
             bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
@@ -602,10 +603,17 @@ namespace Bestie
                 if (!When.RepeatsOn(repeat, due.DayOfWeek)) due = When.NextRepeat(repeat, due.Hour, due.Minute, now);   // start on a day it repeats
             }
             bool atComputer = Json.Bool(a, "only_at_computer", false);
-            AssistantReminder r = module.Reminders.Add(due.ToUniversalTime(), text, repeat, atComputer);
+            bool onAlexa = Json.Bool(a, "on_alexa", false);
+            AssistantSettings cur = module.CurrentSettings;
+            bool alexaReady = cur != null && cur.AlexaToken.Length > 0;
+            AssistantReminder r = module.Reminders.Add(due.ToUniversalTime(), text, repeat, atComputer, onAlexa && alexaReady);
             string when = repeat.Length > 0 ? When.DescribeRepeat(repeat) + " at " + When.Clock(due) + " (first one " + WhenText(r.DueUtc) + ")" : WhenText(r.DueUtc);
+            string alexaNote = !alexaReady ? (onAlexa ? ". the alexa isn't connected yet (settings → alexa row needs a voice monkey token), so it'll be on the computer and phone only" : "")
+                : onAlexa ? ", said out loud on " + cur.AlexaDevice + " too"
+                : cur.AlexaWhen == "asked" ? "" : cur.AlexaWhen == "always" ? ", and out loud on " + cur.AlexaDevice : ", and out loud on " + cur.AlexaDevice + " if they're away from the computer";
             return new AssistantToolResult("reminder " + r.Id + " set: " + when + " (" + When.Until(due, now) + " until the " + (repeat.Length > 0 ? "first" : "") + " one)"
                     + (atComputer ? ", only when they're at the computer: if they're away then, it waits up to 4 hours for them to sit down" : ", on the computer and (when they're away from it) their phone")
+                    + (atComputer && !onAlexa ? "" : alexaNote)
                     + ". tell them exactly that." + (assumed != null ? " " + assumed + " mention that." : ""),
                 "reminder " + when + ": " + text, "you asked me to remind you " + when + ": " + text);
         }
@@ -617,7 +625,7 @@ namespace Bestie
             var sb = new StringBuilder("pending reminders:");
             foreach (AssistantReminder r in list)
                 sb.Append("\n- " + r.Id + (string.IsNullOrEmpty(r.Repeat) ? " " + WhenText(r.DueUtc)
-                    : " " + When.DescribeRepeat(r.Repeat) + " at " + When.Clock(r.DueUtc.ToLocalTime()) + " (next " + WhenText(r.DueUtc) + ")") + (r.AtComputer ? " [when at the computer]" : "") + ": " + r.Text);
+                    : " " + When.DescribeRepeat(r.Repeat) + " at " + When.Clock(r.DueUtc.ToLocalTime()) + " (next " + WhenText(r.DueUtc) + ")") + (r.AtComputer ? " [when at the computer]" : "") + (r.OnAlexa ? " [on the alexa]" : "") + ": " + r.Text);
             return new AssistantToolResult(sb.ToString());
         }
 
@@ -874,6 +882,8 @@ namespace Bestie
         public string Repeat = "";
         /// <summary>Only when they're at the computer: due and they're away, it waits (up to AtComputerWindow) for them to come back.</summary>
         public bool AtComputer;
+        /// <summary>They asked for it on the alexa: said there too, wherever they are.</summary>
+        public bool OnAlexa;
     }
 
     /// <summary>Reminders persisted in .state\reminders.json, checked every ~15 s on a timer thread.
@@ -909,7 +919,9 @@ namespace Bestie
 
         public AssistantReminder Add(DateTime dueUtc, string text, string repeat) { return Add(dueUtc, text, repeat, false); }
 
-        public AssistantReminder Add(DateTime dueUtc, string text, string repeat, bool atComputer)
+        public AssistantReminder Add(DateTime dueUtc, string text, string repeat, bool atComputer) { return Add(dueUtc, text, repeat, atComputer, false); }
+
+        public AssistantReminder Add(DateTime dueUtc, string text, string repeat, bool atComputer, bool onAlexa)
         {
             var r = new AssistantReminder();
             r.CreatedUtc = DateTime.UtcNow;
@@ -917,6 +929,7 @@ namespace Bestie
             r.Text = text;
             r.Repeat = repeat ?? "";
             r.AtComputer = atComputer;
+            r.OnAlexa = onAlexa;
             lock (gate)
             {
                 r.Id = "r" + (nextId++).ToString(CultureInfo.InvariantCulture);
@@ -1029,6 +1042,7 @@ namespace Bestie
                     r.CreatedUtc = created.ToUniversalTime();
                     r.Repeat = Json.Str(d, "repeat") ?? "";
                     r.AtComputer = Json.Bool(d, "atComputer", false);
+                    r.OnAlexa = Json.Bool(d, "onAlexa", false);
                     items.Add(r);
                     int n;
                     if (r.Id.StartsWith("r") && int.TryParse(r.Id.Substring(1), out n) && n >= nextId) nextId = n + 1;
@@ -1051,6 +1065,7 @@ namespace Bestie
                     d["text"] = r.Text;
                     if (!string.IsNullOrEmpty(r.Repeat)) d["repeat"] = r.Repeat;
                     if (r.AtComputer) d["atComputer"] = true;
+                    if (r.OnAlexa) d["onAlexa"] = true;
                     arr.Add(d);
                 }
                 var root = new Dictionary<string, object>();

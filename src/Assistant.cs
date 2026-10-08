@@ -1228,7 +1228,7 @@ namespace Bestie
             sb.Append("- they have a to-do list (todo_* tools) and desktop widgets (show_widget / hide_widget: to-do, calendar, now playing, sticky notes). use them when they ask to add, finish or see things, or want something pinned on their desktop.\n");
             sb.Append("- files on their computer: find_files searches everything in their user folder instantly, by name, folder or what's inside (pdfs, docs, slides, notes, photos), and open_file opens what you found in its app (or shows it in its folder). when they want a file, a pdf, notes, slides or a folder, go straight to find_files and open_file: don't go through apps, websites, tabs or use_computer to get to a file that's on their computer.\n");
             sb.Append("- asking first: music and video (spotify, youtube), the time, weather and the calculator never need a yes; neither do read-only commands or apps and commands on their no-ask list. when they say you don't need to ask before something (or should ask again), call dont_ask. buying, sending, deleting and signing in always ask.\n");
-            sb.Append("- lists: when they rattle off a list (things to do, buy, remember), save every item in one todo_add (one per line), never a summary of it. it pops up on their desktop when they get back to the computer. reminders reach their phone when they're away from the computer; only_at_computer makes one wait until they're sitting at it.\n");
+            sb.Append("- lists: when they rattle off a list (things to do, buy, remember), save every item in one todo_add (one per line), never a summary of it. it pops up on their desktop when they get back to the computer. reminders reach their phone when they're away from the computer (and their alexa, party time, says them out loud if it's connected); only_at_computer makes one wait until they're sitting at it. alexa_say speaks on the alexa right now.\n");
             sb.Append("- your own notifications: when they want you to stop going off, snooze, pause notifications, do not disturb or be quiet for a while, call quiet_mode (never use_computer: you have no settings window for that). ")
               .Append(Quiet.On ? "quiet time is ON until " + When.Clock(Quiet.Until) + " (you still answer when they talk to you). " : "")
               .Append("sound trouble (can't hear, no sound, wrong speakers, switch to headphones): sound_output list first, then fix it yourself with set when the answer is clear (e.g. the default is a virtual device and there's one real speaker); ask only if several real outputs could be the one.\n");
@@ -1503,6 +1503,33 @@ namespace Bestie
                 if (announcements.Count < 8) announcements.Enqueue(line);
                 NextAnnouncement();
             });
+        }
+
+        /// <summary>Reminders and heads-ups out loud on their echo (voice monkey): when they've stepped away from the computer, or
+        /// always, or only when asked (settings). asked: they wanted this one on the alexa. Returns at once; any thread.</summary>
+        internal void AlexaNotice(string speech, bool asked)
+        {
+            AssistantSettings s = settings;
+            string token = s.AlexaToken;
+            if (token.Length == 0 || string.IsNullOrWhiteSpace(speech)) return;
+            if (!asked)
+            {
+                if (s.AlexaWhen == "asked" || Quiet.On) return;
+                if (s.AlexaWhen != "always" && Native.IdleSeconds() <= 120) return;   // they're right here: the computer says it
+            }
+            string device = s.AlexaDevice;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string problem = Alexa.Say(token, device, speech);
+                DebugLog.Write("alexa: " + (problem.Length == 0 ? "said a notice on " + device : "couldn't: " + problem));
+            });
+        }
+
+        string AlexaName()
+        {
+            string name = "bestie";
+            try { name = host.CreatureName ?? name; } catch { }
+            return name;
         }
 
         /// <summary>UI thread. Says the next waiting announcement if it's free (called again when speech ends,
@@ -2207,6 +2234,7 @@ namespace Bestie
                     string line = "heads up: “" + title + "” in " + (mins == 1 ? "a minute" : mins + " minutes") + ". i'll hold the fort.";
                     Journal.Add("i warned you that “" + title + "” was coming up.");
                     Announce(line);
+                    AlexaNotice(AlexaName() + " here. heads up: " + title + " in " + (mins == 1 ? "a minute" : mins + " minutes") + ".", false);
                 }
             }
             string notice = calendar.TakeBrokenNotice();
@@ -2223,6 +2251,7 @@ namespace Bestie
             Journal.Add("i reminded you: " + r.Text);
             string line = (late ? "i was asleep when this was due, but you asked me to remind you: " : "reminder, as requested: ") + r.Text;
             DebugLog.Write("assistant: reminder " + r.Id + " is due");
+            AlexaNotice(AlexaName() + " here. reminder: " + r.Text, r.OnAlexa);
             Post(delegate
             {
                 if (chat != null && !chat.IsDisposed) chat.AppendCreature(line);
