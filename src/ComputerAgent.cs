@@ -248,13 +248,21 @@ namespace Bestie
                             if (a.TryGetValue("keys", out k) && k is System.Collections.IEnumerable && !(k is string))
                                 foreach (object o in (System.Collections.IEnumerable)k) keys.Add(Convert.ToString(o));
                             else if (a.TryGetValue("key", out k)) keys.AddRange(Convert.ToString(k).Split('+'));
+                            string noEnter = keys.Any(x => x.Trim().Equals("enter", StringComparison.OrdinalIgnoreCase) || x.Trim().Equals("return", StringComparison.OrdinalIgnoreCase))
+                                ? AssistantTools.TypingBlocked(Native.GetForegroundWindow()) : null;
+                            if (noEnter != null) { DebugLog.Write("computer: refused enter in " + noEnter); break; }
                             Input.Key(keys);
                             break;
                         }
                     case "type":
-                        Input.Type(Json.Str(a, "text") ?? "");
-                        status("typing…");
-                        break;
+                        {
+                            // terminals run what's typed; the claude app hosts their agents and terminals
+                            string noType = AssistantTools.TypingBlocked(Native.GetForegroundWindow());
+                            if (noType != null) { DebugLog.Write("computer: refused to type into " + noType); break; }
+                            Input.Type(Json.Str(a, "text") ?? "");
+                            status("typing…");
+                            break;
+                        }
                     case "wait": Thread.Sleep(Math.Max(300, Math.Min(5000, (int)Json.Num(a, "ms", 1200)))); break;
                     case "screenshot": break;   // a fresh one goes back after every step anyway
                     default: DebugLog.Write("computer: unknown action " + type); break;

@@ -162,7 +162,7 @@ namespace Bestie
 
         // ================================================================== tailscale
 
-        static string RunTailscale(string args, int timeoutMs)
+        internal static string RunTailscale(string args, int timeoutMs)
         {
             if (!File.Exists(TailscaleExe)) return null;
             var psi = new ProcessStartInfo(TailscaleExe, args) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true, StandardOutputEncoding = Encoding.UTF8 };
@@ -174,7 +174,7 @@ namespace Bestie
             }
         }
 
-        static string TailnetHost()
+        internal static string TailnetHost()
         {
             try
             {

@@ -17,11 +17,15 @@ namespace Bestie
         public const string DefaultDevice = "Party Time";
         const string Api = "https://api-v3.voicemonkey.io/";
 
+        // from voicemonkey.io/docs/getting-started (oct 2026). the routine is the one step nobody can do for you.
         public const string SetupSteps =
-            "1. in the alexa app on your phone: more → skills & games → search \"voice monkey\" → enable to use, and sign in (it makes a free voice monkey account).\n" +
-            "2. on voicemonkey.io (same sign-in): devices → add a device → type speaker, name it Party Time, and pick the Party Time echo.\n" +
-            "3. voicemonkey.io → api → copy your token.\n" +
-            "4. paste it here and press test. party time should talk.";
+            "one time, about 5 minutes, on your phone:\n\n" +
+            "1. alexa app → more → skills & games → search \"voice monkey\" → enable to use, and link your amazon account.\n" +
+            "2. app.voicemonkey.io/speakers (sign in with amazon) → add new speaker → name it Party Time → create speaker.\n" +
+            "3. alexa app → more → routines → + → when this happens: smart home → voice monkey → Party Time. "
+            + "add action: skills → voice monkey (or custom: \"open voice monkey\"). from: the Party Time echo. save.\n" +
+            "4. app.voicemonkey.io/tokens → copy your token.\n" +
+            "5. paste it here and press test. party time should talk.";
 
         static readonly object gate = new object();
         static string cachedFor, cachedId;   // (token + device name) -> voice monkey device id

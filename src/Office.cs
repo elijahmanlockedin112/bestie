@@ -36,7 +36,51 @@ namespace Bestie
         public static bool Up { get { return AssistantTools.PortOpen(Port); } }
 
         static string Shortcut { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Vibe Code Central.lnk"); } }
-        public static bool Installed { get { return File.Exists(Shortcut); } }
+        /// <summary>Where the office's code lives. Bestie runs its server itself (no window); the office app is optional.</summary>
+        public static string Dir { get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "Coding Projects", "Vibe Code Central"); } }
+        public static bool Installed { get { return File.Exists(Path.Combine(Dir, "server", "index.mjs")) || File.Exists(Shortcut); } }
+
+        static readonly object serverGate = new object();
+        static DateTime lastServerStart = DateTime.MinValue;
+        static int serverStarts;
+
+        /// <summary>Starts the office's server in the background if nothing answers on its port (hidden, output in
+        /// .state\servers\office.log), and waits up to maxSeconds for it. True once it answers.</summary>
+        public static bool EnsureServer(int maxSeconds)
+        {
+            if (Up) return true;
+            string script = Path.Combine(Dir, "server", "index.mjs");
+            if (!File.Exists(script)) return Open(maxSeconds);   // no code here: the installed app is the only way
+            lock (serverGate)
+            {
+                if (Up) return true;
+                // a just-started one is still booting: wait for it rather than start a second
+                if ((DateTime.UtcNow - lastServerStart).TotalSeconds > 45)
+                {
+                    lastServerStart = DateTime.UtcNow;
+                    serverStarts++;
+                    string logDir = Path.Combine(Home.StateDir, "servers");
+                    Directory.CreateDirectory(logDir);
+                    string log = Path.Combine(logDir, "office.log");
+                    try { if (File.Exists(log) && new FileInfo(log).Length > 2 * 1024 * 1024) File.Delete(log); } catch { }
+                    const string cmd = "node --use-system-ca --env-file-if-exists=.env server/index.mjs --production";
+                    File.AppendAllText(log, "\r\n--- " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + " bestie started: " + cmd + "\r\n");
+                    var psi = new ProcessStartInfo("cmd.exe", "/d /s /c \"" + cmd + " >> \"" + log + "\" 2>&1\"")
+                    {
+                        WorkingDirectory = Dir, UseShellExecute = false, CreateNoWindow = true,
+                    };
+                    Process.Start(psi);
+                    DebugLog.Write("office: started its server (no window)");
+                }
+            }
+            var sw = Stopwatch.StartNew();
+            while (sw.Elapsed.TotalSeconds < maxSeconds)
+            {
+                if (Up) { wake.Set(); return true; }
+                Thread.Sleep(500);
+            }
+            return Up;
+        }
 
         // ================================================================== following the office
 
@@ -61,7 +105,13 @@ namespace Bestie
 
         static void Poll()
         {
-            if (!Up) { lock (gate) { state = null; overview = null; } return; }
+            if (!Up)
+            {
+                lock (gate) { state = null; overview = null; }
+                // the office runs in the background, under bestie: start it (and bring it back if it dies, though not in a crash loop)
+                bool tooMany = serverStarts >= 4 && (DateTime.UtcNow - lastServerStart).TotalMinutes < 30;
+                if (!File.Exists(Path.Combine(Dir, "server", "index.mjs")) || tooMany || !EnsureServer(40)) return;
+            }
             Dictionary<string, object> s = Get("/api/state", 5000), o = null;
             try { o = Get("/api/overview", 10000); }
             catch (Exception ex) { DebugLog.Write("office: overview: " + ex.Message); }
@@ -98,18 +148,36 @@ namespace Bestie
                 case "completed":
                     return who + " finished “" + title + "”. " + (Mine(t) ? "ask me what it did." : "your move.");
                 case "failed":
-                    return who + " got stuck on “" + title + "”. the error's in vibe code central.";
+                    string why = Why(Json.Str(t, "error"));
+                    return who + " couldn't do “" + title + "”" + (why != null ? ": " + why : ". ask me what went wrong.");
                 case "blocked":
-                    return who + " hit a wall on “" + title + "”: it needed a permission it didn't have.";
+                    return who + " hit a wall on “" + title + "”: it needed a permission it didn't have. say \"retry it\" or tell me what to let it do.";
                 case "review":
-                    return who + "'s plan for “" + title + "” is ready. approve it in vibe code central.";
+                    return who + "'s plan for “" + title + "” is ready. say \"approve it\" and the team starts.";
             }
             return null;
         }
 
+        /// <summary>A failure they can act on, in plain words (the agent's sign-in, its usage limit), or null.</summary>
+        static string Why(string error)
+        {
+            string e = (error ?? "").ToLowerInvariant();
+            if (e.Contains("authenticate") || e.Contains("oauth") || e.Contains("auth login") || e.Contains("not logged in") || e.Contains("/login"))
+                return "claude's sign-in for the agents expired. run claude auth login once in a terminal, then say \"retry it\".";
+            Match m = Regex.Match(error ?? "", @"(session|usage|rate) limit.*?resets? ([0-9:]+\s*[ap]m)", RegexOptions.IgnoreCase);
+            if (m.Success) return "claude's usage limit is used up until " + m.Groups[2].Value + ". say \"retry it\" after that, or give it to a codex agent.";
+            if (e.Contains("limit")) return "it hit a usage limit. say \"retry it\" later, or give it to a codex agent.";
+            return null;
+        }
+
+        static bool SignedIn(Dictionary<string, object> s, string provider)
+        {
+            return Json.Bool(Json.Obj(Json.Obj(s, "providers"), provider ?? ""), "authenticated", true);
+        }
+
         // ================================================================== handing jobs over
 
-        public sealed class Job { public string Id, Worker, Project; public int Ahead; }
+        public sealed class Job { public string Id, Worker, Project, Provider; public int Ahead; public bool ClaudeSignedOut; }
 
         /// <summary>Opens the office app if it isn't running and waits for it. True once it answers.</summary>
         public static bool Open(int maxSeconds)
@@ -126,8 +194,9 @@ namespace Bestie
             return false;
         }
 
-        /// <summary>Gives a coding job to one of the office's claude agents, working in dir (added to the office if it
-        /// isn't there yet). Null if the office has no claude agent. Throws when the office says no.</summary>
+        /// <summary>Gives a coding job to one of the office's agents, working in dir (added to the office if it isn't there
+        /// yet): a claude agent, or a codex one while claude's sign-in has expired. Null if no agent can take it. Throws when
+        /// the office says no.</summary>
         public static Job Queue(string title, string prompt, string dir)
         {
             Dictionary<string, object> s = Get("/api/state", 6000);
@@ -140,10 +209,12 @@ namespace Bestie
             bool ui = Regex.IsMatch(prompt, @"\b(ui|ux|design|redesign|css|styles?|styling|layout|landing|page|screen|looks?|animations?|polish|theme|colou?rs?|fonts?)\b", RegexOptions.IgnoreCase);
             Func<Dictionary<string, object>, bool> uiRole = w => Regex.IsMatch(Json.Str(w, "role") ?? "", @"\b(ui|ux|design|front)", RegexOptions.IgnoreCase);
             Func<Dictionary<string, object>, int> effort = w => Json.Str(w, "effort") == "high" ? 0 : Json.Str(w, "effort") == "medium" ? 1 : 2;
-            // their claude agents only: a free one first, the ui specialist for looks and anyone else for the rest, then the hardest thinker
+            // claude agents first (their subscription); codex ones while claude's sign-in has expired. then a free one,
+            // the ui specialist for looks and anyone else for the rest, then the hardest thinker
+            bool claudeOk = SignedIn(s, "claude");
             Dictionary<string, object> worker = Json.Arr(s, "workers").OfType<Dictionary<string, object>>()
-                .Where(w => Json.Str(w, "provider") == "claude" && !Json.Bool(w, "retiring", false))
-                .OrderBy(load).ThenBy(w => uiRole(w) == ui ? 0 : 1).ThenBy(effort)
+                .Where(w => !Json.Bool(w, "retiring", false) && (Json.Str(w, "provider") == "claude" ? claudeOk : SignedIn(s, Json.Str(w, "provider"))))
+                .OrderBy(w => Json.Str(w, "provider") == "claude" ? 0 : 1).ThenBy(load).ThenBy(w => uiRole(w) == ui ? 0 : 1).ThenBy(effort)
                 .FirstOrDefault();
             if (worker == null) return null;
             int ahead = load(worker);
@@ -153,7 +224,180 @@ namespace Bestie
             }, token);
             lock (gate) { if (Json.Str(task, "id") != null) statuses[Json.Str(task, "id")] = Json.Str(task, "status"); }
             wake.Set();
-            return new Job { Id = Json.Str(task, "id"), Worker = Json.Str(worker, "name"), Project = Json.Str(project, "name"), Ahead = ahead };
+            return new Job { Id = Json.Str(task, "id"), Worker = Json.Str(worker, "name"), Project = Json.Str(project, "name"), Ahead = ahead,
+                Provider = Json.Str(worker, "provider"), ClaudeSignedOut = !claudeOk };
+        }
+
+        // ================================================================== running the office by voice
+
+        /// <summary>manage_agents: everything the office's screens do, by voice. Returns what happened, for the model to say.
+        /// dir: the project folder for assign/plan (already resolved). Any thread; blocks a few seconds at most.</summary>
+        public static string Manage(string action, string agent, string job, string message, string dir, string role, string effort,
+            string provider, string model, string newName, string personality, bool sure)
+        {
+            if (!EnsureServer(45)) return "the agent office isn't running and wouldn't start (its log: .state\\servers\\office.log).";
+            Dictionary<string, object> s = Get("/api/state", 6000);
+            string token = Json.Str(s, "token");
+            var workers = Json.Arr(s, "workers").OfType<Dictionary<string, object>>().ToList();
+            var tasks = Tasks(s).Where(t => !Json.Bool(t, "archived", false) && Json.Str(t, "parentId") == null).ToList();
+            bool claudeOk = SignedIn(s, "claude");
+            string signedOut = claudeOk ? "" : " (claude's sign-in for the agents has expired: claude agents can't work until they run claude auth login; codex agents can.)";
+            Func<string, Dictionary<string, object>> findWorker = n =>
+            {
+                string w = Norm(n);
+                if (w.Length == 0) return null;
+                return workers.FirstOrDefault(x => Norm(Json.Str(x, "name")) == w)
+                    ?? workers.FirstOrDefault(x => Norm(Json.Str(x, "name")).Contains(w) || Norm(Json.Str(x, "role")).Contains(w));
+            };
+            Func<Dictionary<string, object>, string> busyWith = w => string.Join("; ", tasks.Where(t => Json.Str(t, "workerId") == Json.Str(w, "id") && Active(Json.Str(t, "status")))
+                .Select(t => Json.Str(t, "status") + " “" + Clip(Json.Str(t, "title"), 50) + "”").ToArray());
+            Dictionary<string, object> worker = findWorker(agent);
+            if (agent.Trim().Length > 0 && worker == null && action != "hire")
+                return "there's no agent called " + agent + ". the team: " + string.Join(", ", workers.Select(w => Json.Str(w, "name")).ToArray()) + ".";
+            switch (action)
+            {
+                case "list":
+                    {
+                        if (workers.Count == 0) return "the office has no agents yet. hire one.";
+                        var sb = new StringBuilder("the team (" + workers.Count + " of 6 desks):");
+                        foreach (var w in workers)
+                        {
+                            string busy = busyWith(w);
+                            sb.Append("\n- ").Append(Json.Str(w, "name")).Append(", ").Append(Json.Str(w, "role")).Append(" (").Append(Json.Str(w, "provider"))
+                              .Append(", ").Append(Json.Str(w, "effort")).Append(" effort").Append(string.IsNullOrEmpty(Json.Str(w, "model")) ? "" : ", " + Json.Str(w, "model"))
+                              .Append(Json.Str(w, "provider") == "claude" && !claudeOk ? ", signed out" : "").Append("): ").Append(busy.Length > 0 ? busy : "free");
+                        }
+                        if (Json.Bool(s, "paused", false)) sb.Append("\nthe queue is paused: nothing new starts until they say resume.");
+                        return sb.Append(signedOut).ToString();
+                    }
+                case "hire":
+                    {
+                        string name = (newName.Length > 0 ? newName : agent).Trim();
+                        if (name.Length == 0) return "what should the new agent be called?";
+                        if (findWorker(name) != null && Norm(Json.Str(findWorker(name), "name")) == Norm(name)) return "there's already an agent called " + name + ".";
+                        if (workers.Count >= 6) return "the office is full (6 desks). fire someone first.";
+                        string prov = provider.Length > 0 ? provider : "claude";
+                        var body = new Dictionary<string, object> { { "name", Clip(name, 30) }, { "provider", prov }, { "effort", effort.Length > 0 ? effort : "medium" },
+                            { "role", role.Length > 0 ? Clip(role, 60) : "Engineer" } };
+                        if (model.Length > 0) body["model"] = model;
+                        if (personality.Length > 0) body["personality"] = Clip(personality, 1200);
+                        Dictionary<string, object> w = Post("/api/workers", body, token);
+                        wake.Set();
+                        return "hired " + Json.Str(w, "name") + ": " + Json.Str(w, "role") + ", a " + prov + " agent with " + Json.Str(w, "effort") + " effort." + (prov == "claude" ? signedOut : "");
+                    }
+                case "change":
+                    {
+                        if (worker == null) return "change which agent?";
+                        var body = new Dictionary<string, object>
+                        {
+                            // the office resets whatever's left out, so everything goes back
+                            { "name", newName.Length > 0 ? Clip(newName, 30) : Json.Str(worker, "name") },
+                            { "provider", provider.Length > 0 ? provider : Json.Str(worker, "provider") },
+                            { "effort", effort.Length > 0 ? effort : Json.Str(worker, "effort") },
+                            { "role", role.Length > 0 ? Clip(role, 60) : Json.Str(worker, "role") ?? "Engineer" },
+                            { "model", model.Length > 0 ? (model == "default" ? "" : model) : Json.Str(worker, "model") ?? "" },
+                            { "color", Json.Str(worker, "color") ?? "#8fb9c8" },
+                        };
+                        if (personality.Length > 0) body["personality"] = Clip(personality, 1200);
+                        Dictionary<string, object> w = Send("PATCH", "/api/workers/" + Uri.EscapeDataString(Json.Str(worker, "id")), body, token, 10000);
+                        wake.Set();
+                        return "updated " + Json.Str(w, "name") + ": " + Json.Str(w, "role") + ", " + Json.Str(w, "provider") + ", " + Json.Str(w, "effort") + " effort"
+                            + (string.IsNullOrEmpty(Json.Str(w, "model")) ? "" : ", model " + Json.Str(w, "model")) + ".";
+                    }
+                case "fire":
+                    {
+                        if (worker == null) return "fire which agent?";
+                        string busy = busyWith(worker);
+                        if (busy.Length > 0 && !sure) return Json.Str(worker, "name") + " is in the middle of: " + busy + ". firing cancels that. ask them, and call again with sure=true if they say so.";
+                        Send("DELETE", "/api/workers/" + Uri.EscapeDataString(Json.Str(worker, "id")), null, token, 15000);
+                        wake.Set();
+                        return "fired " + Json.Str(worker, "name") + (busy.Length > 0 ? " (and stopped what it was doing)" : "") + ". the desk is free.";
+                    }
+                case "assign":
+                case "plan":
+                    {
+                        if (message.Trim().Length < 8) return "what's the job? i need it in a sentence or two.";
+                        if (dir == null) return "which project? name one of their folders.";
+                        bool plan = action == "plan";
+                        if (worker == null)
+                        {
+                            // a plan goes to the lead (or the hardest thinker); a job to whoever's free
+                            Func<Dictionary<string, object>, bool> canWork = w => Json.Str(w, "provider") == "claude" ? claudeOk : SignedIn(s, Json.Str(w, "provider"));
+                            worker = workers.Where(canWork).OrderBy(w => plan && Regex.IsMatch(Json.Str(w, "role") ?? "", "lead", RegexOptions.IgnoreCase) ? 0 : 1)
+                                .ThenBy(w => Json.Str(w, "provider") == "claude" ? 0 : 1)
+                                .ThenBy(w => tasks.Count(t => Json.Str(t, "workerId") == Json.Str(w, "id") && Active(Json.Str(t, "status"))))
+                                .ThenBy(w => Json.Str(w, "effort") == "high" ? 0 : 1).FirstOrDefault();
+                            if (worker == null) return "no agent can work right now." + signedOut;
+                        }
+                        else if (Json.Str(worker, "provider") == "claude" && !claudeOk && !sure)
+                            return Json.Str(worker, "name") + " is a claude agent, and claude's sign-in has expired, so it would fail. they can run claude auth login, or give it to a codex agent ("
+                                + string.Join(", ", workers.Where(w => Json.Str(w, "provider") == "codex").Select(w => Json.Str(w, "name")).ToArray()) + ").";
+                        Dictionary<string, object> project = Json.Arr(s, "projects").OfType<Dictionary<string, object>>().FirstOrDefault(p => SamePath(Json.Str(p, "path"), dir))
+                            ?? Post("/api/projects", new Dictionary<string, object> { { "path", dir }, { "name", Path.GetFileName(dir.TrimEnd('\\')) } }, token);
+                        string prompt = message.Trim() + "\n\n" + Mark + ", the user's desktop assistant." + (plan ? " Plan it for the team: split it into the jobs each agent should do.)" : " When you finish, say what you did and how to run it.)");
+                        var body = new Dictionary<string, object> { { "title", Clip(message, 70) }, { "prompt", prompt }, { "projectId", Json.Str(project, "id") },
+                            { "workerId", Json.Str(worker, "id") }, { "mode", "write" } };
+                        if (plan) body["kind"] = "plan";
+                        Dictionary<string, object> task = Post("/api/tasks", body, token);
+                        lock (gate) { if (Json.Str(task, "id") != null) statuses[Json.Str(task, "id")] = Json.Str(task, "status"); }
+                        wake.Set();
+                        return (plan ? Json.Str(worker, "name") + " is drafting a team plan for " : Json.Str(worker, "name") + " has the job, in ") + Json.Str(project, "name")
+                            + " (" + Json.Str(task, "status") + "). " + (plan ? "you'll say when the plan is ready to approve." : "you'll announce when it's done.");
+                    }
+                case "follow_up":
+                case "approve":
+                case "cancel":
+                case "retry":
+                    {
+                        Func<string, bool> fits = st => action == "approve" ? st == "review"
+                            : action == "cancel" ? Active(st)
+                            : action == "retry" ? st == "failed" || st == "blocked" || st == "cancelled"
+                            : st != "queued" && st != "running";
+                        string want = Norm(job);
+                        var hits = tasks.AsEnumerable().Reverse()   // newest first
+                            .Where(t => worker == null || Json.Str(t, "workerId") == Json.Str(worker, "id"))
+                            .Where(t => want.Length == 0 || Norm(Json.Str(t, "title")).Contains(want) || Norm(Json.Str(t, "prompt")).Contains(want)
+                                || Norm(ProjectName(s, Json.Str(t, "projectId"))).Contains(want))
+                            .ToList();
+                        Dictionary<string, object> t0 = hits.FirstOrDefault(t => fits(Json.Str(t, "status")));
+                        if (t0 == null)
+                        {
+                            var close = hits.FirstOrDefault();
+                            return close == null ? "no job matches" + (job.Length > 0 ? " \"" + job + "\"" : "") + (worker != null ? " for " + Json.Str(worker, "name") : "") + "."
+                                : "the closest job, " + Json.Str(close, "workerName") + "'s “" + Clip(Json.Str(close, "title"), 60) + "”, is " + Json.Str(close, "status") + ", so it can't be "
+                                  + (action == "follow_up" ? "followed up until it finishes its turn" : action == "approve" ? "approved (only a finished plan can)" : action + "ed") + ".";
+                        }
+                        string id = Uri.EscapeDataString(Json.Str(t0, "id")), what = Json.Str(t0, "workerName") + "'s “" + Clip(Json.Str(t0, "title"), 60) + "”";
+                        if (action == "follow_up")
+                        {
+                            if (message.Trim().Length == 0) return "what should " + Json.Str(t0, "workerName") + " do next?";
+                            var owner = workers.FirstOrDefault(w => Json.Str(w, "id") == Json.Str(t0, "workerId"));
+                            if (owner == null) return what + " belonged to an agent who's gone, so there's no one to follow up with. assign it to someone instead.";
+                            if (Json.Str(owner, "provider") == "claude" && !claudeOk && !sure) return what + " is a claude agent's, and claude's sign-in has expired, so the follow-up would fail." + signedOut;
+                            Dictionary<string, object> nt = Post("/api/tasks/" + id + "/followup", new Dictionary<string, object> {
+                                { "prompt", message.Trim() + "\n\n" + Mark + ", the user's desktop assistant.)" }, { "mode", Json.Str(t0, "mode") ?? "write" } }, token);
+                            lock (gate) { if (Json.Str(nt, "id") != null) statuses[Json.Str(nt, "id")] = Json.Str(nt, "status"); }
+                            wake.Set();
+                            return "sent it to " + Json.Str(t0, "workerName") + " as a follow-up to “" + Clip(Json.Str(t0, "title"), 60) + "” (it picks up where it left off). you'll announce when it's done.";
+                        }
+                        Post("/api/tasks/" + id + "/" + action, new Dictionary<string, object>(), token);
+                        wake.Set();
+                        return action == "approve" ? "approved " + what + ": the team jobs are starting."
+                            : action == "cancel" ? "stopped " + what + "."
+                            : "retrying " + what + "." + (Why(Json.Str(t0, "error")) != null && Why(Json.Str(t0, "error")).Contains("sign-in") && !claudeOk ? " (careful: claude's sign-in is still expired.)" : "");
+                    }
+                case "pause":
+                case "resume":
+                    Post("/api/queue", new Dictionary<string, object> { { "paused", action == "pause" } }, token);
+                    return action == "pause" ? "paused the queue: nothing new starts (running jobs finish)." : "the queue is running again.";
+            }
+            return "manage_agents can: list, hire, change, fire, assign, plan, follow_up, approve, cancel, retry, pause, resume.";
+        }
+
+        static string ProjectName(Dictionary<string, object> s, string id)
+        {
+            var p = Json.Arr(s, "projects").OfType<Dictionary<string, object>>().FirstOrDefault(x => Json.Str(x, "id") == id);
+            return p != null ? Json.Str(p, "name") ?? "" : "";
         }
 
         // ================================================================== what bestie can see
@@ -186,7 +430,8 @@ namespace Bestie
             Dictionary<string, object> s, o;
             lock (gate) { s = state; o = overview; }
             if (s == null) return null;
-            var sb = new StringBuilder("their agent office (vibe code central) is open. ");
+            var sb = new StringBuilder("their agent office (vibe code central) is running in the background; manage_agents runs it. ");
+            if (!SignedIn(s, "claude")) sb.Append("claude's sign-in for the agents has expired (claude agents fail until they run claude auth login; codex agents work). ");
             if (o != null)
             {
                 sb.Append(Today(o)).Append(' ');

@@ -191,6 +191,32 @@ namespace Bestie
 
         // ================================================================== keys and typing
 
+        /// <summary>Apps where typed text (and enter) runs as commands or goes to another ai agent: terminals, shells, and the
+        /// claude desktop app (its code tab has terminals). Typing into them is how a request once ran as powershell.</summary>
+        static readonly HashSet<string> NoTyping = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "windowsterminal", "openconsole", "conhost", "cmd", "powershell", "powershell_ise", "pwsh", "wt", "mintty", "bash", "wsl", "wslhost",
+            "warp", "alacritty", "wezterm-gui", "hyper", "tabby", "putty", "kitty", "claude",
+        };
+
+        /// <summary>The app (process name) if this window is one that must never be typed into; else null.</summary>
+        internal static string TypingBlocked(IntPtr hwnd)
+        {
+            if (hwnd == IntPtr.Zero) return null;
+            uint pid; Native.GetWindowThreadProcessId(hwnd, out pid);
+            string app = (Native.ProcessNameOf(pid) ?? "").ToLowerInvariant();
+            if (app.EndsWith(".exe")) app = app.Substring(0, app.Length - 4);
+            return NoTyping.Contains(app) ? app : null;
+        }
+
+        static string NoTypingReason(string app)
+        {
+            return app == "claude"
+                ? "that's the claude desktop app: it runs their claude code sessions and terminals, so you never type there (it once turned a request into powershell commands). "
+                  + "for a job for claude use delegate_to_claude (or manage_agents to message an agent); for a browser chat, type into chrome."
+                : app + " is a terminal: whatever you type there runs as a command. you never type into terminals; use run_command for commands.";
+        }
+
         AssistantToolResult PressKeys(string keys, string app, int times)
         {
             string[] parts = keys.Split(new[] { '+' }, StringSplitOptions.RemoveEmptyEntries).Select(k => k.Trim()).Where(k => k.Length > 0).ToArray();
@@ -203,8 +229,12 @@ namespace Bestie
             string error;
             w = FindWindowFor(app, out error);
             if (w == null && app.Length > 0) return new AssistantToolResult(error);
+            bool enterKey = parts.Any(p => p.Equals("enter", StringComparison.OrdinalIgnoreCase) || p.Equals("return", StringComparison.OrdinalIgnoreCase));
+            string blocked = enterKey ? TypingBlocked(w != null ? w.H : Native.GetForegroundWindow()) : null;
+            if (blocked != null) return new AssistantToolResult("didn't press it: " + NoTypingReason(blocked));
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("keys " + keys + " x" + times + (w != null ? " in " + w.App : "")); return new AssistantToolResult("pressed."); }
             if (w != null && Native.GetForegroundWindow() != w.H) FocusWindow(w.H);
+            if (enterKey && (blocked = TypingBlocked(Native.GetForegroundWindow())) != null) return new AssistantToolResult("didn't press it: " + NoTypingReason(blocked));
             for (int i = 0; i < times; i++) { ComputerAgent.Input.Key(parts); Thread.Sleep(times > 1 ? 60 : 0); }
             return new AssistantToolResult("pressed " + keys + (times > 1 ? " ×" + times : "") + (w != null ? " in " + w.App + " (" + OpenAIClient.Trunc(w.Title, 40) + ")" : "") + ".",
                 "pressed " + keys, null);
@@ -217,8 +247,12 @@ namespace Bestie
             string error;
             Win w = FindWindowFor(app, out error);
             if (w == null && app.Length > 0) return new AssistantToolResult(error);
+            string blocked = TypingBlocked(w != null ? w.H : Native.GetForegroundWindow());
+            if (blocked != null) return new AssistantToolResult("didn't type anything: " + NoTypingReason(blocked));
             if (DryRun) { lock (DryRunLog) DryRunLog.Add("type " + text); return new AssistantToolResult("typed."); }
             if (w != null && Native.GetForegroundWindow() != w.H) FocusWindow(w.H);
+            // check again: what's actually in front now is what gets the keys
+            if ((blocked = TypingBlocked(Native.GetForegroundWindow())) != null) return new AssistantToolResult("didn't type anything: " + NoTypingReason(blocked));
             ComputerAgent.Input.Type(text);
             if (enter) ComputerAgent.Input.Key(new[] { "ENTER" });
             return new AssistantToolResult("typed " + text.Length + " characters" + (enter ? " and pressed enter" : "") + (w != null ? " in " + w.App : "") + ".", "typed into " + (w != null ? w.App : "the app"), null);
