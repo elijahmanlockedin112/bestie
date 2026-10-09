@@ -61,8 +61,20 @@ namespace Bestie
         public static string React(Song s, bool heardArtistBefore)
         {
             string line = heardArtistBefore && Rng.Chance(0.35) ? "{artist} again. you have a type." : Rng.Pick(Reactions);
-            string title = s.Title.Length > 32 ? s.Title.Substring(0, 30) + "…" : s.Title;
-            return line.Replace("{song}", title).Replace("{artist}", s.Artist).Replace("{rating}", Rating(s).ToString());
+            line = line.Replace("{song}", ShortTitle(s.Title)).Replace("{artist}", s.Artist).Replace("{rating}", Rating(s).ToString());
+            return line.Replace("….", "…");   // "♪ I Guess That's Why They Call…. 4 out of 7." read badly
+        }
+
+        /// <summary>A song title that fits a bubble: no "(Remastered 2014)" / "- 2025 Remaster" tails, cut at a word.</summary>
+        public static string ShortTitle(string t)
+        {
+            t = (t ?? "").Trim();
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\s*[\(\[][^\)\]]*\b(remaster\w*|version|live|edit|mono|stereo|deluxe|feat\.?|ft\.)[^\)\]]*[\)\]]", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            t = System.Text.RegularExpressions.Regex.Replace(t, @"\s+-\s+[^-]*\b(remaster\w*|version|live|edit|mono|stereo|mix)\b.*$", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (t.Length <= 32) return t;
+            int cut = t.LastIndexOf(' ', 30);
+            if (cut < 14) cut = 30;
+            return t.Substring(0, cut).TrimEnd(',', ';', ':', '-', ' ', '(') + "…";
         }
     }
 }

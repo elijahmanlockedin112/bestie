@@ -1988,6 +1988,18 @@ namespace Bestie
 
         // ================================================================== nosy peek
 
+        /// <summary>Takes off quote marks only when they wrap the whole remark. (Trimming them off the ends broke remarks
+        /// that start with a quoted title: "“AI not taking over.” good." came out as "ai not taking over.” good.")</summary>
+        static string Unwrap(string text)
+        {
+            text = (text ?? "").Trim();
+            if (text.Length < 2) return text;
+            char a = text[0], z = text[text.Length - 1];
+            bool wrapped = (a == '"' && z == '"') || (a == '“' && z == '”') || (a == '\'' && z == '\'');
+            string inner = wrapped ? text.Substring(1, text.Length - 2) : null;
+            return wrapped && inner.IndexOfAny(new[] { '"', '“', '”' }) < 0 ? inner.Trim() : text;
+        }
+
         const int PeekFloorMinutes = 5;
         internal const string PeekInstruction =
             "You're peeking over the person's shoulder at their screen. Say ONE short, nosy, kind, in-character remark about what they're doing " +
@@ -2108,7 +2120,7 @@ namespace Bestie
             Dictionary<string, object> resp = client.ChatCompletion(body, 30000);
             object[] choices = Json.Arr(resp, "choices");
             var choice = choices.Length > 0 ? choices[0] as Dictionary<string, object> : null;
-            string text = (ContentText(Json.Obj(choice, "message")) ?? "").Trim().Trim('"', '\'', '“', '”').Trim();
+            string text = Unwrap((ContentText(Json.Obj(choice, "message")) ?? "").Trim());
             if (text.Length == 0 || text.StartsWith("SKIP", StringComparison.Ordinal)
                 || text.TrimEnd('.', '!').Equals("skip", StringComparison.OrdinalIgnoreCase))
             {
