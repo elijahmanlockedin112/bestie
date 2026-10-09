@@ -201,6 +201,12 @@ namespace Bestie
         /// <summary>Downscale to at most maxWidth and encode as a JPEG data URL.</summary>
         public static string ToJpegDataUrl(Bitmap src, int maxWidth, long quality)
         {
+            return "data:image/jpeg;base64," + Convert.ToBase64String(ToJpegBytes(src, maxWidth, quality));
+        }
+
+        /// <summary>Downscale to at most maxWidth and encode as JPEG bytes.</summary>
+        public static byte[] ToJpegBytes(Bitmap src, int maxWidth, long quality)
+        {
             Bitmap img = src;
             bool own = false;
             if (src.Width > maxWidth)
@@ -217,7 +223,7 @@ namespace Bestie
                 {
                     ep.Param[0] = new EncoderParameter(System.Drawing.Imaging.Encoder.Quality, quality);
                     img.Save(ms, codec, ep);
-                    return "data:image/jpeg;base64," + Convert.ToBase64String(ms.ToArray());
+                    return ms.ToArray();
                 }
             }
             finally { if (own) img.Dispose(); }

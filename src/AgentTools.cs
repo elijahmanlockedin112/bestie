@@ -40,7 +40,10 @@ namespace Bestie
                 + "commands. you'll hear when it's done.", R("task"),
                 P("task", "string", "the full job, in detail, as they described it"),
                 PE("kind", "code: software in a project folder. other: research, writing or analysis (works in their Downloads folder)", new[] { "code", "other" }),
-                P("project", "string", "for code: an existing project's folder name if it's about one of theirs, else a short kebab-case name for a new one")));
+                P("project", "string", "for code: an existing project's folder name if it's about one of theirs, else a short kebab-case name for a new one"),
+                P("session", "string", "when the message is for one of their existing claude code sessions ('tell the claude working on the blender video...', "
+                    + "'have that session also...'): words from its title or folder, as check_claude shows them. it continues in a copy of that session that remembers "
+                    + "everything in it, in its own window, in the right folder. for agents in their office use manage_agents follow_up instead")));
             t.Add(Tool("start_project", "start one of their apps or servers (synaptic, jev day trader, bible study, spark lab, ascent, ...) and open it in the browser. it waits for "
                 + "the server itself and announces when it's up (or what went wrong), so call it once and don't check on it. the jev day trader only ever paper-trades "
                 + "(practice money): starting it is fine.", R("name"),
@@ -78,6 +81,7 @@ namespace Bestie
             AddAlexaTools(t);
             AddRoutineTools(t);
             AddShopTools(t);
+            AddWatchTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -85,7 +89,9 @@ namespace Bestie
             switch (name)
             {
                 case "play_music": return PlayMusic(Json.Str(a, "kind") ?? "track", Json.Str(a, "title") ?? Json.Str(a, "query") ?? "", Json.Str(a, "artist") ?? "");
-                case "delegate_to_claude": return DelegateToClaude(Json.Str(a, "task") ?? "", Json.Str(a, "project") ?? "", Json.Str(a, "kind") != "other");
+                case "delegate_to_claude":
+                    if (!string.IsNullOrWhiteSpace(Json.Str(a, "session"))) return ContinueClaudeSession(Json.Str(a, "session"), Json.Str(a, "task") ?? "");
+                    return DelegateToClaude(Json.Str(a, "task") ?? "", Json.Str(a, "project") ?? "", Json.Str(a, "kind") != "other");
                 case "start_project": return StartProject(Json.Str(a, "name") ?? "");
                 case "stop_project": return StopProject(Json.Str(a, "name") ?? "");
                 case "manage_agents": return ManageAgents(a);
@@ -93,7 +99,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a);
+            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a);
         }
 
         // ================================================================== spotify
@@ -250,6 +256,40 @@ namespace Bestie
                 "handed to claude: " + label, null);
         }
 
+        /// <summary>A message for one of their existing claude code sessions: it goes to a copy of that session (claude
+        /// --resume --fork-session), so it has the whole conversation, in the session's own folder, in its own window. Never
+        /// typed into a window: the original may be open in the claude app, and typing there once ran as commands.</summary>
+        AssistantToolResult ContinueClaudeSession(string which, string message)
+        {
+            message = (message ?? "").Trim();
+            if (message.Length < 4) return new AssistantToolResult("what should that session do? i need the message.");
+            string exe = FindClaude();
+            if (exe == null) return new AssistantToolResult("claude code isn't installed here (no claude.exe), so i can't reach that session.");
+            string want = Norm(which);
+            var sessions = AiSessions.Snapshot().Where(x => x.Kind == "code" && !string.IsNullOrEmpty(x.Cwd)).OrderByDescending(x => x.LastActive).ToList();
+            AiSession s = sessions.FirstOrDefault(x => Norm(x.Title).Contains(want) || Norm(Path.GetFileName((x.Cwd ?? "").TrimEnd('\\'))).Contains(want))
+                ?? sessions.FirstOrDefault(x => want.Split(' ').Length > 0 && Norm(x.Title + " " + x.Cwd).Contains(want));
+            if (s == null)
+                return new AssistantToolResult("no recent claude code session matches \"" + which + "\". recent ones: "
+                    + string.Join("; ", sessions.Take(6).Select(x => "“" + OpenAIClient.Trunc(x.Title, 50) + "” in " + Path.GetFileName((x.Cwd ?? "").TrimEnd('\\'))).ToArray())
+                    + ". ask which, or hand it over as a new job (delegate_to_claude without session).");
+            string id = s.Id.StartsWith("code:") ? s.Id.Substring(5) : s.Id;
+            string prompt = message + "\n\n(From the user, by voice through Bestie, their desktop assistant: a follow-up to this conversation.)";
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("continue " + id + " in " + s.Cwd + " :: " + prompt); return new AssistantToolResult("sent."); }
+            var psi = new ProcessStartInfo(exe)
+            {
+                Arguments = "--resume " + Quote(id) + " --fork-session -n " + Quote(OpenAIClient.Trunc(s.Title ?? "follow-up", 40) + " (via bestie)") + " " + Quote(prompt),
+                WorkingDirectory = s.Cwd,
+                UseShellExecute = true,   // its own window, which they can watch and answer
+            };
+            Process.Start(psi);
+            DebugLog.Write("agent: continued claude session " + id + " in " + s.Cwd);
+            Journal.Add("i passed a message to the claude session “" + OpenAIClient.Trunc(s.Title, 80) + "”: " + OpenAIClient.Trunc(message, 120));
+            return new AssistantToolResult("sent it to a copy of the claude session “" + OpenAIClient.Trunc(s.Title, 60) + "” (" + Path.GetFileName(s.Cwd.TrimEnd('\\'))
+                + "): it remembers that whole conversation and is working on it in its own window (it asks them there before running commands). "
+                + "the original session isn't touched. tell them that in one short sentence.", "to claude session: " + OpenAIClient.Trunc(s.Title, 40), null);
+        }
+
         /// <summary>A claude code session in its own terminal window, in normal permission mode: it asks them there
         /// before running commands or changing things.</summary>
         static void ClaudeWindow(string exe, string dir, string label, string prompt, string task)
@@ -367,7 +407,9 @@ namespace Bestie
             return slug.Length == 0 ? "new-project" : slug;
         }
 
-        /// <summary>A project folder they already have (Coding Projects, or an app in the learning hub), or null.</summary>
+        /// <summary>A project folder they already have, or null: Coding Projects, the learning hub's apps, and also anywhere
+        /// else they actually work (folders their recent claude sessions ran in, projects in the agent office, top-level
+        /// Downloads folders), so "bestie" finds Downloads\Bestie instead of starting an empty Coding Projects\bestie.</summary>
         static string ExistingProject(string name)
         {
             string want = Norm(name);
@@ -375,6 +417,19 @@ namespace Bestie
             var dirs = new List<string>();
             try { dirs.AddRange(Directory.GetDirectories(ProjectsDir)); } catch { }
             try { dirs.AddRange(Directory.GetDirectories(Path.Combine(HubDir, "apps"))); } catch { }
+            try { dirs.AddRange(AiSessions.Snapshot().Where(x => x.Kind == "code" || x.Kind == "codex").Select(x => x.Cwd).Where(d => !string.IsNullOrEmpty(d) && Directory.Exists(d))); } catch { }
+            try { dirs.AddRange(Office.ProjectPaths().Where(Directory.Exists)); } catch { }
+            try
+            {
+                string downloads = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
+                dirs.AddRange(Directory.GetDirectories(downloads).Where(d => !string.Equals(d.TrimEnd('\\'), ProjectsDir.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)
+                    && (File.Exists(Path.Combine(d, "package.json")) || Directory.Exists(Path.Combine(d, ".git")) || Directory.Exists(Path.Combine(d, "src")))));
+            }
+            catch { }
+            string home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile).TrimEnd('\\');
+            // (an empty folder isn't a project: a misrouted job once left an empty Coding Projects\bestie that out-matched the real one)
+            Func<string, bool> hasStuff = d => { try { return Directory.EnumerateFileSystemEntries(d).Any(); } catch { return false; } };
+            dirs = dirs.Where(d => !string.Equals(d.TrimEnd('\\'), home, StringComparison.OrdinalIgnoreCase) && hasStuff(d)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             string hit = dirs.FirstOrDefault(d => Norm(Path.GetFileName(d)) == want)
                       ?? dirs.FirstOrDefault(d => Norm(Path.GetFileName(d)).Contains(want) || want.Contains(Norm(Path.GetFileName(d))) && Norm(Path.GetFileName(d)).Length >= 4);
             // the old copy of an app that moved into the learning hub: the hub's one is the live one

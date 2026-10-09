@@ -60,7 +60,7 @@ namespace Bestie
         }
     }
 
-    internal sealed class PhoneServer
+    internal sealed partial class PhoneServer
     {
         public const int Port = 47830;
         public const int TailscalePort = 8445;
@@ -426,6 +426,8 @@ namespace Bestie
                 case "GET /api/history": SendJson(s, History(60)); return;
                 case "GET /api/status": SendJson(s, Status()); return;
                 case "GET /api/screen": Screen(r, s); return;
+                case "GET /api/screen.jpg": ScreenFrame(r, s); return;
+                case "GET /api/moonlight": SendJson(s, MoonlightInfo()); return;
                 case "POST /api/screen/act": ScreenAct(r, s); return;
                 case "GET /api/saved": SendJson(s, Saved()); return;
                 case "GET /api/note": Note(r, s); return;
@@ -433,7 +435,9 @@ namespace Bestie
                 case "POST /api/control": Control(r, s); return;
                 case "GET /api/control": SendJson(s, ControlState(null)); return;
                 case "POST /api/upload": Upload(r, s); return;
-                case "GET /api/file": SendOffered(r, s); return;
+                case "GET /api/file": case "HEAD /api/file": SendOffered(r, s); return;
+                case "GET /api/files": Files(r, s); return;
+                case "GET /api/files/get": case "HEAD /api/files/get": FileGet(r, s); return;
                 case "GET /api/inbox": SendJson(s, InboxJson()); return;
                 case "POST /api/inbox": InboxChange(r, s); return;
                 case "GET /api/fromPc": SendJson(s, new Dictionary<string, object> { { "inbox", InboxJson() }, { "tabs", TabsJson() }, { "downloads", DownloadsJson() }, { "copies", ClipWatch.Recent() } }); return;
@@ -682,6 +686,30 @@ namespace Bestie
             SendJson(s, new Dictionary<string, object> { { "screens", images.ToArray() }, { "count", mons.Length }, { "at", When.Clock(DateTime.Now) } });
         }
 
+        /// <summary>One frame of one monitor as plain JPEG bytes (no JSON, no base64): the quick look asks for the next one
+        /// as soon as this one lands, so it's as fast as the connection allows.</summary>
+        void ScreenFrame(Request r, Stream s)
+        {
+            Rectangle[] mons = Monitors();
+            int i;
+            if (!int.TryParse(r.Q("screen"), out i) || i < 0 || i >= mons.Length) i = 0;
+            int width;
+            if (!int.TryParse(r.Q("w"), out width)) width = 1100;
+            width = Math.Max(480, Math.Min(1600, width));
+            byte[] jpg;
+            using (Bitmap bmp = ScreenGrab.Capture(mons[i])) jpg = ScreenGrab.ToJpegBytes(bmp, width, 55);
+            Send(s, 200, "image/jpeg", jpg, "X-Screen-Count: " + mons.Length + "\r\nX-Screen-Index: " + i + "\r\n");
+        }
+
+        /// <summary>For the phone's "stream with moonlight" button: whether sunshine (the streaming host moonlight connects
+        /// to) is running here, and the address to add in moonlight.</summary>
+        Dictionary<string, object> MoonlightInfo()
+        {
+            bool up = AssistantTools.PortOpen(47989);
+            string host = tailnetHost ?? TailnetHost();
+            return new Dictionary<string, object> { { "sunshine", up }, { "host", host }, { "shortcut", "Moonlight" } };
+        }
+
         /// <summary>Taps on the live view become real input on the computer: click (left/right/double) at a spot given as
         /// fractions of that monitor, scroll there, type text, or press a key.</summary>
         void ScreenAct(Request r, Stream s)
@@ -885,8 +913,10 @@ namespace Bestie
             name = Path.GetFileName(name.Replace('/', '\\'));
             foreach (char bad in Path.GetInvalidFileNameChars()) name = name.Replace(bad, '_');
             if (name.Trim('.', ' ').Length == 0) name = "from-phone-" + DateTime.Now.ToString("yyyy-MM-dd-HHmmss", CultureInfo.InvariantCulture) + ".jpg";
-            Directory.CreateDirectory(FromPhoneDir);
-            string target = AssistantTools.FreeName(Path.Combine(FromPhoneDir, name));
+            string problem, folder = UploadFolder(r, out problem);
+            if (folder == null) { SendError(s, 403, problem); return; }
+            Directory.CreateDirectory(folder);
+            string target = AssistantTools.FreeName(Path.Combine(folder, name));
             long left = r.Length;
             try
             {
@@ -909,8 +939,9 @@ namespace Bestie
                 return;
             }
             DebugLog.Write("phone: received " + Path.GetFileName(target) + " (" + r.Length + " bytes)");
-            Journal.Add("you sent " + Path.GetFileName(target) + " from your phone (in Downloads\\From phone).");
-            SendJson(s, new Dictionary<string, object> { { "name", Path.GetFileName(target) }, { "folder", "Downloads\\From phone" }, { "size", r.Length } });
+            string shown = folder.StartsWith(Profile + "\\", StringComparison.OrdinalIgnoreCase) ? folder.Substring(Profile.Length + 1) : folder;
+            Journal.Add("you sent " + Path.GetFileName(target) + " from your phone (in " + shown + ").");
+            SendJson(s, new Dictionary<string, object> { { "name", Path.GetFileName(target) }, { "folder", shown }, { "size", r.Length } });
         }
 
         static readonly Dictionary<string, string> Types = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -928,20 +959,65 @@ namespace Bestie
             bool found;
             lock (offers) found = offers.TryGetValue(r.Q("id") ?? "", out offer);
             if (!found || offer.Value < DateTime.UtcNow || !File.Exists(offer.Key)) { SendText(s, 404, "that link has expired. ask again."); return; }
-            string path = offer.Key, type;
+            SendFileRanged(r, s, offer.Key, true);
+        }
+
+        /// <summary>A file, the way phones want it: byte ranges (an iPhone only plays a video, or finishes a big download,
+        /// from a server that answers "bytes=0-1" with 206 Partial Content; without it, it just drops the connection), HEAD,
+        /// and a proper 416 for a range that's past the end.</summary>
+        void SendFileRanged(Request r, Stream s, string path, bool sandbox)
+        {
+            string type;
             bool inline = Types.TryGetValue(Path.GetExtension(path), out type);
             var info = new FileInfo(path);
+            long total = info.Length, start = 0, end = total - 1;
+            bool partial = false;
+            Match m = Regex.Match(r.H("Range") ?? "", @"^bytes=(\d*)-(\d*)$");
+            if (m.Success && (m.Groups[1].Value.Length > 0 || m.Groups[2].Value.Length > 0))
+            {
+                if (m.Groups[1].Value.Length == 0) start = Math.Max(0, total - long.Parse(m.Groups[2].Value));   // the last n bytes
+                else
+                {
+                    start = long.Parse(m.Groups[1].Value);
+                    if (m.Groups[2].Value.Length > 0) end = Math.Min(end, long.Parse(m.Groups[2].Value));
+                }
+                if (start >= total || start > end)
+                {
+                    byte[] none = Encoding.ASCII.GetBytes("HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */" + total + "\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                    s.Write(none, 0, none.Length);
+                    return;
+                }
+                partial = true;
+            }
+            long length = end - start + 1;
             string ascii = Regex.Replace(info.Name, @"[^\x20-\x7e]|[""\\]", "_");
             var h = new StringBuilder();
-            h.Append("HTTP/1.1 200 OK\r\nContent-Type: ").Append(inline ? type : "application/octet-stream").Append("\r\n");
-            h.Append("Content-Length: ").Append(info.Length).Append("\r\n");
+            h.Append(partial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n");
+            h.Append("Content-Type: ").Append(inline ? type : "application/octet-stream").Append("\r\n");
+            h.Append("Content-Length: ").Append(length).Append("\r\n");
+            h.Append("Accept-Ranges: bytes\r\n");
+            if (partial) h.Append("Content-Range: bytes ").Append(start).Append('-').Append(end).Append('/').Append(total).Append("\r\n");
             h.Append("Content-Disposition: ").Append(inline ? "inline" : "attachment").Append("; filename=\"").Append(ascii).Append("\"; filename*=UTF-8''").Append(Uri.EscapeDataString(info.Name)).Append("\r\n");
-            h.Append("Content-Security-Policy: sandbox\r\nX-Content-Type-Options: nosniff\r\nCache-Control: private, max-age=3600\r\nConnection: close\r\n\r\n");
+            if (sandbox) h.Append("Content-Security-Policy: sandbox\r\n");
+            h.Append("X-Content-Type-Options: nosniff\r\nCache-Control: private, max-age=3600\r\nConnection: close\r\n\r\n");
             byte[] hb = Encoding.ASCII.GetBytes(h.ToString());
             s.Write(hb, 0, hb.Length);
-            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite)) fs.CopyTo(s, 81920);
+            if (r.Method == "HEAD") { s.Flush(); return; }
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                fs.Seek(start, SeekOrigin.Begin);
+                var buf = new byte[81920];
+                long left = length;
+                while (left > 0)
+                {
+                    int n = fs.Read(buf, 0, (int)Math.Min(buf.Length, left));
+                    if (n <= 0) break;
+                    s.Write(buf, 0, n);
+                    left -= n;
+                }
+            }
             s.Flush();
-            DebugLog.Write("phone: sent " + info.Name + " to the phone");
+            if (!partial || start == 0 && length > 1024 * 1024) DebugLog.Write("phone: sent " + info.Name + (partial ? " (from the start, in pieces)" : "") + " to the phone");
         }
 
         // ================================================================== the inbox: things sent from the computer to the phone

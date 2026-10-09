@@ -157,6 +157,27 @@ footer{flex:none;padding:8px 10px calc(var(--bottom) + 8px);background:var(--bg)
 .switch::after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .2s}
 .switch.on{background:var(--accent)}
 .switch.on::after{transform:translateX(18px)}
+/* moonlight: the real-time way to see and use the computer */
+.moon{flex:none;display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid #222}
+.moonbtn{flex:1;display:flex;align-items:center;gap:12px;padding:11px 14px;border-radius:12px;background:var(--accent);color:#fff;text-decoration:none}
+.moonbtn:active{opacity:.75}
+.moonbtn span{display:flex;flex-direction:column}
+.moonbtn small{font:11.5px var(--mono);opacity:.8;margin-top:1px}
+.moonhow{font:12.5px var(--mono);color:#8e8e93;padding:8px 4px}
+.moonsteps{flex:none;display:none;padding:10px 16px 12px;border-bottom:1px solid #222;font-size:14px;line-height:1.45;color:#d8d8d8}
+.moonsteps.show{display:block}
+.moonsteps ol{margin:6px 0 4px 18px;padding:0}
+.moonsteps #moonState{font:12px var(--mono);color:#8e8e93}
+/* files on the pc */
+#filesSheet .where{flex:none;font:12px var(--mono);color:var(--muted);padding:8px 16px;border-bottom:1px solid var(--line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
+#filesSheet .act .main{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#filesSheet .act .ficon{width:22px;height:22px}
+#filesSheet .act.dir .ficon{color:var(--accent)}
+#filesSheet .msg{color:var(--muted);padding:28px 0;text-align:center}
+.filebar{padding:10px 16px calc(var(--bottom) + 10px);border-top:1px solid var(--line)}
+.filebar button{width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:13px;border-radius:12px;background:var(--fg);color:var(--bg);font-weight:600}
+.filebar button:active{opacity:.75}
+.filebar button[disabled]{opacity:.45}
 .got{font:12.5px var(--mono);color:var(--muted);padding:6px 0}
 .got button{color:var(--accent);font:inherit;margin-left:8px}
 
@@ -270,6 +291,7 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
   <div class="who"><b>{{NAME}}</b><div class="status" id="status"><i></i>connecting…</div></div>
   <button class="hbtn" id="controlsBtn" aria-label="Controls"><svg class="icon" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg></button>
   <button class="hbtn" id="screenBtn" aria-label="See your computer screen"><svg class="icon" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button>
+  <button class="hbtn" id="filesBtn" aria-label="Files on your computer"><svg class="icon" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></button>
   <button class="hbtn" id="savedBtn" aria-label="Saved"><svg class="icon" viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-4-6 4V5a1 1 0 0 1 1-1z"/></svg><i class="newdot" id="savedDot"></i></button>
 </header>
 <div class="install" id="install">
@@ -346,6 +368,17 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
 <section class="sheet screen" id="screenSheet">
   <div class="top"><b>Your computer</b><span class="live" id="live"><i></i>LIVE</span>
     <button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="moon" id="moon">
+    <a class="moonbtn" id="moonBtn" href="shortcuts://run-shortcut?name=Moonlight"><svg class="icon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg><span><b>Stream with Moonlight</b><small>smooth · full control</small></span></a>
+    <button class="moonhow" id="moonHow">set up</button>
+  </div>
+  <div class="moonsteps" id="moonSteps">
+    <b>One time, 30 seconds:</b>
+    <ol><li>Open <b>Shortcuts</b> → <b>+</b> → <b>Add Action</b> → <b>Open App</b> → pick <b>Moonlight</b>.</li>
+    <li>Name the shortcut <b>Moonlight</b> (exactly) and tap Done.</li>
+    <li>In Moonlight, your PC should already be there. If not: tap <b>+</b> and enter <span id="moonHost">your PC's Tailscale name</span>.</li></ol>
+    <span id="moonState"></span>
+  </div>
   <div class="tabs" id="screenTabs"></div>
   <div class="body" id="screenBody"><div class="view" id="view"><img id="shot" alt=""><span class="tapdot" id="tapdot"></span></div><div class="hint" id="screenHint">tap to click · hold to right-click · double-tap to double-click<br>turn sideways for a bigger view</div></div>
   <form class="typebar" id="typeBar"><input id="typeText" placeholder="Tap a spot above, then type here" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="enter"><button>Enter</button></form>
@@ -359,6 +392,14 @@ header img.think{animation:bob 1.1s ease-in-out infinite}
     <button data-scroll="1"><svg class="icon" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></svg>down</button>
   </div>
 </section>
+<section class="sheet" id="filesSheet">
+  <div class="top"><button class="hbtn" id="filesBack" aria-label="Up a folder"><svg class="icon" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button><b id="filesTitle">This PC</b>
+    <button class="hbtn" data-close aria-label="Close"><svg class="icon" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+  <div class="where" id="filesWhere">your computer</div>
+  <div class="body" id="filesBody"></div>
+  <div class="filebar" id="filesBar" style="display:none"><button id="filesUp"><svg class="icon" viewBox="0 0 24 24"><path d="M12 19V7M7 12l5-5 5 5M5 4h14"/></svg>Upload to this folder</button></div>
+</section>
+<input type="file" id="filesPick" multiple hidden>
 <section class="voice" id="voice" data-state="listening">
   <div class="vm-name">{{NAME}}</div>
   <div class="vm-mid"><div class="vm-ring" id="vmLevel"></div><img id="vmFace" src="face/normal.png" alt=""></div>
@@ -717,10 +758,10 @@ $('plusMenu').onclick = e => {
 };
 
 // ---------- files to the pc ----------
-function upload(f, onProgress) {
+function upload(f, onProgress, dir) {
   return new Promise((resolve, reject) => {
     const x = new XMLHttpRequest();
-    x.open('POST', 'api/upload');
+    x.open('POST', 'api/upload' + (dir ? '?dir=' + encodeURIComponent(dir) : ''));
     x.setRequestHeader('X-Bestie-Key', key);
     x.setRequestHeader('X-File-Name', encodeURIComponent(f.name || 'photo.jpg'));
     x.upload.onprogress = e => e.lengthComputable && onProgress && onProgress(e.loaded / e.total);
@@ -814,6 +855,57 @@ document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => close(b
 document.querySelectorAll('[data-back]').forEach(b => b.onclick = () => close('noteSheet'));
 
 $('savedBtn').onclick = () => { open('savedSheet'); showSeg(segNow); };
+
+// ---------- the computer's files: browse, open or save on the phone, upload into a folder ----------
+const fb = { path: '', parent: '', entries: [] };
+const fsize = n => n < 1024 ? n + ' B' : n < 1048576 ? Math.round(n / 1024) + ' KB' : n < 1073741824 ? (n / 1048576).toFixed(1) + ' MB' : (n / 1073741824).toFixed(2) + ' GB';
+function fwhen(iso) {
+  const d = new Date(iso), now = new Date();
+  if (d.toDateString() === now.toDateString()) return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+}
+function ficon(e) {
+  const x = (e.name.split('.').pop() || '').toLowerCase();
+  const path = e.dir ? 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z'
+    : /^(png|jpe?g|gif|webp|heic|bmp)$/.test(x) ? 'M4 5h16v14H4zM4 15l5-5 4 4 3-3 4 4'
+    : /^(mp4|mov|mkv|webm|avi)$/.test(x) ? 'M4 6h12v12H4zM16 10l4-2v8l-4-2'
+    : /^(mp3|m4a|wav|flac|ogg)$/.test(x) ? 'M9 18V6l10-2v12M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3zM19 16a3 3 0 1 1-3-3 3 3 0 0 1 3 3'
+    : 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5';
+  return '<svg class="icon ficon" viewBox="0 0 24 24"><path d="' + path + '"/></svg>';
+}
+async function browse(path) {
+  $('filesBody').innerHTML = '<div class="msg">opening…</div>';
+  try {
+    const r = await api('api/files?path=' + encodeURIComponent(path || ''));
+    fb.path = r.path; fb.parent = r.parent || ''; fb.entries = r.entries || [];
+    $('filesTitle').textContent = r.name;
+    $('filesBack').style.visibility = r.path ? 'visible' : 'hidden';
+    $('filesWhere').textContent = r.path ? '‎' + r.path : 'your computer';
+    $('filesBar').style.display = r.path ? '' : 'none';   // uploads go into a real folder, not the list of places
+    $('filesBody').innerHTML = !fb.entries.length ? '<div class="msg">nothing in here</div>' : fb.entries.map((e, i) =>
+      '<button class="act' + (e.dir ? ' dir' : '') + '" data-i="' + i + '">' + ficon(e) + '<span class="main">' + esc(e.name)
+      + (e.dir ? '' : '<div class="sub">' + fsize(e.size) + ' · ' + fwhen(e.modified) + '</div>') + '</span>'
+      + (e.dir ? '<svg class="icon chev" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>' : '') + '</button>').join('');
+    $('filesBody').scrollTop = 0;
+  } catch (e) { $('filesBody').innerHTML = '<div class="msg">' + esc(e.message) + '</div>'; }
+}
+$('filesBtn').onclick = () => { open('filesSheet'); browse(fb.path); };
+$('filesBack').onclick = () => browse(fb.parent);
+$('filesBody').onclick = e => {
+  const b = e.target.closest('[data-i]'); if (!b) return;
+  const it = fb.entries[+b.dataset.i]; if (!it) return;
+  if (it.dir) browse(it.path);
+  else window.open('api/files/get?path=' + encodeURIComponent(it.path) + '&k=' + encodeURIComponent(key), '_blank');   // opens in the viewer; share → save to keep it
+};
+$('filesUp').onclick = () => $('filesPick').click();
+$('filesPick').onchange = async () => {
+  const files = [...$('filesPick').files]; $('filesPick').value = '';
+  for (const f of files) {
+    try { await upload(f, p => toast('uploading ' + f.name + '… ' + Math.round(p * 100) + '%', 60000), fb.path); toast('put ' + f.name + ' in ' + $('filesTitle').textContent); }
+    catch (e) { toast('couldn’t upload ' + f.name + ': ' + e.message); }
+  }
+  browse(fb.path);
+};
 let segNow = 'saved', inboxNewest = 0;
 function showSeg(which) {
   segNow = which;
@@ -986,20 +1078,44 @@ async function togglePush() {
 }
 
 // ---------- the computer's screen, live: tap to click, type, keys, scroll ----------
-const scr = { open: false, index: 0, count: 1, busy: false, timer: null };
+const scr = { open: false, index: 0, count: 1, busy: false, timer: null, url: null };
+function drawTabs() {
+  $('screenTabs').innerHTML = scr.count > 1 ? Array.from({ length: scr.count }, (_, i) => '<button data-scr="' + i + '" class="' + (i === scr.index ? 'on' : '') + '">screen ' + (i + 1) + '</button>').join('') : '';
+}
 function showShot(r) {
   const s = (r.screens || [])[0];
   if (s && s.src) { $('shot').src = s.src; scr.index = s.index; }
   scr.count = r.count || 1;
-  $('screenTabs').innerHTML = scr.count > 1 ? Array.from({ length: scr.count }, (_, i) => '<button data-scr="' + i + '" class="' + (i === scr.index ? 'on' : '') + '">screen ' + (i + 1) + '</button>').join('') : '';
+  drawTabs();
 }
+// quick look: plain jpeg frames, the next one asked for as soon as one lands (moonlight is the smooth way)
+const frameWidth = () => Math.max(480, Math.min(1400, Math.round(innerWidth * (devicePixelRatio || 1))));
 async function refreshShot() {
   if (!scr.open || scr.busy || document.hidden) return;
-  try { showShot(await api('api/screen?screen=' + scr.index)); $('live').style.opacity = 1; }
-  catch (e) { $('live').style.opacity = .3; }
+  try {
+    const res = await fetch('api/screen.jpg?screen=' + scr.index + '&w=' + frameWidth(), { headers: { 'X-Bestie-Key': key }, cache: 'no-store' });
+    if (!res.ok) throw new Error('screen ' + res.status);
+    const count = +res.headers.get('X-Screen-Count') || 1;
+    const blob = await res.blob();
+    if (!scr.open || scr.busy) return;
+    const url = URL.createObjectURL(blob);
+    $('shot').src = url;
+    if (scr.url) URL.revokeObjectURL(scr.url);
+    scr.url = url;
+    if (count !== scr.count) { scr.count = count; drawTabs(); }
+    $('live').style.opacity = 1;
+  } catch (e) { $('live').style.opacity = .3; await new Promise(r => setTimeout(r, 1500)); }
 }
-function liveLoop() { clearTimeout(scr.timer); if (!scr.open) return; refreshShot().then(() => scr.timer = setTimeout(liveLoop, 1100)); }
-$('screenBtn').onclick = () => { open('screenSheet'); scr.open = true; liveLoop(); };
+function liveLoop() { clearTimeout(scr.timer); if (!scr.open) return; refreshShot().then(() => { if (scr.open) scr.timer = setTimeout(liveLoop, 60); }); }
+$('screenBtn').onclick = () => { open('screenSheet'); scr.open = true; drawTabs(); liveLoop(); moonCheck(); };
+$('moonHow').onclick = () => $('moonSteps').classList.toggle('show');
+async function moonCheck() {
+  try {
+    const m = await api('api/moonlight');
+    if (m.host) $('moonHost').textContent = m.host;
+    $('moonState').textContent = m.sunshine ? 'Sunshine is running on your PC.' : 'Sunshine isn’t running on your PC right now, so Moonlight won’t find it.';
+  } catch (e) {}
+}
 $('screenSheet').querySelector('[data-close]').addEventListener('click', () => { scr.open = false; clearTimeout(scr.timer); $('typeBar').classList.remove('show'); });
 $('screenTabs').onclick = e => { const b = e.target.closest('[data-scr]'); if (b) { scr.index = +b.dataset.scr; refreshShot(); } };
 async function act(body) {
@@ -1088,6 +1204,8 @@ else {
   if (location.hash === '#plus') $('photoBtn').click();
   if (location.hash === '#talk') voiceStart();
   if (location.hash === '#inbox') { open('savedSheet'); showSeg('pc'); }
+if (location.hash === '#files') $('filesBtn').click();
+if (location.hash.startsWith('#files=')) { open('filesSheet'); browse(decodeURIComponent(location.hash.slice(7))); }   // straight into a folder
   pushState();
 }
 updateButtons();

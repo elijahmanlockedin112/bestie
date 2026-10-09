@@ -423,6 +423,14 @@ namespace Bestie
             catch (Exception ex) { DebugLog.Write("office: launcher " + id + ": " + ex.Message); return false; }
         }
 
+        /// <summary>The project folders the office knows (from its last look; empty while it's closed).</summary>
+        public static List<string> ProjectPaths()
+        {
+            Dictionary<string, object> s;
+            lock (gate) s = state;
+            return Json.Arr(s, "projects").OfType<Dictionary<string, object>>().Select(p => Json.Str(p, "path")).Where(p => !string.IsNullOrEmpty(p)).ToList();
+        }
+
         /// <summary>Today's totals from the office's last look (false while it's closed).</summary>
         public static bool TodayCounts(out int steps, out int files, out int projects)
         {
