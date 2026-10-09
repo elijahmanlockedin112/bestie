@@ -148,6 +148,8 @@ namespace Bestie
         {
             string t = Brain.TimeBucket(Clock.Wall);
             var m = CurrentMon;
+            string nudge = ShopNudge();
+            if (nudge != null) return nudge;
             if (m != null && Rng.Chance(0.3) && World.Wins.Any(w => w.Maximized && World.MonAt((w.R.Left + w.R.Right) / 2.0, (w.R.Top + w.R.Bottom) / 2.0) == m))
                 return Rng.Pick(Personality.Hogging);
             string[] pool = (t == "night" || t == "wee hours") && Rng.Chance(0.5) ? Lines.NightMusings
@@ -1062,6 +1064,21 @@ namespace Bestie
             Face = Face.Happy; Blush = 1; Squash = 0.15;
             if (Rng.Chance(0.45)) yield return Say(Fresh(Lines.Petted, 0), false, 1.8);
             yield return Pause(1.4);
+        }
+
+        /// <summary>At most once a day, in passing: it can afford something it doesn't have yet. ("31 crumbs. the jump rope is
+        /// 30. no pressure.") Never a nag: one line, one day, only when it really can buy it.</summary>
+        string ShopNudge()
+        {
+            if (Clock.Simulated || !Rng.Chance(0.12)) return null;
+            string today = DateTime.Now.ToString("yyyy-MM-dd");
+            if (Brain.CrumbDay != today || Brain.CrumbsToday.ContainsKey("nudge")) return null;
+            var item = Shop.Items.Where(i => i.Kind != "snack" && !Brain.Owned.Contains(i.Id) && i.Price <= Brain.Crumbs).OrderByDescending(i => i.Price).FirstOrDefault();
+            if (item == null) return null;
+            Brain.CrumbsToday["nudge"] = 1;   // (not a reason crumbs are earned for: just today's "already said it")
+            return Rng.Pick(Brain.Crumbs + " crumbs. the " + item.Name + " is " + item.Price + ". no pressure.",
+                "i could afford the " + item.Name + " now. just thinking out loud.",
+                "the " + item.Name + " is " + item.Price + " crumbs. i have " + Brain.Crumbs + ". the math is mathing.");
         }
 
         /// <summary>Already done since midnight (its last run, in local time).</summary>
