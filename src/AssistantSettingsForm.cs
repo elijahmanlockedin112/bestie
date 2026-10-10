@@ -47,7 +47,7 @@ namespace Bestie
         readonly TextBox skipBox, gIdBox, gSecretBox;
         readonly TrackBar gainBar;
         readonly Label gainLabel, calStatus;
-        readonly CheckBox calWarnBox, autoMemoryBox, wakeBox, followUpBox;
+        readonly CheckBox calWarnBox, autoMemoryBox, wakeBox, followUpBox, actWhenAskedBox;
         readonly TalkKeyBox talkKeyBox;
         readonly Button connectButton, disconnectButton;
         bool calBusy;
@@ -232,6 +232,9 @@ namespace Bestie
             Row("allowed", autoLookBox);
             Row("", screenBox);
             Row("", tabsBox);
+            actWhenAskedBox = Check("use my computer without checking first when my message asks for it", s.ActWhenAsked);
+            Row("", actWhenAskedBox);
+            Row("", Note("taking over the mouse and keyboard, running commands. it still stops for anything it thinks is off, and never buys, pays or signs in.", Muted));
             historyBox = Num(4, 200, s.MaxHistoryMessages, S(60));
             Row("memory", Lbl("keep the last", Ink), historyBox, Lbl("messages of a chat in my head", Ink));
             autoMemoryBox = Check("remember things from our chats automatically", s.AutoMemory);
@@ -657,6 +660,7 @@ namespace Bestie
                 .Select(x => x.Trim()).Where(x => x.Length > 0).ToArray());
             n.VoiceGainPercent = gainBar.Value;
             n.AutoMemory = autoMemoryBox.Checked;
+            n.ActWhenAsked = actWhenAskedBox.Checked;
             n.WakeWord = wakeBox.Checked;
             n.FollowUp = followUpBox.Checked;
             n.GoogleClientId = gIdBox.Text.Trim();

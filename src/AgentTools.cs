@@ -68,10 +68,13 @@ namespace Bestie
                 P("sure", "boolean", "true only after they confirmed something you warned about (firing a busy agent, using a signed-out one)")));
             t.Add(Tool("use_computer", "operate their computer yourself (mouse, keyboard, screen) for anything the other tools don't cover: using apps, clicking through "
                 + "websites, settings in apps, filling in things, and finishing what another tool couldn't. it takes over the mouse and keyboard until done; they can "
-                + "press esc to stop it. small jobs start right away; bigger ones ask them first.", R("task", "small"),
+                + "press esc to stop it. small jobs start right away; bigger ones ask them first, unless their message asked for it and they've turned on "
+                + "\"use my computer without checking first\".", R("task", "small"),
                 P("task", "string", "exactly what to get done, with every detail they gave"),
                 P("small", "boolean", "true for a quick, harmless job in an app that's already open or easy to open (pick a song, press a button, scroll, open a menu, "
-                    + "switch tabs). false for anything longer, or that sends, buys, deletes, signs in, changes settings or touches their files")));
+                    + "switch tabs). false for anything longer, or that sends, buys, deletes, signs in, changes settings or touches their files"),
+                P("asked", "boolean", "true when their message asked for this, in so many words or clearly implied ('my music's too loud' -> turning it down); "
+                    + "false when it's your own idea")));
             AddFileTools(t);
             AddBehaviorTools(t);
             AddSystemTools(t);
@@ -103,7 +106,7 @@ namespace Bestie
                 case "manage_agents": return ManageAgents(a);
                 case "media_control": return MediaControl(Json.Str(a, "action") ?? "", (int)Json.Num(a, "times", 1));
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
-                case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
+                case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), Json.Bool(a, "asked", false), s);
             }
             return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a) ?? TerminalTool(name, a) ?? RadioTool(name, a) ?? MorningShowTool(name, a) ?? SecondBrainTool(name, a) ?? PlanTool(name, a) ?? PatternTool(name, a, s);
         }
@@ -791,14 +794,17 @@ namespace Bestie
 
         static int driving;
 
-        AssistantToolResult UseComputer(string task, bool small, AssistantSettings s)
+        AssistantToolResult UseComputer(string task, bool small, bool asked, AssistantSettings s)
         {
             task = task.Trim();
             if (task.Length < 4) return new AssistantToolResult("do what on the computer?");
-            if (DryRun) { lock (DryRunLog) DryRunLog.Add("computer " + (small ? "(small) " : "") + task); return new AssistantToolResult("done."); }
+            if (DryRun) { lock (DryRunLog) DryRunLog.Add("computer " + (small ? "(small) " : "") + (asked ? "(asked) " : "") + task); return new AssistantToolResult("done."); }
             // small, harmless jobs just go (with a tight step budget, esc, and the banner), and so do jobs in places they
-            // don't need to be asked about (music, video, quick look-ups, apps they trust). anything else: they say yes first.
-            if (!small && !Trust.SafeComputerTask(task))
+            // don't need to be asked about (music, video, quick look-ups, apps they trust), and jobs their message asked for
+            // when they've said not to check first. anything else: they say yes first.
+            bool noCheck = asked && s.ActWhenAsked;
+            if (noCheck && !small) DebugLog.Write("computer: didn't check first (their message asked for it, and that setting is on)");
+            if (!small && !noCheck && !Trust.SafeComputerTask(task))
             {
                 int ok = module.AskUser("ok to take over your mouse and keyboard for: " + OpenAIClient.Trunc(task, 140) + "? (esc stops me)", AssistantCalendar.ConfirmTimeoutMs);
                 if (ok != 1)
@@ -812,6 +818,7 @@ namespace Bestie
             EscWatcher esc = null;
             var agent = new ComputerAgent(s, q => module.AskUser(q, AssistantCalendar.ConfirmTimeoutMs), null);
             agent.Small = small;
+            agent.KeepGoing = noCheck;
             try
             {
                 agent.Screen = ComputerAgent.PickScreen();

@@ -66,6 +66,7 @@ namespace Bestie
         public bool CalendarWarn = true;        // heads-up ~10 minutes before timed events
         public int VoiceGainPercent = 240;      // openai voice loudness, 100..400 (PcmStreamPlayer.Gain)
         public bool AutoMemory = true;          // "remember things from our chats automatically"
+        public bool ActWhenAsked = false;       // "don't ask first when my message asks for it" (computer takeovers, commands)
         public bool WakeWord = true;            // "listen for my wake word (hey <name>)"
         public bool FollowUp = true;            // after a spoken answer, keep listening a few seconds (no wake word needed)
         public string AlexaTokenProtected = ""; // voice monkey token, DPAPI + base64
@@ -125,6 +126,7 @@ namespace Bestie
                 s.CalendarWarn = Json.Bool(d, "calendarWarn", true);
                 s.VoiceGainPercent = Clamp((int)Json.Num(d, "voiceGainPercent", 240), 100, 400);
                 s.AutoMemory = Json.Bool(d, "autoMemory", true);
+                s.ActWhenAsked = Json.Bool(d, "actWhenAsked", false);
                 s.WakeWord = Json.Bool(d, "wakeWord", true);
                 s.FollowUp = Json.Bool(d, "followUp", true);
                 s.AlexaTokenProtected = Json.Str(d, "alexaTokenProtected") ?? "";
@@ -174,6 +176,7 @@ namespace Bestie
             d["calendarWarn"] = CalendarWarn;
             d["voiceGainPercent"] = VoiceGainPercent;
             d["autoMemory"] = AutoMemory;
+            d["actWhenAsked"] = ActWhenAsked;
             d["wakeWord"] = WakeWord;
             d["followUp"] = FollowUp;
             d["alexaTokenProtected"] = AlexaTokenProtected ?? "";

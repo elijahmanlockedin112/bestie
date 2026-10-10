@@ -438,8 +438,8 @@ namespace Bestie
         // ================================================================== turning it into words
 
         const string Instructions =
-"You find the real patterns in how one person spends time at their computer. They're a high school student who builds a lot of software with AI " +
-"(Claude, Codex) and studies (AP classes). You get numbers measured from their activity log: when they drift to videos, games and social media, " +
+"You find the real patterns in how one person spends time at their computer. They're a student who builds a lot of software with AI " +
+"(Claude, Codex) and has classes to study for. You get numbers measured from their activity log: when they drift to videos, games and social media, " +
 "how long their focus lasts and what ends it, what comes right before a detour, what they go back to, what they ask their desktop companion and when, " +
 "and the shape of their days.\n" +
 "Write the patterns a sharp, kind friend who watched for weeks would point out, the non-obvious ones first. Not only times of day: triggers " +

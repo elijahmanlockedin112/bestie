@@ -45,6 +45,9 @@ namespace Bestie
             status = onStatus ?? (x => { });
         }
 
+        /// <summary>They asked for this and said not to check in: running long doesn't ask "keep going?" (up to the usual 3 extensions).</summary>
+        public bool KeepGoing;
+
         /// <summary>Stop as soon as the current step finishes (Esc, or the app closing).</summary>
         public void Stop() { stop = true; client.Abort(); }
 
@@ -111,7 +114,7 @@ namespace Bestie
                 if (++steps > StepBudget || started.Elapsed.TotalSeconds > SecondBudget)
                 {
                     // out of budget: they decide whether it keeps at it (rather than it quietly giving up)
-                    int more = extensions < 3 ? ask("still working on it (" + actions + " actions so far): " + OpenAIClient.Trunc(task, 100) + ". keep going?") : 0;
+                    int more = extensions >= 3 ? 0 : KeepGoing ? 1 : ask("still working on it (" + actions + " actions so far): " + OpenAIClient.Trunc(task, 100) + ". keep going?");
                     if (more != 1) return "stopped after " + actions + " actions" + (more == 0 ? " (they said stop)" : extensions >= 3 ? " (it kept going a long time)" : " (no answer)") + ". " + said;
                     extensions++;
                     steps = 1;
