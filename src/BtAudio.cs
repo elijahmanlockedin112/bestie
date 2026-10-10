@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using System.Threading;
 
 namespace Bestie
@@ -192,11 +193,17 @@ namespace Bestie
                 ?? all.FirstOrDefault(s => want.Split(' ').Where(w => w.Length > 2).All(w => s.Name.ToLowerInvariant().Contains(w)));
         }
 
+        /// <summary>A paired echo under its own bluetooth name ("Echo Dot-1AB"), for when it doesn't go by its alexa name. Not "echo cancelling" mics.</summary>
+        public static Speaker FindEcho()
+        {
+            return All().FirstOrDefault(s => Regex.IsMatch(s.Name, @"\b(echo|alexa)\b", RegexOptions.IgnoreCase) && s.Name.IndexOf("cancel", StringComparison.OrdinalIgnoreCase) < 0);
+        }
+
         /// <summary>Connects the paired speaker and waits (up to ~25 s) until windows can play through it. Null when it's ready.</summary>
         public static string Connect(string name, out Speaker speaker)
         {
             speaker = Find(name);
-            if (speaker == null) return "\"" + name + "\" isn't paired with this computer (Settings > Bluetooth > Add device, with the echo in pairing mode: \"alexa, pair\").";
+            if (speaker == null) return "\"" + name + "\" isn't paired with this computer (alexa app: devices > echo & alexa > the echo > bluetooth devices > pair a new device; then Settings > Bluetooth & devices > Add device).";
             if (speaker.Connected) return null;
             string problem = OneShot(speaker.Id, KSPROPERTY_ONESHOT_RECONNECT);
             if (problem != null) return "couldn't connect to " + speaker.Name + ": " + problem + ".";

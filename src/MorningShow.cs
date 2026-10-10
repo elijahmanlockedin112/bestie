@@ -20,7 +20,7 @@ namespace Bestie
         public bool Enabled;
         public string Alarm = "";          // "06:30"
         public string Days = "weekdays";   // as When.ParseRepeat takes it: daily, weekdays, weekends, mon,thu...
-        public int DelayMinutes = 1, Minutes = 45;
+        public int DelayMinutes = 1;       // (the show has no set length: it runs until they stop it)
         public string Speaker = "Party Time", Music = "";
         public string LastRun = "";        // yyyy-MM-dd
 
@@ -43,7 +43,6 @@ namespace Bestie
                 m.Alarm = Json.Str(d, "alarm") ?? "";
                 m.Days = Json.Str(d, "days") ?? "weekdays";
                 m.DelayMinutes = (int)Json.Num(d, "delayMinutes", 1);
-                m.Minutes = (int)Json.Num(d, "minutes", 45);
                 m.Speaker = Json.Str(d, "speaker") ?? "Party Time";
                 m.Music = Json.Str(d, "music") ?? "";
                 m.LastRun = Json.Str(d, "lastRun") ?? "";
@@ -55,7 +54,7 @@ namespace Bestie
         public void Save()
         {
             var d = new Dictionary<string, object> { { "enabled", Enabled }, { "alarm", Alarm }, { "days", Days }, { "delayMinutes", DelayMinutes },
-                { "minutes", Minutes }, { "speaker", Speaker }, { "music", Music }, { "lastRun", LastRun } };
+                { "speaker", Speaker }, { "music", Music }, { "lastRun", LastRun } };
             File.WriteAllText(FilePath, Json.Write(d), new UTF8Encoding(false));
         }
 
@@ -96,7 +95,7 @@ namespace Bestie
                 if (t != null && t.Value > DateTime.Now) next = t;
             }
             return "the morning show is on: alarm " + Alarm + " (" + When.DescribeRepeat(When.ParseRepeat(Days, DateTime.Today) ?? Days) + "), the show starts " + DelayMinutes
-                + " min later on " + Speaker + " for " + Minutes + " minutes" + (Music.Length > 0 ? ", playing " + Music : "")
+                + " min later on " + Speaker + " and plays until they stop it (\"stop the radio\", or pausing spotify)" + (Music.Length > 0 ? ", playing " + Music : "")
                 + (next != null ? ". next one: " + next.Value.ToString("dddd h:mm tt", CultureInfo.InvariantCulture).ToLowerInvariant() : "") + ".";
         }
 
@@ -196,7 +195,8 @@ namespace Bestie
             {
                 DebugLog.Write("morning show: starting" + (test ? " (test)" : ""));
                 try { before = SoundOutput.List().Where(d => d.Default).Select(d => d.Id).FirstOrDefault(); } catch { }
-                string problem = BtAudio.Connect(m.Speaker, out speaker);
+                BtAudio.Speaker target = BtAudio.Find(m.Speaker) ?? BtAudio.FindEcho();   // its bluetooth name may be "Echo Dot-XXXX", not party time
+                string problem = BtAudio.Connect(target != null ? target.Name : m.Speaker, out speaker);
                 if (problem != null)
                 {
                     // no bluetooth: at least a spoken good-morning on the echo
@@ -215,12 +215,21 @@ namespace Bestie
                 LockedInFM radio = module.Radio;
                 string startProblem = radio.StartShow("morning");
                 if (startProblem != null) { DebugLog.Write("morning show: " + startProblem); return; }
-                var until = DateTime.Now.AddMinutes(test ? Math.Min(m.Minutes, 3) : m.Minutes);
-                while (DateTime.Now < until && radio.On) Thread.Sleep(5000);
+                // no set length: it plays until they stop it ("stop the radio"), or pause spotify for a few minutes (the spotify app on
+                // their phone can), with a 4-hour backstop so the computer can go back to sleep if everyone left
+                var backstop = DateTime.Now.AddHours(4);
+                DateTime? pausedSince = null;
+                while (radio.On && DateTime.Now < backstop)
+                {
+                    Thread.Sleep(5000);
+                    if (Bestie.Music.Detect() != null) { pausedSince = null; continue; }
+                    if (pausedSince == null) pausedSince = DateTime.Now;
+                    else if ((DateTime.Now - pausedSince.Value).TotalMinutes >= 3) { DebugLog.Write("morning show: spotify paused; signing off"); break; }
+                }
                 if (radio.On)
                 {
                     radio.SignOff();   // the outro, then off the air
-                    ComputerAgent.Input.Press(0xB3);   // spotify was the one playing: pause it
+                    if (Bestie.Music.Detect() != null) ComputerAgent.Input.Press(0xB3);   // still playing (the backstop): pause spotify
                 }
             }
             finally
@@ -236,8 +245,9 @@ namespace Bestie
         {
             try
             {
-                BtAudio.Speaker s = BtAudio.Find(speaker);
-                return s == null ? speaker + " isn't paired with this computer yet (one time: settings > bluetooth > add device while the echo is in pairing mode: \"alexa, pair\")."
+                BtAudio.Speaker s = BtAudio.Find(speaker) ?? BtAudio.FindEcho();
+                return s == null ? speaker + " isn't paired with this computer yet (one time: in the alexa app, devices > echo & alexa > " + speaker
+                    + " > bluetooth devices > pair a new device; then on the computer settings > bluetooth & devices > add device > bluetooth, and pick the echo)."
                     : s.Name + " is paired" + (s.Connected ? " and connected right now." : "; bestie connects to it for the show.");
             }
             catch (Exception ex) { return "couldn't check bluetooth: " + ex.Message; }
@@ -262,12 +272,11 @@ namespace Bestie
         {
             t.Add(Tool("morning_show", "Locked In FM's morning show: right after their alarm the computer wakes itself (it sleeps at night), plays through their echo "
                 + "as a bluetooth speaker, starts spotify and you host a good-morning show (weather and storm alerts, today's calendar, reminders), then it signs "
-                + "off and the computer sleeps again. set it when they tell you their alarm ('my alarm is 6:30 on weekdays'); off; status (also says if the echo is "
-                + "paired); test runs a 3-minute show now.", R("action"),
-                PE("action", "what to do", new[] { "set", "off", "status", "test" }),
+                + "off when they stop it and the computer sleeps again. set it when they tell you their alarm ('my alarm is 6:30 on weekdays'); off; status (also "
+                + "says if the echo is paired); now starts the show right away. it has no set length: 'stop the radio' ends it.", R("action"),
+                PE("action", "what to do", new[] { "set", "off", "status", "now" }),
                 P("alarm", "string", "set: their alarm time as they said it, e.g. '6:30 am'"),
                 P("days", "string", "set: daily, weekdays, weekends, or days like 'mon,wed,fri' (default weekdays)"),
-                P("minutes", "number", "set: how long the show runs (default 45)"),
                 P("music", "string", "set: what spotify plays, e.g. 'my morning playlist', 'lofi beats' (default a good-morning playlist)"),
                 P("speaker", "string", "set: the bluetooth speaker (default Party Time)")));
         }
@@ -287,8 +296,6 @@ namespace Bestie
                         m.Alarm = alarm;
                         if (!string.IsNullOrWhiteSpace(Json.Str(a, "days"))) m.Days = Json.Str(a, "days").Trim();
                         if (When.ParseRepeat(m.Days, DateTime.Today) == null) return new AssistantToolResult("days should be daily, weekdays, weekends or days like mon,wed,fri.");
-                        double minutes = Json.Num(a, "minutes", 0);
-                        if (minutes > 0) m.Minutes = (int)Math.Max(5, Math.Min(180, minutes));
                         if (Json.Str(a, "music") != null) m.Music = Json.Str(a, "music").Trim();
                         if (!string.IsNullOrWhiteSpace(Json.Str(a, "speaker"))) m.Speaker = Json.Str(a, "speaker").Trim();
                         m.Enabled = true;
@@ -304,10 +311,11 @@ namespace Bestie
                     m.Save();
                     MorningShow.RemoveWakeTask();
                     return new AssistantToolResult("the morning show is off, and the computer won't wake itself anymore.", "morning show: off", null);
+                case "now":
                 case "test":
                     {
                         string p = MorningShow.Start(module, m.Enabled ? m : new MorningShow { Speaker = m.Speaker, Music = m.Music }, true);
-                        return new AssistantToolResult(p ?? "running a 3-minute morning show now on " + m.Speaker + " (connecting bluetooth takes a few seconds). say almost nothing; the show talks.");
+                        return new AssistantToolResult(p ?? "starting the morning show now on " + m.Speaker + " (connecting bluetooth takes a few seconds); it plays until they say stop the radio. say almost nothing; the show talks.");
                     }
                 default:
                     return new AssistantToolResult(m.Describe() + " " + MorningShow.PairingState(m.Speaker) + (m.Enabled && !MorningShow.WakeTaskExists() ? " (the wake-up task is missing: set it again.)" : ""));
