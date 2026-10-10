@@ -53,6 +53,12 @@ namespace Bestie
             try { d["radio"] = assistant != null && assistant.Radio.On; } catch { }
             d["sessions"] = Sessions();
             d["journal"] = JournalLines(6);
+            DateTime patternsAt;
+            List<Pattern> patterns = PatternMiner.Saved(out patternsAt);
+            d["patterns"] = patterns.Select(p => (object)new Dictionary<string, object> { { "kind", p.Kind }, { "text", p.Text }, { "evidence", p.Evidence }, { "tip", p.Tip },
+                { "when", p.When.Length > 0 ? When.Clock(DateTime.Today.Add(TimeSpan.Parse(p.When, CultureInfo.InvariantCulture))) : "" }, { "now", PatternMiner.IsNow(p.When, DateTime.Now) },
+                { "strength", p.Strength }, { "seen", p.Seen } }).ToList();
+            d["patternsAt"] = patternsAt == DateTime.MinValue ? "" : When.Describe(patternsAt, DateTime.Now);
             d["plan"] = Plans.Upcoming().Take(4).Select(day => (object)new Dictionary<string, object> {
                 { "day", day.Key.ToString("yyyy-MM-dd") },
                 { "label", day.Key == DateTime.Today ? "Today" : day.Key == DateTime.Today.AddDays(1) ? "Tomorrow" : day.Key.ToString("dddd", CultureInfo.InvariantCulture) },

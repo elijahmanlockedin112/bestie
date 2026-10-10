@@ -732,7 +732,7 @@ namespace Bestie
             AssistantSettings s = p.Settings;
             int turn = ++turnCounter;
             currentPhone = p.Phone;
-            if (!p.Tentative) { Behavior.Ask(p.Phone != null ? "phone" : p.Voice ? "voice" : "typed"); Crumbs.Earn("ask", 1); }
+            if (!p.Tentative) { Behavior.Ask(p.Phone != null ? "phone" : p.Voice ? "voice" : "typed", p.Heard ?? p.Text); Crumbs.Earn("ask", 1); }
             StripOldImages(turn);
             history.Add(new AssistantChatMsg(Msg("user", BuildUserContent(p, s)), true, turn));
             TrimHistory(s.MaxHistoryMessages);
@@ -1066,6 +1066,7 @@ namespace Bestie
                 }
                 if (!string.IsNullOrEmpty(r.JournalLine)) Journal.Add(r.JournalLine);
                 DebugLog.Write("assistant: tool " + call[1] + " -> " + OpenAIClient.Trunc(r.Text, 120));
+                Behavior.Tool(call[1]);
             }
             if (images.Count > 0)
             {
@@ -1289,6 +1290,8 @@ namespace Bestie
             sb.Append("\ntime blocks: ").Append(TimeBlocks.Describe());
             string plan = Plans.ContextLine();
             if (plan != null) sb.Append('\n').Append(plan);
+            string usual = PatternMiner.NowLine();
+            if (usual != null) sb.Append('\n').Append(usual);
             string shopLife = Crumbs.Summary();
             if (shopLife != null) sb.Append('\n').Append(shopLife);
             string routines = AssistantTools.RoutineNames();

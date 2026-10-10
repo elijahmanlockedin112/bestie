@@ -87,6 +87,17 @@ header { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr auto 1fr
 .pitem.done i { color: var(--faint); }
 .pitem small { display: block; color: var(--muted); font-size: 12px; }
 .empty { color: var(--muted); font-size: 13px; line-height: 1.5; }
+.pat .k { display: flex; flex-direction: column; gap: 5px; }
+.pat .str { display: flex; gap: 2px; }
+.pat .str i { width: 10px; height: 3px; background: var(--line-2); }
+.pat .str i.on { background: var(--cyan-2); }
+.pat.now .k { color: var(--amber); }
+.pat.now .str i.on { background: var(--amber); }
+.pat { cursor: pointer; }
+.pat .v small.ev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pat .v small.tipx { display: none; color: var(--cyan-2); margin-top: 3px; }
+.pat.open .v small.ev { white-space: normal; }
+.pat.open .v small.tipx { display: block; }
 .empty q { color: var(--text); quotes: '“' '”'; }
 
 /* ---------- the globe ---------- */
@@ -221,6 +232,7 @@ body[data-voice="thinking"] .talk b, body[data-voice="speaking"] .talk b { color
   </main>
 
   <aside class="rail right">
+    <section class="sec" id="secPatterns"><h2><span>Patterns</span><i></i><em id="patternsAt"></em></h2><div id="patterns"></div></section>
     <section class="sec" id="secSessions" hidden><h2><span>Claude sessions</span><i></i><em id="sessN"></em></h2><div id="sessions"></div></section>
     <section class="sec" id="secJournal" hidden><h2><span id="journalTitle">Journal</span><i></i><em id="journalDay"></em></h2><div id="journal"></div></section>
     <section class="sec" id="secNew" hidden><h2><span>Newest memories</span><i></i></h2><div id="newest"></div></section>
@@ -744,6 +756,7 @@ async function finishTalk() {
 // things the page does itself: "find bowie", "show my music memories", "show everything"
 function onPage(said) {
   const s = said.toLowerCase().replace(/[.!?,]+$/g, '').trim();
+  if (/pattern|plan/.test(s)) return false;   // those are for it to answer
   if (/^(show (me )?(everything|all( of)?( it| them| my memories)?)|clear( it| that| the filter)?|reset( the view)?|never ?mind)$/.test(s)) { setFilter(null, ''); select(null); caption(null, 'showing everything.'); return true; }
   let m = s.match(/^(?:find|search(?: for)?|look for|highlight)\s+(?:my\s+|the\s+)?(.+?)(?:\s+in my memor(?:y|ies))?$/) || s.match(/^show(?: me)?(?: my| the)?\s+(.+?)\s+memor(?:y|ies)$/);
   const topicWord = s.match(/^show(?: me)?(?: my| the)?\s+(\w+)$/);
@@ -844,6 +857,7 @@ function renderPlan(days) {
       + (it.time || it.why ? '<small>' + esc([it.time, it.why].filter(Boolean).join(' · ')) + '</small>' : '') + '</span></div>').join('') + '</div>').join('');
 }
 
+const openPats = new Set();
 function render(d) {
   NAME = d.name || NAME;
   document.title = 'Second Brain · ' + NAME;
@@ -859,6 +873,17 @@ function render(d) {
   rows('alerts', alerts, a => '<div class="row alert one"><div class="v">' + esc(a.event) + '<small>until ' + esc(a.until || '?') + (a.area ? ' · ' + esc(clip(a.area, 60)) : '') + '</small></div></div>');
 
   renderPlan(d.plan || []);
+
+  const pats = d.patterns || [];
+  $('patternsAt').textContent = d.patternsAt || '';
+  $('patterns').innerHTML = pats.length ? pats.map(p => '<div class="row pat' + (p.now ? ' now' : '') + '"><div class="k">' + esc(p.now ? 'now' : p.when || p.kind) + '<span class="str">'
+      + [1, 2, 3].map(i => '<i' + (i <= p.strength ? ' class="on"' : '') + '></i>').join('') + '</span></div><div class="v">' + esc(p.text)
+      + '<small class="ev">' + esc(p.evidence) + '</small>' + (p.tip ? '<small class="tipx">Idea: ' + esc(p.tip) + '</small>' : '') + '</div></div>').join('')
+    : '<p class="empty">Every night ' + esc(NAME) + ' looks through your activity for patterns: when you drift, how long focus lasts, what you ask for. Hold the core and say <q>find my patterns</q> to look now.</p>';
+  [...$('patterns').querySelectorAll('.pat')].forEach((r, i) => {   // a tapped-open one stays open through the refreshes
+    if (openPats.has(pats[i].text)) r.classList.add('open');
+    r.onclick = () => { r.classList.toggle('open'); openPats[r.classList.contains('open') ? 'add' : 'delete'](pats[i].text); };
+  });
 
   const now = Date.now(), agenda = d.agenda || [];
   let nextMarked = false;

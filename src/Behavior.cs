@@ -78,10 +78,19 @@ namespace Bestie
             Write(DateTime.Now, new Dictionary<string, object> { { "t", "block" }, { "at", Clock(DateTime.Now) }, { "what", what } });
         }
 
-        /// <summary>They talked to Bestie ("voice" or "typed"). Only that it happened: the words are in the chats folder.</summary>
-        public static void Ask(string how)
+        /// <summary>They talked to Bestie ("voice", "typed" or "phone"), and the start of what they said (so the pattern
+        /// finder can see what they ask for at what times; the full words are in the chats folder).</summary>
+        public static void Ask(string how, string what)
         {
-            Write(DateTime.Now, new Dictionary<string, object> { { "t", "ask" }, { "at", Clock(DateTime.Now) }, { "how", how } });
+            what = AssistantMemory.OneLine(what ?? "");
+            if (what.Length > 100) what = what.Substring(0, 100);
+            Write(DateTime.Now, new Dictionary<string, object> { { "t", "ask" }, { "at", Clock(DateTime.Now) }, { "how", how }, { "what", what } });
+        }
+
+        /// <summary>A tool Bestie used for them (play_music, check_claude...): what they actually get it to do.</summary>
+        public static void Tool(string name)
+        {
+            Write(DateTime.Now, new Dictionary<string, object> { { "t", "tool" }, { "at", Clock(DateTime.Now) }, { "name", name ?? "" } });
         }
 
         static void Sample(object _)
@@ -331,20 +340,20 @@ namespace Bestie
             return "other";
         }
 
-        static readonly HashSet<string> Productive = new HashSet<string> { "coding", "ai", "school" };
+        internal static readonly HashSet<string> Productive = new HashSet<string> { "coding", "ai", "school" };
 
         // ================================================================== reading it back
 
-        sealed class Span { public DateTime From, To; public int Secs, Active; public string App, Title, Site, Cat; }
+        internal sealed class Span { public DateTime From, To; public int Secs, Active; public string App, Title, Site, Cat; }
 
-        sealed class Day
+        internal sealed class Day
         {
             public DateTime Date;
             public List<Span> Uses = new List<Span>(), Aways = new List<Span>();
             public List<Dictionary<string, object>> Events = new List<Dictionary<string, object>>();
         }
 
-        static Day Load(DateTime date)
+        internal static Day Load(DateTime date)
         {
             var d = new Day { Date = date };
             string path = FileFor(date);

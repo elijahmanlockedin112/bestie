@@ -73,7 +73,11 @@ namespace Bestie
             bool quiet;
             lock (gate) quiet = (DateTime.UtcNow - lastNoteUtc).TotalSeconds > QuietSeconds;
             if (quiet && PendingExchanges() > 0) Distill();
-            else DigestJournal();
+            else
+            {
+                DigestJournal();
+                PatternMiner.MaybeRun(settings != null ? settings() : null);   // once a day, in the evening
+            }
         }
 
         static string Clip(string s, int n)

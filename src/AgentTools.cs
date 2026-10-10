@@ -87,6 +87,7 @@ namespace Bestie
             AddMorningShowTools(t);
             AddSecondBrainTools(t);
             AddPlanTools(t);
+            AddPatternTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -104,7 +105,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a) ?? TerminalTool(name, a) ?? RadioTool(name, a) ?? MorningShowTool(name, a) ?? SecondBrainTool(name, a) ?? PlanTool(name, a);
+            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a) ?? TerminalTool(name, a) ?? RadioTool(name, a) ?? MorningShowTool(name, a) ?? SecondBrainTool(name, a) ?? PlanTool(name, a) ?? PatternTool(name, a, s);
         }
 
         // ================================================================== spotify
