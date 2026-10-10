@@ -815,9 +815,11 @@ namespace Bestie
             {
                 wake = new WakeWord(this);
                 wake.Busy = () => holdTalking || assistant == null || assistant.IsBusy;
-                // (no reaction to a mere guess: on music and videos those come every minute. it lights up once the
-                // transcript confirms its name, about half a second after you stop talking.)
+                // (no reaction to a mere guess: on music and videos those come every minute. it lights up once a
+                // transcript confirms its name: the start of the sentence is checked the moment the recognizer guesses
+                // it, so that's about a second after "hey bestie", while you're still talking.)
                 wake.Heard += OnWakeHeard;
+                wake.Perked += OnWakeGuess;
                 if (!wake.Start(new[] { brain.Name }.Concat(brain.WakeNames))) { wake.Dispose(); wake = null; wakeRetryAt = Clock.T + 120; }
             }
             else if (!want && wake != null) { wake.Dispose(); wake = null; }
@@ -827,6 +829,14 @@ namespace Bestie
         {
             if (assistant == null || wav == null) return;
             try { assistant.SubmitSpokenAudio(wav, wake != null ? wake.Phrases() : new string[0]); }
+            catch (Exception ex) { DebugLog.Write("wake word: " + ex.Message); }
+        }
+
+        void OnWakeGuess(byte[] start)
+        {
+            if (assistant == null || start == null) return;
+            // lit until the whole sentence is in (then Heard keeps it going)
+            try { assistant.CheckNameEarly(start, wake != null ? wake.Phrases() : new string[0], () => { c.Freeze(); c.Glow(6); c.Squash = -0.3; }); }
             catch (Exception ex) { DebugLog.Write("wake word: " + ex.Message); }
         }
 

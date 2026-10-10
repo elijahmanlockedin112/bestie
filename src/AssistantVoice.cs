@@ -744,7 +744,7 @@ namespace Bestie
         }
 
         /// <summary>Quiet mics make for bad transcripts: bring the loudest peak up to ~60% (at most 8x louder).</summary>
-        static byte[] Louder(byte[] pcm, int peak)
+        internal static byte[] Louder(byte[] pcm, int peak)
         {
             if (peak <= 0 || peak >= 20000) return pcm;
             double gain = Math.Min(8.0, 20000.0 / peak);

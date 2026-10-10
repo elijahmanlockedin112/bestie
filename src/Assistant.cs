@@ -1631,6 +1631,26 @@ namespace Bestie
             });
         }
 
+        /// <summary>The wake word listener guessed its name while they're still talking: transcribe just the start now and
+        /// run lit() (on the UI thread) if it really is its name, so it lights up about a second after "hey bestie" instead
+        /// of after the whole sentence. The sentence itself is still handled by SubmitSpokenAudio. UI thread.</summary>
+        public void CheckNameEarly(byte[] wav, string[] wakeWords, Action lit)
+        {
+            if (disposed || wav == null || wav.Length < 8000 || !settings.HasKey || IsBusy) return;
+            AssistantSettings s = settings;
+            int started = Environment.TickCount;
+            ThreadPool.QueueUserWorkItem(_ =>
+            {
+                string text;
+                try { text = TranscribeAudio(wav, s, 4000, false); }
+                catch (Exception ex) { DebugLog.Write("wake word: early check failed (" + ex.Message + ")"); return; }
+                bool yes = SaysName(text, wakeWords);
+                DebugLog.Write("wake word: early check: " + (yes ? "its name, lit" : "not its name") + " (" + WavSeconds(wav).ToString("0.0") + " s of audio, "
+                    + (Environment.TickCount - started) + " ms)");
+                if (yes) RunOnUi(delegate { if (!disposed) try { lit(); } catch { } });
+            });
+        }
+
         void HandleWakeAudio(byte[] wav, string[] wakeWords, AssistantSettings s, PointerGesture gesture, VoiceTiming timing)
         {
             string text;
@@ -1890,7 +1910,10 @@ namespace Bestie
 
         string TranscribeAudio(byte[] wav, AssistantSettings s) { return TranscribeAudio(wav, s, TranscribeTimeoutMs); }
 
-        string TranscribeAudio(byte[] wav, AssistantSettings s, int timeoutMs)
+        string TranscribeAudio(byte[] wav, AssistantSettings s, int timeoutMs) { return TranscribeAudio(wav, s, timeoutMs, true); }
+
+        /// <summary>cancellable: "stop" can cut it off (false for the early name check, which runs beside the real one).</summary>
+        string TranscribeAudio(byte[] wav, AssistantSettings s, int timeoutMs, bool cancellable)
         {
             // elevenlabs ears (scribe), if chosen; openai's if that fails and there's an openai key
             if (s.TranscribeEngine == "elevenlabs" && s.ElevenKey.Length > 0)
@@ -1903,7 +1926,7 @@ namespace Bestie
                 }
             }
             var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
-            activeClient = client;
+            if (cancellable) activeClient = client;
             string model = string.IsNullOrEmpty(s.TranscribeModel) ? AssistantSettings.DefaultTranscribeModel : s.TranscribeModel;
             try
             {

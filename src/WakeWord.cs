@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Speech.Recognition;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace Bestie
@@ -15,8 +16,11 @@ namespace Bestie
     {
         readonly Control ui;
         SpeechRecognitionEngine engine;
+        MicRing ring;            // the last few seconds of mic, so a guess can be checked before the sentence is over
+        long speechAt = -1;      // where in it the current sentence started
+        bool guessed;            // this sentence already got its early check
         string[] names = new string[0];
-        double lastPerk, lastLevelLog;
+        double lastLevelLog;
         int maxLevel, detected, rejected, ordinary, accepted;
 
         /// <summary>Tests: listen to this WAV file instead of the microphone.</summary>
@@ -32,8 +36,9 @@ namespace Bestie
 
         /// <summary>Wake phrase plus (maybe) a command. Args: WAV of the whole utterance, the text SAPI heard. UI thread.</summary>
         public event Action<byte[], string> Heard;
-        /// <summary>It thinks it just heard its name mid-sentence (for a little "!" reaction). UI thread.</summary>
-        public event Action Perked;
+        /// <summary>It thinks it just heard its name, while they're still talking: a WAV of the sentence so far, to check
+        /// right away (Heard comes only once the whole sentence is over). Once per sentence. UI thread.</summary>
+        public event Action<byte[]> Perked;
         /// <summary>Set by the app: results are ignored while this returns true (e.g. it's talking or already recording).</summary>
         public Func<bool> Busy;
 
@@ -93,11 +98,21 @@ namespace Bestie
 
                 engine.SpeechRecognized += OnRecognized;
                 engine.SpeechHypothesized += OnHypothesized;
-                engine.SpeechDetected += (s, e) => detected++;
+                engine.SpeechDetected += (s, e) =>
+                {
+                    detected++;
+                    guessed = false;
+                    if (ring != null) speechAt = Math.Max(0, ring.Position - MicRing.Bytes(0.7));   // the recognizer notices a beat late
+                };
                 engine.SpeechRecognitionRejected += OnRejected;
                 engine.AudioLevelUpdated += OnLevel;
+                if (TestWavePath == null)
+                {
+                    ring = new MicRing();
+                    if (!ring.Start()) ring = null;
+                }
                 engine.RecognizeAsync(RecognizeMode.Multiple);
-                DebugLog.Write("wake word: listening for \"hey " + string.Join("\" / \"hey ", names) + "\" on " + info.Culture.Name);
+                DebugLog.Write("wake word: listening for \"hey " + string.Join("\" / \"hey ", names) + "\" on " + info.Culture.Name + (ring == null ? " (no early check)" : ""));
                 return true;
             }
             catch (Exception ex)
@@ -112,6 +127,7 @@ namespace Bestie
         {
             var e = engine;
             engine = null;
+            if (ring != null) { ring.Dispose(); ring = null; }
             if (e == null) return;
             try { e.RecognizeAsyncCancel(); } catch { }
             try { e.Dispose(); } catch { }
@@ -133,6 +149,7 @@ namespace Bestie
         void OnRejected(object sender, SpeechRecognitionRejectedEventArgs e)
         {
             rejected++;
+            guessed = false;
             var r = e.Result;
             if (r == null || r.Alternates.Count == 0) return;
             var best = r.Alternates[0];
@@ -164,6 +181,7 @@ namespace Bestie
 
         void OnRecognized(object sender, SpeechRecognizedEventArgs e)
         {
+            guessed = false;
             var r = e.Result;
             if (r == null || r.Words.Count < 1) return;
             float wakeConfidence;
@@ -207,15 +225,21 @@ namespace Bestie
         void OnHypothesized(object sender, SpeechHypothesizedEventArgs e)
         {
             var r = e.Result;
-            // only a confident guess with its name up front gets the "!" (ordinary talk mentioning it mid-sentence doesn't)
-            if (r == null || r.Confidence < 0.5f) return;
+            MicRing mic = ring;
+            // only a confident guess with its name up front (ordinary talk mentioning it mid-sentence doesn't), once a sentence
+            if (r == null || r.Confidence < 0.5f || guessed || mic == null) return;
             if (!StartsWithName(r.Text)) return;
-            Post(() =>
+            guessed = true;
+            long from = Math.Max(speechAt, mic.Position - MicRing.Bytes(3.5));
+            ThreadPool.QueueUserWorkItem(_ =>
             {
-                double now = Clock.T;
-                if (now - lastPerk < 0.5 || (Busy != null && Busy())) return;
-                lastPerk = now;
-                if (Perked != null) Perked();
+                Thread.Sleep(350);   // the end of its name may still be on its way in
+                byte[] wav = mic.WavSince(from);
+                Post(() =>
+                {
+                    if (Busy != null && Busy()) return;
+                    if (Perked != null) Perked(wav);
+                });
             });
         }
 
