@@ -126,6 +126,26 @@ namespace Bestie
         /// <summary>"shoutout to my mom" / "take a call" / "weather" / "now": the next break, soon.</summary>
         public void Ask(string what) { request = string.IsNullOrWhiteSpace(what) ? "now" : what.Trim(); }
 
+        volatile string openWith = "intro";
+
+        /// <summary>On the air with a special opening ("morning": the good-morning show). Plays through the computer's output.</summary>
+        public string StartShow(string opening)
+        {
+            openWith = opening ?? "intro";
+            return Start(null);
+        }
+
+        /// <summary>The outro, then off the air (on the radio's own thread, so it never talks over itself). Waits up to a minute.</summary>
+        public void SignOff()
+        {
+            if (!on) return;
+            request = SignOffRequest;
+            for (int i = 0; i < 120 && on; i++) Thread.Sleep(500);
+            Stop();
+        }
+
+        const string SignOffRequest = "\u0001signoff";
+
         public string Status()
         {
             if (!on) return "locked in fm is off.";
@@ -163,7 +183,9 @@ namespace Bestie
             Break ready = null;
             Thread preparing = null;
 
-            PlayBreak(MakeBreak("intro", null, current, null), true);
+            string opening = openWith;
+            openWith = "intro";
+            PlayBreak(MakeBreak(opening, null, current, null), true);
             idHour = DateTime.Now.Hour;
             lastBreak = DateTime.Now;
 
@@ -196,6 +218,13 @@ namespace Bestie
 
                     // they asked for something: right away (still over the music)
                     string asked = request;
+                    if (asked == SignOffRequest)
+                    {
+                        request = null;
+                        PlayBreak(MakeBreak("outro", current, null, null), false);
+                        on = false;
+                        break;
+                    }
                     if (asked != null && !quietNow)
                     {
                         request = null;
@@ -253,10 +282,10 @@ namespace Bestie
 
         Break MakeBreak(string kind, Song justPlayed, Song nowPlaying, string asked)
         {
-            var b = new Break { Kind = kind, AboutKey = justPlayed != null ? justPlayed.Key : null, Jingle = kind == "intro" || kind == "station_id" };
+            var b = new Break { Kind = kind, AboutKey = justPlayed != null ? justPlayed.Key : null, Jingle = kind == "intro" || kind == "station_id" || kind == "morning" };
             AssistantSettings s = Settings;
             WeatherReport w = null;
-            if (kind == "intro" || kind == "station_id" || kind == "weather" || (asked ?? "").Contains("weather") || weatherAgo >= 4)
+            if (kind == "intro" || kind == "morning" || kind == "station_id" || kind == "weather" || (asked ?? "").Contains("weather") || (asked ?? "").Contains("storm") || weatherAgo >= 4)
                 w = Weather.Now();
             string context = Context(kind, justPlayed, nowPlaying, asked, w);
             try
@@ -310,6 +339,9 @@ namespace Bestie
         {
             var sb = new StringBuilder();
             sb.Append("segment: ").Append(kind).Append(kind == "intro" ? " (the station just came on: welcome them, say the time, the weather if given, and one thing about their day)"
+                : kind == "morning" ? " (the good-morning show: they just woke up to their alarm. a bright, gentle good morning; the time; today's weather and any alerts; "
+                    + "what's on today's calendar and reminders; one small, kind push for the day. up to 75 words.)"
+                : kind == "outro" ? " (signing off: a short warm goodbye, 'you're locked in', back-announce if a song just played)"
                 : kind == "station_id" ? " (top of the hour: station id, the time, the weather)"
                 : kind == "your_day" ? " (something real from their day: what's next on the calendar, focus, to-dos, reminders)"
                 : kind == "call_in" ? " (a fake caller from the building calls in)"

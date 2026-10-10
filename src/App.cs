@@ -45,7 +45,7 @@ namespace Bestie
         readonly AudioDucker ducker = new AudioDucker();
         WisprWatcher wispr;
         WisprCapture wisprCapture;
-        double listenCheck;
+        double listenCheck, morningCheck = 10;
 
         public CreatureWindow(Brain brain)
         {
@@ -168,6 +168,13 @@ namespace Bestie
                 blockCheck = 0.4;
                 TimeBlocks.Tick();
                 Crumbs.FocusTick(0.4);   // focus time pays crumbs
+                morningCheck -= 0.4;
+                if (morningCheck <= 0 && assistant != null)
+                {
+                    morningCheck = 20;   // the morning show: also the first thing after the computer wakes itself up
+                    var a = assistant;
+                    System.Threading.ThreadPool.QueueUserWorkItem(_ => { try { MorningShow.Tick(a); } catch (Exception ex) { DebugLog.Write("morning show: " + ex.Message); } });
+                }
                 if (TimeBlocks.BreakLocked && !BreakOverlay.Active && leaveAt < 0) BreakOverlay.Show();
                 BreakOverlay.Tick();
                 if (BreakOverlay.Active) { KeepOnTop(); bubble.KeepOnTop(); }   // it keeps you company on the break screen
