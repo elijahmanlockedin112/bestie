@@ -56,6 +56,7 @@ namespace Bestie
             if (args.Length >= 2 && args[0] == "--sheet") { Tools.Sheet(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--shopsheet") { Tools.ShopSheet(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--shopwindow") { Tools.ShopWindow(args[1]); return 0; }
+            if (args.Length >= 2 && args[0] == "--radiotest") { LockedInFM.RenderTest(args[1]); return 0; }
             if (args.Length >= 3 && args[0] == "--simulate") { Tools.Simulate(double.Parse(args[1]), args[2]); return 0; }
             if (args.Length >= 2 && args[0] == "--icon") { Tools.WriteIcon(args[1]); return 0; }
             if (args.Length >= 2 && args[0] == "--diary") { Tools.DiaryImage(args[1]); return 0; }

@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem, shopItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem, shopItem, radioItem;
         PhoneServer phone;
         double calendarCheck = 20, blockCheck;
         int calendarChecking;
@@ -370,6 +370,13 @@ namespace Bestie
             forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
             Add(brain.Name + "'s diary", null, OpenDiary);
             shopItem = Add("shop…", null, OpenShop);
+            radioItem = Add("Locked In FM", null, () =>
+            {
+                if (assistant == null) return;
+                if (assistant.Radio.On) { assistant.Radio.Stop(); c.Say("and that's the show. locked in fm, signing off.", false, 0); return; }
+                string problem = assistant.Radio.Start(null);
+                if (problem != null) c.Say(problem, false, 0);
+            });
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             quietItem = Add("be quiet for an hour", null, ToggleQuiet);
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
@@ -393,6 +400,8 @@ namespace Bestie
                 brainDumpItem.Text = assistant != null && assistant.IsBrainDumping ? "that's everything (organize it)" : "brain dump…";
                 startupItem.Checked = StartsWithWindows();
                 shopItem.Text = "shop… (" + brain.Crumbs + " " + Shop.Currency + ")";
+                radioItem.Checked = assistant != null && assistant.Radio.On;
+                radioItem.Text = radioItem.Checked ? "Locked In FM (on the air)" : "Locked In FM";
             };
         }
 

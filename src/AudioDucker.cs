@@ -11,6 +11,9 @@ namespace Bestie
     public sealed class AudioDucker
     {
         public double DuckTo = 0.2;          // other apps play at 20% of their volume while it talks
+        /// <summary>Only duck apps this says yes to (by process name, lowercase, no .exe); null = every app. The radio
+        /// ducks just spotify under the dj.</summary>
+        public Func<string, bool> OnlyApp;
         const float Slack = 0.02f;
         const double ParkSeconds = 120;
 
@@ -103,6 +106,7 @@ namespace Bestie
                 {
                     uint pid; s.Control.GetProcessId(out pid);
                     if (pid == myPid || pid == 0 || s.Control.IsSystemSoundsSession() == 0) continue;
+                    if (OnlyApp != null && !OnlyApp(Native.ProcessNameOf(pid) ?? "")) continue;
                     string id; s.Control.GetSessionInstanceIdentifier(out id);
                     if (id == null) continue;
                     float now; s.Volume.GetMasterVolume(out now);
