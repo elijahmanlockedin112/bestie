@@ -413,6 +413,7 @@ namespace Bestie
             if (r.Method == "GET" && path == "/sw.js") { Static(s, "sw.js", "application/javascript; charset=utf-8"); return; }
             if (r.Method == "GET" && (path == "/icon-180.png" || path == "/icon-512.png" || path == "/apple-touch-icon.png")) { Icon(s, path == "/icon-512.png" ? 512 : 180); return; }
             if (r.Method == "GET" && path == "/pair") { Pair(r, s); return; }
+            if (r.Method == "GET" && path == "/brain") { Static(s, "brain.html", "text/html; charset=utf-8"); return; }   // the second brain (its data needs the key)
             Match face = Regex.Match(path, @"^/face/(happy|think|sleep|surprised|content|normal)\.png$");
             if (r.Method == "GET" && face.Success) { Face(s, face.Groups[1].Value); return; }
             if (!path.StartsWith("/api/")) { SendText(s, 404, "not here"); return; }
@@ -425,6 +426,7 @@ namespace Bestie
                 case "POST /api/speak": Speak(r, s); return;
                 case "GET /api/history": SendJson(s, History(60)); return;
                 case "GET /api/status": SendJson(s, Status()); return;
+                case "GET /api/brain": SendJson(s, BrainJson()); return;
                 case "GET /api/screen": Screen(r, s); return;
                 case "GET /api/screen.jpg": ScreenFrame(r, s); return;
                 case "GET /api/moonlight": SendJson(s, MoonlightInfo()); return;

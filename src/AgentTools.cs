@@ -85,6 +85,7 @@ namespace Bestie
             AddTerminalTools(t);
             AddRadioTools(t);
             AddMorningShowTools(t);
+            AddSecondBrainTools(t);
         }
 
         AssistantToolResult AgentTool(string name, Dictionary<string, object> a, AssistantSettings s)
@@ -102,7 +103,7 @@ namespace Bestie
                 case "check_claude": return CheckClaude(Json.Str(a, "project") ?? "");
                 case "use_computer": return UseComputer(Json.Str(a, "task") ?? "", Json.Bool(a, "small", false), s);
             }
-            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a) ?? TerminalTool(name, a) ?? RadioTool(name, a) ?? MorningShowTool(name, a);
+            return FileTool(name, a) ?? BehaviorTool(name, a) ?? SystemTool(name, a) ?? PowerTool(name, a) ?? PhoneTool(name, a) ?? PhoneLinkTool(name, a) ?? AlexaTool(name, a, s) ?? ShopTool(name, a) ?? WatchTool(name, a) ?? TerminalTool(name, a) ?? RadioTool(name, a) ?? MorningShowTool(name, a) ?? SecondBrainTool(name, a);
         }
 
         // ================================================================== spotify
@@ -147,7 +148,7 @@ namespace Bestie
 
         /// <summary>Their own claude code sessions (the app, a terminal), not the agent office's headless runs ("sdk-cli",
         /// titled "You are Atlas, ..."), which check_claude reports separately as office jobs.</summary>
-        static List<AiSession> TheirSessions()
+        internal static List<AiSession> TheirSessions()
         {
             return AiSessions.Snapshot().Where(x => x.Kind == "code" && x.Origin != "sdk-cli" && !Regex.IsMatch(x.Title ?? "", @"^You are \w+,.*agent office", RegexOptions.IgnoreCase))
                 .OrderByDescending(x => x.LastActive).ToList();

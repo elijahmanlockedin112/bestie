@@ -376,6 +376,11 @@ namespace Bestie
             calendarItem = Add("let me see my calendar…", null, ConnectCalendar);
             forgetCalendarsItem = Add("forget my calendar links", null, ForgetCalendars);
             Add(brain.Name + "'s diary", null, OpenDiary);
+            Add("second brain…", null, () =>
+            {
+                if (phone == null) { c.Say("my phone line didn't start, and the second brain lives there. check the log.", false, 0); return; }
+                Process.Start(new ProcessStartInfo(phone.LocalBrainUrl) { UseShellExecute = true });
+            });
             shopItem = Add("shop…", null, OpenShop);
             radioItem = Add("Locked In FM", null, () =>
             {

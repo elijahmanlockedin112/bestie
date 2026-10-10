@@ -32,14 +32,15 @@ self.addEventListener('notificationclick', e => {
 self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || req.mode !== 'navigate') return;
+  const isApp = /\/(index\.html)?$/.test(new URL(req.url).pathname);   // not the second brain page: it isn't the app
   e.respondWith((async () => {
     try {
       const res = await fetch(req);
-      if (res.ok) { const c = await caches.open(SHELL); c.put('shell', res.clone()); }
+      if (res.ok && isApp) { const c = await caches.open(SHELL); c.put('shell', res.clone()); }
       return res;
     } catch (_) {
       const c = await caches.open(SHELL);
-      return (await c.match('shell')) || new Response('<meta name="viewport" content="width=device-width"><body style="font:17px -apple-system,sans-serif;padding:60px 28px;background:#0f0f0f;color:#ececec">Can’t reach your computer. Make sure it’s on, with Bestie and Tailscale running.</body>', { headers: { 'Content-Type': 'text/html' } });
+      return (isApp && await c.match('shell')) || new Response('<meta name="viewport" content="width=device-width"><body style="font:17px -apple-system,sans-serif;padding:60px 28px;background:#0f0f0f;color:#ececec">Can’t reach your computer. Make sure it’s on, with Bestie and Tailscale running.</body>', { headers: { 'Content-Type': 'text/html' } });
     }
   })());
 });
