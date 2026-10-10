@@ -4,6 +4,7 @@
 // background, so the page never waits on them. C# 5 only.
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -52,6 +53,11 @@ namespace Bestie
             try { d["radio"] = assistant != null && assistant.Radio.On; } catch { }
             d["sessions"] = Sessions();
             d["journal"] = JournalLines(6);
+            d["plan"] = Plans.Upcoming().Take(4).Select(day => (object)new Dictionary<string, object> {
+                { "day", day.Key.ToString("yyyy-MM-dd") },
+                { "label", day.Key == DateTime.Today ? "Today" : day.Key == DateTime.Today.AddDays(1) ? "Tomorrow" : day.Key.ToString("dddd", CultureInfo.InvariantCulture) },
+                { "items", day.Value.Select(p => (object)new Dictionary<string, object> { { "text", p.Text }, { "done", p.Done }, { "why", p.Why },
+                    { "time", p.Time.Length > 0 ? When.Clock(DateTime.Today.Add(TimeSpan.Parse(p.Time))) : "" } }).ToList() } }).ToList();
             return d;
         }
 

@@ -129,6 +129,10 @@ namespace Bestie
                         .Where(l => l.Trim().Length > 0 && l.Trim() != AboutHeader && l.Trim() != AboutBlurb).ToArray();
                     if (lines.Length == 0) continue;
                     sb.Append("(" + Path.GetFileName(f) + ")\n");
+                    // a long memory keeps its newest lines (they're at the end); the oldest ones wait in the file
+                    int room = cap * 3 / 4, used = 0, from = lines.Length;
+                    while (from > 0 && used + lines[from - 1].Length + 1 <= room) { from--; used += lines[from].Length + 1; }
+                    if (from > 0) { sb.Append("(" + from + " older lines are in " + Path.GetFileName(f) + ")\n"); lines = lines.Skip(from).ToArray(); }
                     foreach (string l in lines) sb.Append(l.TrimEnd()).Append('\n');
                     if (sb.Length > cap) break;
                 }

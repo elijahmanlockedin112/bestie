@@ -124,7 +124,7 @@ namespace Bestie
         const int MaxToolRounds = 12;   // room to chain: look something up, act, check, act again
         const int ChatTimeoutMs = 90000;
         const int TranscribeTimeoutMs = 60000;
-        const int MemoryPromptChars = 12000;
+        const int MemoryPromptChars = 32000;   // in the cached part of the prompt, so a long memory stays cheap
         internal const string NoKeyLine ="i don't have a brain key yet. paste an openai key in settings and i'll get smarter. it stays on this computer.";
 
         readonly ICreatureHost host;
@@ -1287,6 +1287,8 @@ namespace Bestie
             if (personality.Length > 0) sb.Append("\n\n## you, lately\n").Append(personality);
             sb.Append("\n\n").Append(s.AutoLookScreens ? "screenshots of their screens come with this message." : "no screenshots come with this message.");
             sb.Append("\ntime blocks: ").Append(TimeBlocks.Describe());
+            string plan = Plans.ContextLine();
+            if (plan != null) sb.Append('\n').Append(plan);
             string shopLife = Crumbs.Summary();
             if (shopLife != null) sb.Append('\n').Append(shopLife);
             string routines = AssistantTools.RoutineNames();
