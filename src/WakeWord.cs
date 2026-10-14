@@ -226,9 +226,11 @@ namespace Bestie
         {
             var r = e.Result;
             MicRing mic = ring;
-            // only a confident guess with its name up front (ordinary talk mentioning it mid-sentence doesn't), once a sentence
-            if (r == null || r.Confidence < 0.5f || guessed || mic == null) return;
-            if (!StartsWithName(r.Text)) return;
+            // only a confident "hey <name>" (ordinary talk mentioning it doesn't), once a sentence. a bare name doesn't count here:
+            // noise gets heard as "blorp" hundreds of times a day, and each early check is a paid transcription
+            if (r == null || r.Confidence < 0.6f || guessed || mic == null) return;
+            string[] words = (r.Text ?? "").ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+            if (words.Length < 2 || !Greetings.Contains(words[0]) || !StartsWithName(r.Text)) return;
             guessed = true;
             long from = Math.Max(speechAt, mic.Position - MicRing.Bytes(3.5));
             ThreadPool.QueueUserWorkItem(_ =>
