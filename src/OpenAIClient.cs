@@ -86,9 +86,71 @@ namespace Bestie
 
         // ------------------------------------------------------------------ chat
 
+        /// <summary>Set from the settings: the cheap model goes first, and a request that fails on it for a reason a stronger
+        /// model might not (a bad request, an unavailable model, a server error, a timeout, an empty answer) is sent once
+        /// more on this one. Not for credit, quota or key problems: those fail the same way on any model.</summary>
+        public static string FallbackModel;
+
+        /// <summary>POST /chat/completions, on FallbackModel if the first model fails.</summary>
+        public Dictionary<string, object> ChatCompletion(Dictionary<string, object> body, int timeoutMs)
+        {
+            Dictionary<string, object> r;
+            try { r = ChatCompletionOnce(body, timeoutMs); }
+            catch (OpenAIException ex)
+            {
+                if (!FallBack(body, ex)) throw;
+                return ChatCompletionOnce(body, timeoutMs);
+            }
+            if (EmptyAnswer(r) && FallBack(body, null)) return ChatCompletionOnce(body, timeoutMs);
+            return r;
+        }
+
+        /// <summary>Streaming, on FallbackModel if the first model fails before it said anything.</summary>
+        public Dictionary<string, object> ChatCompletionStream(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
+        {
+            bool said = false;
+            Action<string> content = onContent == null ? null : (Action<string>)(d => { said = true; onContent(d); });
+            Action tool = onToolCall == null ? null : (Action)(() => { said = true; onToolCall(); });
+            Dictionary<string, object> r;
+            try { r = ChatCompletionStreamOnce(body, timeoutMs, content, tool); }
+            catch (OpenAIException ex)
+            {
+                if (said || !FallBack(body, ex)) throw;   // half an answer already went out: no second voice
+                return ChatCompletionStreamOnce(body, timeoutMs, onContent, onToolCall);
+            }
+            if (!said && EmptyAnswer(r) && FallBack(body, null)) return ChatCompletionStreamOnce(body, timeoutMs, onContent, onToolCall);
+            return r;
+        }
+
+        /// <summary>Switches the request to FallbackModel if this failure is one it might not have. ex null: an empty answer.</summary>
+        bool FallBack(Dictionary<string, object> body, OpenAIException ex)
+        {
+            string fb = FallbackModel, model = Json.Str(body, "model") ?? "";
+            if (string.IsNullOrEmpty(fb) || model == fb || aborted) return false;
+            if (ex != null)
+            {
+                if (ex.Aborted || ex.Status == 401 || ex.Status == 403) return false;
+                string m = ((ex.Code ?? "") + " " + (ex.ApiMessage ?? "") + " " + ex.Message).ToLowerInvariant();
+                if (m.Contains("credit") || m.Contains("quota") || m.Contains("billing")) return false;
+            }
+            DebugLog.Write("assistant: " + model + (ex != null ? " failed (" + Trunc((ex.Status > 0 ? ex.Status + " " : "") + (ex.ApiMessage ?? ex.Message), 140) + ")" : " gave an empty answer")
+                + "; asking " + fb + " instead");
+            body["model"] = fb;
+            return true;
+        }
+
+        static bool EmptyAnswer(Dictionary<string, object> r)
+        {
+            object[] choices = Json.Arr(r, "choices");
+            var msg = choices.Length > 0 ? Json.Obj(choices[0] as Dictionary<string, object>, "message") : null;
+            if (msg == null) return true;
+            string text = Json.Str(msg, "content");
+            return string.IsNullOrWhiteSpace(text) && Json.Arr(msg, "tool_calls").Length == 0;
+        }
+
         /// <summary>POST /chat/completions. Adapts to common model quirks (unsupported
         /// reasoning_effort, max_tokens vs max_completion_tokens, no image input) by retrying.</summary>
-        public Dictionary<string, object> ChatCompletion(Dictionary<string, object> body, int timeoutMs)
+        Dictionary<string, object> ChatCompletionOnce(Dictionary<string, object> body, int timeoutMs)
         {
             string model = Json.Str(body, "model") ?? "";
             string qkey = baseUrl + "|" + model;
@@ -123,7 +185,7 @@ namespace Bestie
         /// onToolCall is told once a tool call starts. Returns the same shape as ChatCompletion
         /// ({choices:[{message:{role, content, tool_calls}, finish_reason}]}). Falls back to a plain call if the
         /// endpoint won't stream.</summary>
-        public Dictionary<string, object> ChatCompletionStream(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
+        Dictionary<string, object> ChatCompletionStreamOnce(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
         {
             string model = Json.Str(body, "model") ?? "";
             string qkey = baseUrl + "|" + model;
@@ -166,7 +228,7 @@ namespace Bestie
         Dictionary<string, object> PlainAndFeed(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
         {
             body.Remove("stream");
-            Dictionary<string, object> r = ChatCompletion(body, timeoutMs);
+            Dictionary<string, object> r = ChatCompletionOnce(body, timeoutMs);
             FeedWhole(r, onContent, onToolCall);
             return r;
         }

@@ -41,7 +41,7 @@ namespace Bestie
                     P("location", "string", "where"), P("description", "string", "notes")));
                 if (IcsCalendar.Configured)
                 {
-                    t.Add(Tool("calendar_list_events", "list events from the calendars they connected (" + string.Join(", ", IcsCalendar.Names) + "). read-only. default: the next 7 days.", R(),
+                    t.Add(Tool("calendar_list_events", "list events from the calendars they connected (named in the live context). read-only. default: the next 7 days.", R(),
                         P("from", "string", "ISO local date/datetime (default now)"), P("to", "string", "ISO local date/datetime (default from + 7 days)"),
                         P("query", "string", "only events whose title contains this")));
                     if (browser)

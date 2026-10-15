@@ -18,7 +18,9 @@ namespace Bestie
         //  - gpt-transcribe: the recommended /audio/transcriptions model (~$0.0045/min).
         //  - gpt-4o-mini-tts: the current steerable TTS model (takes `instructions`; $0.60/1M text in,
         //    $12/1M audio out, roughly $0.015/min), cheaper per character than tts-1 ($15/1M chars).
-        public const string DefaultModel = "gpt-6.1-sol";
+        // luna first ($0.10 / $0.50 a million tokens); sol ($2 / $10) only when luna fails (OpenAIClient.FallbackModel)
+        public const string DefaultModel = "gpt-6-luna";
+        public const string DefaultFallbackModel = "gpt-6.1-sol";
         public const string DefaultTtsModel = "gpt-4o-mini-tts";
         public const string DefaultOpenAiVoice = "ballad";
         public const string DefaultReasoningEffort = "none";
@@ -28,7 +30,7 @@ namespace Bestie
         public const string DefaultHotkeyVoice = "Ctrl+Alt+V";
 
         public static readonly string[] SuggestedModels = new string[] {
-            "gpt-6.1-sol", "gpt-6-luna", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
+            "gpt-6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
         public static readonly string[] SuggestedTranscribeModels = new string[] {
             "gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1" };
         public static readonly string[] SuggestedTtsModels = new string[] { "gpt-4o-mini-tts", "tts-1", "tts-1-hd" };
@@ -42,6 +44,11 @@ namespace Bestie
 
         public string ProtectedKey = "";        // DPAPI(CurrentUser) + base64
         public string Model = DefaultModel;
+        public string FallbackModel = DefaultFallbackModel;   // "" = no second try
+        // the jobs nobody waits on (memory notes, the journal digest, patterns, peeks, the radio dj's script): a model at a
+        // twentieth of the price ($0.10 / $0.50 a million tokens vs $2 / $10)
+        public const string DefaultBackgroundModel = "gpt-6-luna";
+        public string BackgroundModel = DefaultBackgroundModel;
         public string ReasoningEffort = DefaultReasoningEffort;
         public string TranscribeModel = DefaultTranscribeModel;
         public string BaseUrl = DefaultBaseUrl;
@@ -93,6 +100,13 @@ namespace Bestie
 
         public static AssistantSettings Load()
         {
+            AssistantSettings s = LoadFile();
+            OpenAIClient.FallbackModel = s.FallbackModel;
+            return s;
+        }
+
+        static AssistantSettings LoadFile()
+        {
             var s = new AssistantSettings();
             try
             {
@@ -102,6 +116,9 @@ namespace Bestie
                 if (d == null) return s;
                 s.ProtectedKey = Json.Str(d, "apiKeyProtected") ?? "";
                 s.Model = NonEmpty(Json.Str(d, "model"), DefaultModel);
+                s.BackgroundModel = NonEmpty(Json.Str(d, "backgroundModel"), DefaultBackgroundModel);
+                string fb = Json.Str(d, "fallbackModel");
+                s.FallbackModel = fb == null ? DefaultFallbackModel : fb.Trim();
                 string effort = Json.Str(d, "reasoningEffort");
                 s.ReasoningEffort = effort == null ? DefaultReasoningEffort : effort.Trim();
                 s.TranscribeModel = NonEmpty(Json.Str(d, "transcribeModel"), DefaultTranscribeModel);
@@ -154,6 +171,9 @@ namespace Bestie
             var d = new Dictionary<string, object>();
             d["apiKeyProtected"] = ProtectedKey ?? "";
             d["model"] = Model ?? DefaultModel;
+            d["backgroundModel"] = BackgroundModel ?? DefaultBackgroundModel;
+            d["fallbackModel"] = FallbackModel ?? "";
+            OpenAIClient.FallbackModel = FallbackModel;
             d["reasoningEffort"] = ReasoningEffort ?? "";
             d["transcribeModel"] = TranscribeModel ?? DefaultTranscribeModel;
             d["baseUrl"] = BaseUrl ?? DefaultBaseUrl;

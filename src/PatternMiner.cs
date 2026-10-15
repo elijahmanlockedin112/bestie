@@ -475,7 +475,7 @@ namespace Bestie
                 if (known.Length > 3000) known = known.Substring(known.Length - 3000);
 
                 var body = new Dictionary<string, object>();
-                body["model"] = s.Model;
+                body["model"] = s.BackgroundModel;
                 body["messages"] = new List<object>
                 {
                     new Dictionary<string, object> { { "role", "system" }, { "content", Instructions } },

@@ -77,7 +77,8 @@ namespace Bestie
                 bare.Append(who);
                 engine.LoadGrammar(new Grammar(withCommand) { Name = "command" });
                 engine.LoadGrammar(new Grammar(bare) { Name = "bare" });
-                // just the name works too: "blorp, open youtube" / "bestie, what's next on my calendar"
+                // just the name works too: "blorp, open youtube" / "bestie, what's next on my calendar". (noise gets heard as a
+                // bare name a lot; that's fine: without these, the same noise lands on "hey <name>" instead.)
                 var nameOnly = new GrammarBuilder(who) { Culture = info.Culture };
                 nameOnly.AppendWildcard();
                 engine.LoadGrammar(new Grammar(nameOnly) { Name = "name" });
@@ -165,6 +166,7 @@ namespace Bestie
                 {
                     string text = best.Text;
                     accepted++;
+                    Guessed();
                     DebugLog.Write("wake word: heard (near miss, " + best.Confidence.ToString("0.00") + ") \"" + text + "\"");
                     Post(() =>
                     {
@@ -199,6 +201,7 @@ namespace Bestie
             }
             if (wakeConfidence < NameConfidence) { rejected++; return; }
             accepted++;
+            Guessed();
             byte[] wav = null;
             try
             {
@@ -231,6 +234,7 @@ namespace Bestie
             if (r == null || r.Confidence < 0.6f || guessed || mic == null) return;
             string[] words = (r.Text ?? "").ToLowerInvariant().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (words.Length < 2 || !Greetings.Contains(words[0]) || !StartsWithName(r.Text)) return;
+            if (Noisy()) return;   // a video or music keeps "saying" its name: the plain (slower) glow will do
             guessed = true;
             long from = Math.Max(speechAt, mic.Position - MicRing.Bytes(3.5));
             ThreadPool.QueueUserWorkItem(_ =>
@@ -243,6 +247,25 @@ namespace Bestie
                     if (Perked != null) Perked(wav);
                 });
             });
+        }
+
+        // when it last thought it heard its name; almost all of these are noise (a video, music, a call)
+        readonly Queue<double> recentGuesses = new Queue<double>();
+
+        void Guessed()
+        {
+            lock (recentGuesses) recentGuesses.Enqueue(Environment.TickCount / 1000.0);
+        }
+
+        /// <summary>Three or more name guesses in the last three minutes: something's playing, so no early checks (each is a paid transcription).</summary>
+        bool Noisy()
+        {
+            double now = Environment.TickCount / 1000.0;
+            lock (recentGuesses)
+            {
+                while (recentGuesses.Count > 0 && now - recentGuesses.Peek() > 180) recentGuesses.Dequeue();
+                return recentGuesses.Count >= 3;
+            }
         }
 
         void Post(Action a)

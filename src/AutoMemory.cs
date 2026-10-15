@@ -125,7 +125,7 @@ namespace Bestie
                     Msg("user", "EXISTING MEMORY:\n" + (existing.Trim().Length > 0 ? existing : "(empty)") + "\n\nCONVERSATION:\n" + Clip(convo, 12000))
                 };
                 var body = new Dictionary<string, object>();
-                body["model"] = s.Model;
+                body["model"] = s.BackgroundModel;
                 body["messages"] = msgs;
                 bool thinks = !string.IsNullOrEmpty(s.ReasoningEffort) && s.ReasoningEffort != "none";
                 body["max_completion_tokens"] = thinks ? 1500 : 800;
@@ -215,7 +215,7 @@ namespace Bestie
                 if (known.Length > 4000) known = known.Substring(known.Length - 4000);
 
                 var body = new Dictionary<string, object>();
-                body["model"] = s.Model;
+                body["model"] = s.BackgroundModel;
                 body["messages"] = new List<object>
                 {
                     Msg("system", DigestInstructions),
