@@ -833,7 +833,7 @@ namespace Bestie
         void OnWakeHeard(byte[] wav, string heard)
         {
             if (assistant == null || wav == null) return;
-            try { assistant.SubmitSpokenAudio(wav, wake != null ? wake.Phrases() : new string[0]); }
+            try { assistant.SubmitSpokenAudio(wav, wake != null ? wake.Phrases() : new string[0], wake != null && wake.NoisyNow); }
             catch (Exception ex) { DebugLog.Write("wake word: " + ex.Message); }
         }
 

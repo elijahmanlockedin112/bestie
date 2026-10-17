@@ -44,6 +44,8 @@ namespace Bestie
 
         public bool Running { get { return engine != null; } }
         public string[] Names { get { return names; } }
+        /// <summary>Something's playing (a video or music keeps "saying" its name): see Noisy.</summary>
+        public bool NoisyNow { get { return Noisy(); } }
 
         public static readonly string[] Greetings = { "hi", "hey", "hello", "okay", "yo", "ok" };
 
@@ -167,6 +169,7 @@ namespace Bestie
                     string text = best.Text;
                     accepted++;
                     Guessed();
+                    if (OnlyHeyNow(text, best.Confidence)) return;
                     DebugLog.Write("wake word: heard (near miss, " + best.Confidence.ToString("0.00") + ") \"" + text + "\"");
                     Post(() =>
                     {
@@ -202,6 +205,7 @@ namespace Bestie
             if (wakeConfidence < NameConfidence) { rejected++; return; }
             accepted++;
             Guessed();
+            if (OnlyHeyNow(r.Text, wakeConfidence)) return;
             byte[] wav = null;
             try
             {
@@ -255,6 +259,16 @@ namespace Bestie
         void Guessed()
         {
             lock (recentGuesses) recentGuesses.Enqueue(Environment.TickCount / 1000.0);
+        }
+
+        /// <summary>While something's playing, a bare name ("blorp", "bestie ...") isn't checked: a video says something like
+        /// it every few seconds and each check is a paid transcription. "hey &lt;name&gt;" still is. True = drop this guess.</summary>
+        bool OnlyHeyNow(string text, float confidence)
+        {
+            string[] words = (text ?? "").ToLowerInvariant().Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+            if ((words.Length >= 2 && Greetings.Contains(words[0])) || !Noisy()) return false;
+            DebugLog.Write("wake word: heard \"" + text + "\" (" + confidence.ToString("0.00") + "); something's playing, so only \"hey " + (names.Length > 0 ? names[0] : "bestie") + "\" counts");
+            return true;
         }
 
         /// <summary>Three or more name guesses in the last three minutes: something's playing, so no early checks (each is a paid transcription).</summary>

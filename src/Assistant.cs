@@ -308,6 +308,59 @@ namespace Bestie
             return byteRate > 0 ? (wav.Length - 44) / (double)byteRate : 8;
         }
 
+        /// <summary>The first `seconds` of a PCM WAV, as a WAV of its own (null if it can't read it).</summary>
+        internal static byte[] WavStart(byte[] wav, double seconds)
+        {
+            try
+            {
+                if (wav == null || wav.Length < 44 || Encoding.ASCII.GetString(wav, 0, 4) != "RIFF" || Encoding.ASCII.GetString(wav, 8, 4) != "WAVE") return null;
+                int pos = 12, channels = 0, rate = 0, bits = 0;
+                while (pos + 8 <= wav.Length)
+                {
+                    string id = Encoding.ASCII.GetString(wav, pos, 4);
+                    int size = BitConverter.ToInt32(wav, pos + 4);
+                    if (id == "fmt " && size >= 16 && pos + 24 <= wav.Length)
+                    {
+                        short tag = BitConverter.ToInt16(wav, pos + 8);
+                        if (tag != 1 && tag != -2) return null;   // PCM (or "extensible" PCM) only
+                        channels = BitConverter.ToInt16(wav, pos + 10);
+                        rate = BitConverter.ToInt32(wav, pos + 12);
+                        bits = BitConverter.ToInt16(wav, pos + 22);
+                    }
+                    else if (id == "data")
+                    {
+                        int block = channels * bits / 8;
+                        if (rate <= 0 || block <= 0) return null;
+                        int have = wav.Length - pos - 8;
+                        if (size > 0 && size < have) have = size;
+                        int n = Math.Min((int)(seconds * rate) * block, have);
+                        n -= n % block;
+                        var pcm = new byte[n];
+                        Buffer.BlockCopy(wav, pos + 8, pcm, 0, n);
+                        return VoiceWav.Build(pcm, rate, bits, channels);
+                    }
+                    if (size < 0) return null;
+                    pos += 8 + size + (size & 1);
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // paid wake word checks today (each guess of its name gets transcribed to see if it really was), for the log
+        static int wakeChecks;
+        static double wakeCheckSeconds;
+        static DateTime wakeCheckDay;
+
+        static void CountWakeCheck(double seconds)
+        {
+            if (wakeCheckDay != DateTime.Today) { wakeCheckDay = DateTime.Today; wakeChecks = 0; wakeCheckSeconds = 0; }
+            wakeChecks++;
+            wakeCheckSeconds += seconds;
+            if (wakeChecks % 25 == 0)
+                DebugLog.Write("wake word: " + wakeChecks + " paid checks today, " + wakeCheckSeconds.ToString("0") + " s of audio in all");
+        }
+
         /// <summary>Call on the UI thread (it creates the hidden hotkey window).
         /// uiInvoker is the creature's form, used for BeginInvoke.</summary>
         public AssistantModule(ICreatureHost host, Control uiInvoker)
@@ -1637,7 +1690,11 @@ namespace Bestie
         /// <summary>Transcribe this audio and handle it exactly like a voice message (reply in the bubble, spoken,
         /// tools, transcript) without opening or focusing the chat window. wakeWords are phrases to strip from
         /// the start of the transcript. Just the wake phrase (or nothing) -> "yes?" and listen for the rest. UI thread.</summary>
-        public void SubmitSpokenAudio(byte[] wav, string[] wakeWords)
+        public void SubmitSpokenAudio(byte[] wav, string[] wakeWords) { SubmitSpokenAudio(wav, wakeWords, false); }
+
+        /// <summary>noisy: something's playing (the wake listener keeps guessing its name), so a long clip gets its first
+        /// seconds checked for its name before the whole thing is paid for.</summary>
+        public void SubmitSpokenAudio(byte[] wav, string[] wakeWords, bool noisy)
         {
             RunOnUi(delegate
             {
@@ -1648,11 +1705,11 @@ namespace Bestie
                 AssistantSettings s = settings;
                 string[] words = wakeWords ?? new string[0];
                 var timing = new VoiceTiming("wake word");
-                // most triggers are false alarms (music, videos, people talking: ~30 an hour), so nothing visible or costly
+                // most triggers are false alarms (music, videos, people talking: up to ~250 an hour while a video plays), so nothing visible or costly
                 // happens yet: no screenshots, no stopping its voice. only where they pointed is noted now (it looks back
                 // over the last few seconds); the screens are grabbed once the transcript says it really was its name.
                 PointerGesture gesture = LegacyVoicePathForTests ? null : Pointer.Collect(WavSeconds(wav) + 1);
-                var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, gesture, timing); });
+                var t = new Thread(delegate() { HandleWakeAudio(wav, words, s, gesture, timing, noisy); });
                 t.IsBackground = true;
                 t.Name = "bestie-wake";
                 t.Start();
@@ -1679,10 +1736,26 @@ namespace Bestie
             });
         }
 
-        void HandleWakeAudio(byte[] wav, string[] wakeWords, AssistantSettings s, PointerGesture gesture, VoiceTiming timing)
+        // while something's playing, a clip longer than this has just its first FirstCheckSeconds checked for its name first
+        const double FirstCheckSeconds = 2.5, FirstCheckOver = 3.5;
+
+        void HandleWakeAudio(byte[] wav, string[] wakeWords, AssistantSettings s, PointerGesture gesture, VoiceTiming timing, bool noisy)
         {
             string text;
-            try { text = TranscribeAudio(wav, s); }
+            try
+            {
+                double seconds = WavSeconds(wav);
+                byte[] start = noisy && seconds > FirstCheckOver ? WavStart(wav, FirstCheckSeconds) : null;
+                text = null;
+                if (start != null)
+                {
+                    // almost always a video: pay for 2.5 s, not the whole clip
+                    string first = TranscribeAudio(start, s);
+                    CountWakeCheck(WavSeconds(start));
+                    if (!SaysName(first, wakeWords)) text = first;
+                }
+                if (text == null) { text = TranscribeAudio(wav, s); CountWakeCheck(seconds); }
+            }
             catch (Exception ex)
             {
                 transcribing = false;
