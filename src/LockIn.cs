@@ -135,6 +135,46 @@ namespace Bestie
             return picks;
         }
 
+        // ================================================================== the phone's Locked In screen
+
+        static volatile string lastCleared;
+        static DateTime lastLockIn;
+
+        /// <summary>/lockin: the page itself. Its data needs the key, like the second brain.</summary>
+        void LockInPage(Stream s)
+        {
+            string file = Path.Combine(webDir, "lockin.html");
+            if (!File.Exists(file)) { SendText(s, 404, "phone\\lockin.html is missing."); return; }
+            var c = CreatureInfo();
+            string html = File.ReadAllText(file, Encoding.UTF8)
+                .Replace("{{NAME}}", System.Net.WebUtility.HtmlEncode(Json.Str(c, "name") ?? "Bestie"))
+                .Replace("{{ACCENT}}", Hex(Renderer.Hsl(Json.Num(c, "hue", 150), 0.85, 0.6, 255)));
+            Send(s, 200, "text/html; charset=utf-8", Encoding.UTF8.GetBytes(html), "Cache-Control: no-store\r\n");
+        }
+
+        static string Hex(System.Drawing.Color c) { return "#" + c.R.ToString("x2") + c.G.ToString("x2") + c.B.ToString("x2"); }
+
+        /// <summary>/api/lockin: the timer, the song on the computer, and what the last tap cleared.</summary>
+        Dictionary<string, object> LockInStatus()
+        {
+            var c = CreatureInfo();
+            string playing = Json.Str(c, "playing");
+            if (playing == null)
+            {
+                try { string t = SpotifyPlayer.Title(); if (t != null && !t.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase)) playing = t; } catch { }
+            }
+            bool running = TimeBlocks.Running;
+            return new Dictionary<string, object>
+            {
+                { "name", Json.Str(c, "name") ?? "Bestie" },
+                { "running", running }, { "paused", TimeBlocks.Paused }, { "phase", TimeBlocks.Phase },
+                { "left", running ? (int)TimeBlocks.Left.TotalSeconds : 0 }, { "length", (int)TimeBlocks.Length.TotalSeconds },
+                { "focusMinutes", TimeBlocks.FocusMinutes }, { "breakMinutes", TimeBlocks.BreakMinutes }, { "blocksToday", TimeBlocks.BlocksToday },
+                { "playing", playing }, { "cleared", lastCleared },
+                { "lockedInAgo", lastLockIn == default(DateTime) ? -1 : (int)(DateTime.UtcNow - lastLockIn).TotalSeconds },
+            };
+        }
+
         /// <summary>"youtube, gmail, search ×2"</summary>
         static string Names(List<string> labels)
         {
@@ -224,6 +264,7 @@ namespace Bestie
                 string l1 = closedLine, l2 = studyLine + "  \u00b7  " + block;
                 assistant.OnUi<string>(delegate { flash.Done(l1, l2); return "ok"; }, null);
             }
+            if (!preview) { lastCleared = gone.Count == 0 ? "" : Names(gone); lastLockIn = DateTime.UtcNow; }
             if (!preview && gone.Count > 0) Journal.Add("you tapped into locked in mode. i closed " + Names(gone) + " for you. ctrl+shift+t brings a tab back.");
             DebugLog.Write("phone: lockin" + (preview ? " preview" : "") + ": " + closedLine + (problem != null ? " (" + problem + ")" : ""));
 

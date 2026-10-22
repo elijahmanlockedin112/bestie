@@ -414,8 +414,12 @@ namespace Bestie
             if (r.Method == "GET" && (path == "/icon-180.png" || path == "/icon-512.png" || path == "/apple-touch-icon.png")) { Icon(s, path == "/icon-512.png" ? 512 : 180); return; }
             if (r.Method == "GET" && path == "/pair") { Pair(r, s); return; }
             if (r.Method == "GET" && path == "/brain") { Static(s, "brain.html", "text/html; charset=utf-8"); return; }   // the second brain (its data needs the key)
+            if (r.Method == "GET" && path == "/lockin") { LockInPage(s); return; }   // the Locked In screen (its data needs the key)
+            if (r.Method == "GET" && path == "/lockin.wav") { Send(s, 200, "audio/wav", LockInSound.Wav(), "Cache-Control: max-age=86400\r\n"); return; }
             Match face = Regex.Match(path, @"^/face/(happy|think|sleep|surprised|content|normal)\.png$");
             if (r.Method == "GET" && face.Success) { Face(s, face.Groups[1].Value); return; }
+            Match bigFace = Regex.Match(path, @"^/face-big/(happy|think|sleep|surprised|content|normal)\.png$");
+            if (r.Method == "GET" && bigFace.Success) { Face(s, bigFace.Groups[1].Value, 384); return; }
             if (!path.StartsWith("/api/")) { SendText(s, 404, "not here"); return; }
             if (!Authorized(r)) { SendError(s, 401, "not paired"); return; }
             switch (r.Method + " " + path)
@@ -436,6 +440,7 @@ namespace Bestie
                 case "POST /api/todo": Todo(r, s); return;
                 case "POST /api/control": Control(r, s); return;
                 case "GET /api/control": SendJson(s, ControlState(null)); return;
+                case "GET /api/lockin": SendJson(s, LockInStatus()); return;
                 case "POST /api/upload": Upload(r, s); return;
                 case "GET /api/file": case "HEAD /api/file": SendOffered(r, s); return;
                 case "GET /api/files": Files(r, s); return;
@@ -649,15 +654,16 @@ namespace Bestie
             return d;
         }
 
-        void Face(Stream s, string mood)
+        void Face(Stream s, string mood, int size = 128)
         {
             byte[] png;
-            lock (faces) faces.TryGetValue(mood, out png);
+            string key = size == 128 ? mood : mood + "@" + size;
+            lock (faces) faces.TryGetValue(key, out png);
             if (png == null)
             {
-                try { png = portrait(128, mood); } catch (Exception ex) { DebugLog.Write("phone: face: " + ex.Message); }
+                try { png = portrait(size, mood); } catch (Exception ex) { DebugLog.Write("phone: face: " + ex.Message); }
                 if (png == null) { SendText(s, 404, "no face"); return; }
-                lock (faces) faces[mood] = png;
+                lock (faces) faces[key] = png;
             }
             Send(s, 200, "image/png", png, "Cache-Control: max-age=3600\r\n");
         }
