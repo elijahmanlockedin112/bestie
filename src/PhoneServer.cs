@@ -866,6 +866,7 @@ namespace Bestie
                         break;
                     case "desktop": ComputerAgent.Input.Key(new[] { "WIN", "D" }); message = "showing the desktop"; break;
                     case "quiet": Quiet.For(value == "off" ? 0 : 60); message = value == "off" ? "talking again" : "quiet for an hour"; break;
+                    case "lockin": message = LockIn(value); break;
                     case "clipboard_set":
                         if (value.Length == 0) { message = "your clipboard is empty"; break; }
                         OnSta(delegate { Clipboard.SetText(value); return "ok"; });
