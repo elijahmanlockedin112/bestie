@@ -11,6 +11,10 @@
 ## On the phone (Tailscale)
 - Phone app: https://elijahman.taileb0bc0.ts.net:8445/
 - Second brain: https://elijahman.taileb0bc0.ts.net:8445/brain
+- Locked In (NFC tag Shortcut): POST https://elijahman.taileb0bc0.ts.net:8445/api/control, header `X-Bestie-Key: <pairing key>`, body `{"action":"lockin"}` (`"value":"off"` stops the block, `"preview"` only says what it would do)
+
+## Starts with Windows
+- `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Bestie`. Started from a Claude shell, Bestie's own "live here" toggle writes into Claude's sandboxed registry and Windows never sees it, so launch it with `Start-Process explorer.exe C:\Users\elija\Downloads\Bestie\Bestie.exe`.
 
 ## Code
 - Repo: https://github.com/elijahmanlockedin112/bestie
