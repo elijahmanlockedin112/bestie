@@ -1176,6 +1176,7 @@ if ('serviceWorker' in navigator) {
     .then(() => navigator.serviceWorker.ready).then(reg => document.documentElement.dataset.sw = reg.active ? 'active' : 'installed')
     .catch(err => document.documentElement.dataset.sw = 'failed: ' + err.message);
   navigator.serviceWorker.addEventListener('message', e => {
+    if (e.data && e.data.type === 'lockin') { location.href = 'lockin?go=1'; return; }
     if (!e.data || e.data.type !== 'refresh') return;
     if (!busy) loadHistory();
     if ((e.data.url || '').includes('#inbox')) { open('savedSheet'); showSeg('pc'); }
@@ -1188,8 +1189,24 @@ function clearBadge() {
 }
 clearBadge();
 let hiddenAt = 0;
+// tapped the Locked In tag in the last minute and a half: opening the app goes straight to the Locked In screen
+async function lockinJump() {
+  if (!key) return;
+  try {
+    const r = await fetch('api/lockin', { headers: { 'X-Bestie-Key': key }, cache: 'no-store' });
+    if (!r.ok) return;
+    const s = await r.json();
+    if (s.lockedInAgo < 0 || s.lockedInAgo > 90) return;
+    const at = Date.now() - s.lockedInAgo * 1000, seen = +(localStorage.getItem('bestie-lockin-seen') || 0);
+    if (Math.abs(at - seen) < 10000) return;   // already shown for this tap
+    localStorage.setItem('bestie-lockin-seen', String(at));
+    location.href = 'lockin?go=1';
+  } catch (_) {}
+}
+lockinJump();
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) { hiddenAt = Date.now(); return; }
+  lockinJump();
   clearBadge();
   if (scr.open) liveLoop();
   refreshStatus();

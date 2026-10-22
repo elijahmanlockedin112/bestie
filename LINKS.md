@@ -11,7 +11,7 @@
 ## On the phone (Tailscale)
 - Phone app: https://elijahman.taileb0bc0.ts.net:8445/
 - Second brain: https://elijahman.taileb0bc0.ts.net:8445/brain
-- Locked In screen (timer, Mothball, song on the PC): https://elijahman.taileb0bc0.ts.net:8445/lockin?k=<pairing key>&go=1 (`go=1` plays the intro; the key is kept and dropped from the address). Sound: /lockin.wav
+- Locked In screen (timer, Mothball, song on the PC): opens inside the Bestie phone app from the "LOCK IN MODE ACTIVATED" notification, or by opening the app within 90 s of a tap. Direct: https://elijahman.taileb0bc0.ts.net:8445/lockin?go=1 (needs the app's key; in Safari add `&k=<pairing key>`). Sound: /lockin.wav
 - Locked In (NFC tag Shortcut): POST https://elijahman.taileb0bc0.ts.net:8445/api/control, header `X-Bestie-Key: <pairing key>`, body `{"action":"lockin"}` (`"value":"off"` stops the block, `"preview"` only says what it would do)
 
 ## Starts with Windows

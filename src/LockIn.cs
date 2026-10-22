@@ -264,7 +264,12 @@ namespace Bestie
                 string l1 = closedLine, l2 = studyLine + "  \u00b7  " + block;
                 assistant.OnUi<string>(delegate { flash.Done(l1, l2); return "ok"; }, null);
             }
-            if (!preview) { lastCleared = gone.Count == 0 ? "" : Names(gone); lastLockIn = DateTime.UtcNow; }
+            if (!preview)
+            {
+                lastCleared = gone.Count == 0 ? "" : Names(gone); lastLockIn = DateTime.UtcNow;
+                // the phone app can't be opened by a shortcut, but tapping this opens it right on the Locked In screen
+                Push("LOCK IN MODE ACTIVATED", closedLine + ". " + block + ".", "lockin", "lockin?go=1");
+            }
             if (!preview && gone.Count > 0) Journal.Add("you tapped into locked in mode. i closed " + Names(gone) + " for you. ctrl+shift+t brings a tab back.");
             DebugLog.Write("phone: lockin" + (preview ? " preview" : "") + ": " + closedLine + (problem != null ? " (" + problem + ")" : ""));
 

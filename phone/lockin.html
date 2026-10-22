@@ -29,7 +29,9 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   background:radial-gradient(120% 70% at 50% 30%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%)}
 .top{width:100%;max-width:420px;display:flex;justify-content:space-between;align-items:center;font-family:var(--hud);
   font-size:12px;letter-spacing:.22em;color:var(--muted);text-transform:uppercase;position:relative}
-.top .live{display:flex;align-items:center;gap:8px;color:var(--fg)}
+.top .back{width:44px;height:44px;margin:-10px 0 -10px -12px;display:grid;place-items:center}
+.top .back svg{width:20px;height:20px;fill:var(--muted)}
+.top .live{flex:1;display:flex;align-items:center;gap:8px;color:var(--fg)}
 .top .live i{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 var(--accent);animation:pulse 2s infinite}
 .top .live.off i{background:var(--faint);animation:none}
 @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--accent) 60%,transparent)}70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
@@ -134,7 +136,8 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 </head>
 <body>
 <div class="app" id="app">
-  <div class="top"><span class="live" id="live"><i></i><span id="liveText">Locked in</span></span><span id="blocks"></span></div>
+  <div class="top"><a class="back" href="./" aria-label="Back to {{NAME}}"><svg viewBox="0 0 24 24"><path d="M15.5 4.5 8 12l7.5 7.5-1.6 1.6L4.8 12l9.1-9.1z"/></svg></a>
+    <span class="live" id="live"><i></i><span id="liveText">Locked in</span></span><span id="blocks"></span></div>
   <div class="err" id="err" hidden></div>
   <div class="stage" id="stage">
     <div class="dial" id="dial">
@@ -194,7 +197,7 @@ if (qs.get('k') || fresh) history.replaceState(null, '', location.pathname);
 async function api(path, body) {
   const r = await fetch(path, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'X-Bestie-Key': key }, body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
-  if (r.status === 401) throw new Error('This phone isn’t paired. Open the Locked In link from your Shortcut once.');
+  if (r.status === 401) throw new Error('This page doesn’t have the pairing key. Open Locked In from the {{NAME}} app (its notification, or the app right after tapping the tag).');
   if (!r.ok) throw new Error('Bestie didn’t answer (' + r.status + ').');
   return r.json();
 }
@@ -332,6 +335,8 @@ document.querySelector('.top').addEventListener('click', () => { audio(); if (ct
 (async function start() {
   await refresh();
   if (!fresh) return;
+  // this tap has had its intro: the app won't send you here again for it
+  if (st && st.lockedInAgo >= 0) store.set('bestie-lockin-seen', String(Date.now() - st.lockedInAgo * 1000));
   // the browser decides whether sound can start on its own; if not, one tap on ENGAGE plays it in sync
   audio();
   let allowed = false;

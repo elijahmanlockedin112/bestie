@@ -23,6 +23,12 @@ self.addEventListener('notificationclick', e => {
   e.waitUntil((async () => {
     const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     const isFile = url.includes('/api/file');
+    // Locked In: take the open app straight to that screen
+    if (url.includes('/lockin')) for (const w of wins) {
+      if (!('focus' in w)) continue;
+      try { if ('navigate' in w) { await w.navigate(url); return w.focus(); } } catch (_) {}
+      w.postMessage({ type: 'lockin', url }); return w.focus();
+    }
     if (!isFile) for (const w of wins) { if ('focus' in w) { w.postMessage({ type: 'refresh', url }); return w.focus(); } }
     return self.clients.openWindow(url);
   })());
