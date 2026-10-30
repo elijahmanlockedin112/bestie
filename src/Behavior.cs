@@ -104,18 +104,20 @@ namespace Bestie
                 if (lastSample != DateTime.MinValue && (now - lastSample).TotalSeconds > 60)
                 {
                     if (!away) { Close(lastSample); away = true; awayFrom = lastSample; }
+                    SwitchCount.Saw(now, null, true);
                 }
                 lastSample = now;
                 if (curApp != null && now.Date != curFrom.Date) { string a = curApp, t = curTitle, s = curSite, c = curCat; Close(now.Date); Open(now.Date, a, t, s, c); }
 
                 double idle = IdleSource();
                 IntPtr fg = Native.GetForegroundWindow();
-                string app, title, site, cat;
-                Describe(fg, out app, out title, out site, out cat);
+                string app, title, site, cat, tab;
+                Describe(fg, out app, out title, out site, out cat, out tab);
                 bool watching = cat == "video";
                 double limit = watching ? 3 * 3600 : cat == "school" ? ReadingAwayAfter : AwayAfter;
                 if (idle >= limit)
                 {
+                    SwitchCount.Saw(now, null, true);
                     if (!away)
                     {
                         // they stopped when the input did, but never before what's already logged (idle can reach back past a sleep)
@@ -131,6 +133,7 @@ namespace Bestie
                     away = false;
                 }
                 Remember(now, app, site, title);
+                SwitchCount.Saw(now, app == "bestie" ? null : fg.ToInt64().ToString(CultureInfo.InvariantCulture) + "|" + tab, fg, cat, title, false);
                 if (curApp == null || app != curApp || title != curTitle || site != curSite)
                 {
                     Close(now);
@@ -174,6 +177,19 @@ namespace Bestie
                 Seen s = seen.Count > 0 ? seen[seen.Count - 1] : null;
                 if (s == null || (DateTime.Now - s.Until).TotalSeconds > 10) return null;
                 return string.IsNullOrEmpty(s.Site) ? s.App : s.Site;
+            }
+        }
+
+        /// <summary>The app, the focused tab's site (null if unknown) and the title in front of them right now. False if
+        /// there's no fresh look (just started, or they're away).</summary>
+        public static bool Current(out string app, out string site, out string title)
+        {
+            lock (seenGate)
+            {
+                Seen s = seen.Count > 0 ? seen[seen.Count - 1] : null;
+                bool fresh = s != null && (DateTime.Now - s.Until).TotalSeconds <= 10;
+                app = fresh ? s.App : null; site = fresh ? s.Site : null; title = fresh ? s.Title : null;
+                return fresh;
             }
         }
 
@@ -259,7 +275,14 @@ namespace Bestie
 
         static void Describe(IntPtr fg, out string app, out string title, out string site, out string cat)
         {
-            site = null;
+            string tab;
+            Describe(fg, out app, out title, out site, out cat, out tab);
+        }
+
+        /// <summary>tab: which browser tab is in front (the extension's tab id, else its title), null outside a browser.</summary>
+        static void Describe(IntPtr fg, out string app, out string title, out string site, out string cat, out string tab)
+        {
+            site = null; tab = null;
             uint pid = 0;
             if (fg != IntPtr.Zero) Native.GetWindowThreadProcessId(fg, out pid);
             app = (pid != 0 ? Native.ProcessNameOf(pid) : null) ?? "desktop";
@@ -275,11 +298,12 @@ namespace Bestie
             title = CleanTitle(raw);
             if (Browsers.Contains(app))
             {
+                tab = "title:" + title;
                 try
                 {
                     BrowserBridge b = BrowserBridge.Instance;
-                    TabInfo tab = b != null ? b.ActiveTab() : null;
-                    if (tab != null && tab.FocusedWindow) site = Host(tab.Url);
+                    TabInfo active = b != null ? b.ActiveTab() : null;
+                    if (active != null && active.FocusedWindow) { site = Host(active.Url); tab = "id:" + active.Id; }
                 }
                 catch { }
             }

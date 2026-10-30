@@ -335,6 +335,7 @@ namespace Bestie
         {
             string url = NormalizeUrl(Json.Str(a, "url"));
             if (url == null) return new AssistantToolResult("can't open that. i only open http/https web links.");
+            if (!DryRun && YouTubeWatch.IsYouTube(null, HostOf(url), null)) YouTubeWatch.Asked();   // they asked for it: no scolding
             BrowserBridge b = LiveBridge();
             bool done = false;
             if (b != null)

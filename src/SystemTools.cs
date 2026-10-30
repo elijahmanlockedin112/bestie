@@ -18,6 +18,11 @@ namespace Bestie
                 + "in your bubble, and \"x finished\" notices wait and come as one summary afterwards. use it when they want you to stop going off, snooze, or "
                 + "be quiet for a while; minutes 0 turns it off.", R("minutes"),
                 P("minutes", "number", "how long, e.g. 60 for an hour. 0 = talk again now")));
+            t.Add(Tool("youtube_callouts", "you get mad at them (out loud, once, 10-minute cooldown) when youtube comes to the front, because they asked you to keep "
+                + "them off it. use this when they're taking a youtube break on purpose (\"i'm taking a 20 minute youtube break\", \"i earned a break\"), end the "
+                + "break early, or want the callouts off or back on. nothing is ever blocked or closed.", R("action"),
+                PE("action", "break = a timed youtube break, end_break, off, on, or status", new[] { "break", "end_break", "off", "on", "status" }),
+                P("minutes", "number", "for break: how long, e.g. 20. default 30")));
             t.Add(Tool("dont_ask", "change what you do without asking them first. when they say you don't need to ask before something (\"don't ask before using chrome\", "
                 + "\"you can always run that\"), add it; when they want you to ask again, undo it; 'list' says what's on it. music/video apps, the time, weather and the "
                 + "calculator never ask already. buying, sending, deleting and signing in always ask, whatever is on the list.", R("kind"),
@@ -48,6 +53,26 @@ namespace Bestie
                     return new AssistantToolResult("quiet until " + When.Clock(Quiet.Until) + ": you won't talk out loud on your own; reminders still show silently in your "
                         + "bubble, and finished sessions wait for a summary at the end. they can also right-click you → \"you can talk again\". tell them in a few words.",
                         "quiet until " + When.Clock(Quiet.Until), null);
+                }
+                case "youtube_callouts":
+                {
+                    string action = Json.Str(a, "action") ?? "status";
+                    int minutes = (int)Json.Num(a, "minutes", 30);
+                    if (DryRun) { lock (DryRunLog) DryRunLog.Add("youtube " + action + (action == "break" ? " " + minutes : "")); return new AssistantToolResult("ok."); }
+                    string result;
+                    switch (action)
+                    {
+                        case "break":
+                            if (!YouTubeWatch.Enabled) YouTubeWatch.SetEnabled(true);
+                            YouTubeWatch.Break(minutes > 0 ? minutes : 30);
+                            result = "youtube break until " + When.Clock(YouTubeWatch.BreakUntil) + ": no callouts till then; if they're still on youtube after, you'll say the break's over.";
+                            break;
+                        case "end_break": YouTubeWatch.Break(0); result = "the youtube break is over; callouts are back on."; break;
+                        case "off": YouTubeWatch.SetEnabled(false); result = "youtube callouts are off. they can turn them back on by asking, or right-click you → \"get mad when i go on youtube\"."; break;
+                        case "on": YouTubeWatch.SetEnabled(true); result = "youtube callouts are on: you'll get on them the moment youtube comes to the front."; break;
+                        default: result = YouTubeWatch.StatusLine() ?? "youtube callouts are on and watching."; break;
+                    }
+                    return new AssistantToolResult(result + " tell them in a few words, in character.", action == "status" ? null : result, null);
                 }
                 case "sound_output":
                     return SoundOutputTool(Json.Str(a, "action") ?? "list", Json.Str(a, "device") ?? "");

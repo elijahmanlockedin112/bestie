@@ -23,9 +23,10 @@ namespace Bestie
                 P("items", "string", "the thing to add; several can be separated by newlines")));
             t.Add(Tool("todo_done", "check a to-do off as done.", R("item"), P("item", "string", "its number from todo_list, or its text")));
             t.Add(Tool("todo_remove", "delete a to-do without finishing it.", R("item"), P("item", "string", "its number or text")));
-            t.Add(Tool("show_widget", "put a widget on their desktop: to-do list, calendar, now playing, or their sticky notes.", R("kind"),
-                PE("kind", "which widget", new[] { "todo", "calendar", "music", "note", "timeblocks" })));
-            t.Add(Tool("hide_widget", "take a widget off their desktop.", R("kind"), PE("kind", "which widget", new[] { "todo", "calendar", "music", "note", "timeblocks" })));
+            t.Add(Tool("show_widget", "put a widget on their desktop: to-do list, calendar, now playing, their sticky notes, time blocks, "
+                + "or switches (a live count of their tab/window switches today and in the last hour).", R("kind"),
+                PE("kind", "which widget", new[] { "todo", "calendar", "music", "note", "timeblocks", "switches" })));
+            t.Add(Tool("hide_widget", "take a widget off their desktop.", R("kind"), PE("kind", "which widget", new[] { "todo", "calendar", "music", "note", "timeblocks", "switches" })));
             t.Add(Tool("time_blocks", "their focus timer: blocks of focus (default 90 min) and breaks (default 15 min), on repeat. during a break a bright screen "
                 + "covers everything until the break ends or they type I NEED TO ACCESS MY COMPUTER.", R("action"),
                 PE("action", "what to do", new[] { "start", "pause", "resume", "stop", "skip", "status" }),
@@ -83,7 +84,7 @@ namespace Bestie
                 case "hide_widget":
                     {
                         string kind = (Json.Str(a, "kind") ?? "").ToLowerInvariant();
-                        if (!WidgetManager.Kinds.Contains(kind)) return new AssistantToolResult("there's no " + kind + " widget. try todo, calendar, music, note or timeblocks.");
+                        if (!WidgetManager.Kinds.Contains(kind)) return new AssistantToolResult("there's no " + kind + " widget. try todo, calendar, music, note, timeblocks or switches.");
                         bool show = name == "show_widget";
                         WidgetManager.Request(kind, show, null);
                         return new AssistantToolResult((show ? "put the " : "put away the ") + WidgetManager.Label(kind) + " widget.");

@@ -23,7 +23,7 @@ namespace Bestie
     /// resize and pin on top (the creature can walk on them). Their layout lives in .state\widgets.json.</summary>
     public static class WidgetManager
     {
-        public static readonly string[] Kinds = { "todo", "calendar", "music", "note", "timeblocks" };
+        public static readonly string[] Kinds = { "todo", "calendar", "music", "note", "timeblocks", "switches" };
         static Control ui;
         static Creature creature;
         static Func<AssistantModule> assistant;
@@ -40,7 +40,7 @@ namespace Bestie
 
         public static string Label(string kind)
         {
-            switch (kind) { case "todo": return "to-do"; case "calendar": return "calendar"; case "music": return "now playing"; case "timeblocks": return "time blocks"; default: return "sticky note"; }
+            switch (kind) { case "todo": return "to-do"; case "calendar": return "calendar"; case "music": return "now playing"; case "timeblocks": return "time blocks"; case "switches": return "tab switches"; default: return "sticky note"; }
         }
 
         public static void Init(Control uiControl, Creature c, Func<AssistantModule> getAssistant)
@@ -157,6 +157,7 @@ namespace Bestie
                 case "music": w = new MusicWidget(st); break;
                 case "note": w = new NoteWidget(st); break;
                 case "timeblocks": w = new TimeBlockWidget(st); break;
+                case "switches": w = new SwitchesWidget(st); break;
                 default: return;
             }
             open[st.Id] = w;
@@ -182,7 +183,7 @@ namespace Bestie
                 if (m != null) area = Rectangle.FromLTRB(m.Work.Left, m.Work.Top, m.Work.Right, m.Work.Bottom);
             }
             int w = (int)(280 * k), h;
-            switch (kind) { case "todo": h = 330; break; case "calendar": h = 360; break; case "music": h = 150; break; case "timeblocks": h = 190; break; default: w = (int)(230 * k); h = 220; break; }
+            switch (kind) { case "todo": h = 330; break; case "calendar": h = 360; break; case "music": h = 150; break; case "timeblocks": h = 190; break; case "switches": w = (int)(230 * k); h = 170; break; default: w = (int)(230 * k); h = 220; break; }
             h = (int)(h * k);
             // stack down a column from the top right (leaving room for the ai-sessions tab); start a new column when full
             int gap = (int)(14 * k), x = area.Right - w - (int)(80 * k), y = area.Top + (int)(40 * k);

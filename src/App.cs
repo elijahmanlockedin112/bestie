@@ -25,7 +25,7 @@ namespace Bestie
         Point downAt;
         NotifyIcon tray;
         ContextMenuStrip menu;
-        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem, shopItem, radioItem;
+        ToolStripMenuItem napItem, startupItem, calendarItem, forgetCalendarsItem, brainDumpItem, quietItem, shopItem, radioItem, youtubeItem, youtubeBreakItem, switchWarnItem;
         PhoneServer phone;
         double calendarCheck = 20, blockCheck;
         int calendarChecking;
@@ -159,6 +159,8 @@ namespace Bestie
             AnnounceFinished();
             QuietTick();
             HomeTick();
+            YouTubeTick();
+            SwitchTick();
             MaybeBeNosy();
             CheckHoldToTalk();
             CheckCalendarHeadsUps(dt);
@@ -391,6 +393,19 @@ namespace Bestie
             });
             Add("open " + brain.Name + "'s folder", null, () => Process.Start("explorer.exe", "\"" + Home.Root + "\""));
             quietItem = Add("be quiet for an hour", null, ToggleQuiet);
+            youtubeItem = Add("get mad when i go on youtube", null, () =>
+            {
+                bool on = !YouTubeWatch.Enabled;
+                YouTubeWatch.SetEnabled(on);
+                c.Say(on ? "deal. youtube comes up, i come for you." : "fine. i'll stop yelling about youtube.", false, 0);
+            });
+            youtubeBreakItem = Add("youtube break (30 min)", null, ToggleYouTubeBreak);
+            switchWarnItem = Add("warn me when i'm tab-hopping", null, () =>
+            {
+                bool on = !SwitchCount.WarnEnabled;
+                SwitchCount.SetWarn(on);
+                c.Say(on ? "ok. " + SwitchCount.WarnCount + " switches in " + SwitchCount.WarnWindowMinutes + " minutes and i'll say something." : "fine. hop all you want.", false, 0);
+            });
             Add("come here", null, () => c.Summon(Control.MousePosition.X));
             napItem = Add("take a nap", null, () => { if (c.Pose == Pose.Lie) c.AbortActivity(); else c.DoTrick("nap"); });
             menu.Items.Add(new ToolStripSeparator());
@@ -409,6 +424,10 @@ namespace Bestie
                 napItem.Text = c.Pose == Pose.Lie ? "wake up" : "take a nap";
                 quietItem.Text = Quiet.On ? "you can talk again (quiet until " + When.Clock(Quiet.Until) + ")" : "be quiet for an hour";
                 quietItem.Checked = Quiet.On;
+                youtubeItem.Checked = YouTubeWatch.Enabled;
+                youtubeBreakItem.Text = YouTubeWatch.OnBreak ? "end youtube break (until " + When.Clock(YouTubeWatch.BreakUntil) + ")" : "youtube break (30 min)";
+                youtubeBreakItem.Checked = YouTubeWatch.OnBreak;
+                switchWarnItem.Checked = SwitchCount.WarnEnabled;
                 brainDumpItem.Text = assistant != null && assistant.IsBrainDumping ? "that's everything (organize it)" : "brain dump…";
                 startupItem.Checked = StartsWithWindows();
                 shopItem.Text = "shop… (" + brain.Crumbs + " " + Shop.Currency + ")";
@@ -771,7 +790,7 @@ namespace Bestie
         ToolStripMenuItem WidgetsMenu()
         {
             var root = new ToolStripMenuItem("widgets");
-            foreach (var kind in new[] { "todo", "calendar", "music", "timeblocks" })
+            foreach (var kind in new[] { "todo", "calendar", "music", "timeblocks", "switches" })
             {
                 string k2 = kind;
                 var item = new ToolStripMenuItem(WidgetManager.Label(kind)) { CheckOnClick = false };
@@ -866,6 +885,7 @@ namespace Bestie
             });
             Office.Start();
             Quiet.Load();
+            YouTubeWatch.Load();
             Behavior.Start();
             sessHotkey = new SessionsHotkey(ToggleSessions);
         }
@@ -1132,6 +1152,49 @@ namespace Bestie
             nextQuietCheck = Clock.T + 5;
             string summary = Quiet.TakeSummary(false);   // null while still quiet, or if nothing waited
             if (summary != null) Announce(summary);
+        }
+
+        double nextYouTubeCheck;
+
+        /// <summary>YouTube came to the front: get mad (once, then a 10-minute cooldown). See YouTubeWatch.</summary>
+        void YouTubeTick()
+        {
+            if (Clock.T < nextYouTubeCheck) return;
+            nextYouTubeCheck = Clock.T + 1;
+            string app, site, title;
+            bool known = Behavior.Current(out app, out site, out title);
+            string line = YouTubeWatch.Tick(known, app, site, title);
+            if (line == null) return;
+            if (assistant != null) assistant.Announce(line, false);
+            else c.Say(line, false, 0);
+            c.Squash = -0.3;
+        }
+
+        double nextSwitchCheck;
+
+        /// <summary>Too many tab/window switches in a few minutes: say so (once, then a cooldown). See SwitchCount.</summary>
+        void SwitchTick()
+        {
+            if (Clock.T < nextSwitchCheck) return;
+            nextSwitchCheck = Clock.T + 1;
+            string line = SwitchCount.WarnTick();
+            if (line == null) return;
+            if (assistant != null) assistant.Announce(line, false);
+            else c.Say(line, false, 0);
+            c.Squash = -0.3;
+        }
+
+        void ToggleYouTubeBreak()
+        {
+            if (YouTubeWatch.OnBreak)
+            {
+                YouTubeWatch.Break(0);
+                c.Say("break's over. i'm watching again.", false, 0);
+                return;
+            }
+            if (!YouTubeWatch.Enabled) YouTubeWatch.SetEnabled(true);
+            YouTubeWatch.Break(30);
+            c.Say("ok. youtube break until " + When.Clock(YouTubeWatch.BreakUntil) + ". enjoy it. still on it after that and you'll hear from me.", false, 0);
         }
 
         void ToggleQuiet()
