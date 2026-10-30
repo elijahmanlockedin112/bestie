@@ -23,8 +23,8 @@ namespace Bestie
         // (OpenAIClient.FallbackModel). OpenAI still does the voice and the ears when those are set to openai.
         public const string DefaultModel = "claude-haiku-5-5";
         public const string DefaultFallbackModel = "claude-sonnet-5-5";
-        // the on-screen visual explainers (Visuals.cs): drawn and narrated by this model
-        public const string DefaultVisualModel = "claude-sonnet-5-5";
+        // the on-screen visual explainers (Visuals.cs): drawn and narrated by this model (haiku: the owner's pick, for cost)
+        public const string DefaultVisualModel = "claude-haiku-5-5";
         public const string DefaultTtsModel = "gpt-4o-mini-tts";
         public const string DefaultOpenAiVoice = "ballad";
         public const string DefaultReasoningEffort = "none";
@@ -168,7 +168,8 @@ namespace Bestie
                 s.MaxHistoryMessages = Clamp((int)Json.Num(d, "maxHistoryMessages", 24), 4, 200);
                 s.MaxReplyTokens = Clamp((int)Json.Num(d, "maxReplyTokens", 1200), 64, 32000);
                 s.ImageDetail = NonEmpty(Json.Str(d, "imageDetail"), "low");
-                s.VisualModel = NonEmpty(Json.Str(d, "visualModel"), DefaultVisualModel);
+                // (a model saved before the visuals moved to haiku on oct 30 is the old default, not a choice)
+                s.VisualModel = Json.Bool(d, "visualsOnHaiku", false) ? NonEmpty(Json.Str(d, "visualModel"), DefaultVisualModel) : DefaultVisualModel;
                 s.ShowVisuals = Json.Bool(d, "showVisuals", true);
                 s.movedToClaude = Json.Bool(d, "movedToClaude", false);
                 if (!s.movedToClaude) MoveToClaude(s);
@@ -240,6 +241,7 @@ namespace Bestie
             d["maxReplyTokens"] = MaxReplyTokens;
             d["imageDetail"] = ImageDetail ?? "low";
             d["visualModel"] = VisualModel ?? DefaultVisualModel;
+            d["visualsOnHaiku"] = true;
             d["showVisuals"] = ShowVisuals;
             d["movedToClaude"] = true;   // saved by a version that already defaults to claude: a model picked after this stays picked
             string path = FilePath;

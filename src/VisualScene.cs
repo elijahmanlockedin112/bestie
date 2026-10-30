@@ -17,9 +17,9 @@ namespace Bestie
 {
     internal sealed class VisualElement
     {
-        public string Kind, Id, Color, Label, Text, Fill, Align, LabelAt;
-        public bool Curve, Dash;
-        public float X, Y, W, H, R, Rx, Ry, Size, Width, Bend;
+        public string Kind, Id, Color, Label, Text, Fill, Align, LabelAt, Parent;
+        public bool Curve, Dash, Shade, Shadow, Horizontal;
+        public float X, Y, W, H, R, Rx, Ry, Size, Width, Bend, Rot, Depth;
         public List<PointF> Pts = new List<PointF>();
         public object From, To;                 // arrows: an id (string), a board point (PointF) or a screen point (ScreenPoint)
         public string[][] Values;
@@ -34,6 +34,8 @@ namespace Bestie
         public double SpinStart = -1, SpinSpeed = 1;
         public double FlowStart = -1, FlowSpeed = 1;
         public double PulseStart = -1, HideStart = -1;
+        public float TurnFrom, TurnTo, PivotX = float.NaN, PivotY = float.NaN;   // "turn": to an angle (degrees) about a hinge
+        public double TurnStart = -1, TurnDur = 1.2;
         public bool OnScreen { get { return Kind == "mark"; } }
     }
 
@@ -83,8 +85,16 @@ namespace Bestie
             if (line.Length < 2 || line[0] != '{') return false;
             Dictionary<string, object> d = null;
             try { d = Json.Obj(line); } catch { }
+            if (d == null)
+            {
+                // the slips seen in real runs: a stray ," before the closing brace, a trailing comma
+                string fixedLine = System.Text.RegularExpressions.Regex.Replace(line, ",\\s*\"?\\s*}\\s*$", "}");
+                fixedLine = System.Text.RegularExpressions.Regex.Replace(fixedLine, ",\\s*([}\\]])", "$1");
+                try { d = Json.Obj(fixedLine); } catch { }
+            }
             if (d == null) return false;
             string t = (Json.Str(d, "t") ?? Json.Str(d, "type") ?? "").ToLowerInvariant();
+            if (t == "plan") return true;   // claude's own short plan, never drawn
             if (t == "frame")
             {
                 Title = Json.Str(d, "title") ?? Title;
@@ -101,7 +111,8 @@ namespace Bestie
             }
             if (Steps.Count == 0) Steps.Add(new VisualStep());
             VisualStep step = Steps[Steps.Count - 1];
-            if (t == "move" || t == "spin" || t == "flow" || t == "pulse" || t == "hide")
+            if (t == "rotate" || t == "tilt" || t == "swing") t = "turn";
+            if (t == "move" || t == "spin" || t == "flow" || t == "pulse" || t == "hide" || t == "turn")
             {
                 var m = new VisualMotion { Kind = t, Id = Json.Str(d, "id") ?? "", D = d, Step = Steps.Count - 1 };
                 step.Items.Add(m);
@@ -124,7 +135,12 @@ namespace Bestie
             if (t == "label") t = "text";
             if (t == "table" || t == "matrix") t = "grid";
             if (t == "highlight" || t == "ring") t = "mark";
-            if (t != "box" && t != "circle" && t != "ellipse" && t != "poly" && t != "line" && t != "arrow" && t != "text" && t != "grid" && t != "mark") return null;
+            if (t == "cube" || t == "block" || t == "cuboid" || t == "box3") t = "box3d";
+            if (t == "can" || t == "cyl") t = "cylinder";
+            bool sphere = t == "sphere" || t == "ball";
+            if (sphere) t = "circle";
+            if (t != "box" && t != "circle" && t != "ellipse" && t != "poly" && t != "line" && t != "arrow" && t != "text" && t != "grid" && t != "mark"
+                && t != "box3d" && t != "cylinder") return null;
             var e = new VisualElement();
             e.Kind = t;
             e.Id = Json.Str(d, "id") ?? ("_" + (++autoId));
@@ -141,6 +157,14 @@ namespace Bestie
             e.Size = F(d, "size", t == "text" ? 26 : 20);
             e.Width = F(d, "width", t == "arrow" ? 4.5f : t == "line" ? 4f : 3.2f);
             e.Bend = F(d, "bend", 0);
+            if (sphere && !d.ContainsKey("fill")) e.Fill = "solid";
+            if (t == "box3d" || t == "cylinder") { if (!d.ContainsKey("fill")) e.Fill = "solid"; if (!d.ContainsKey("width")) e.Width = 2.2f; }
+            e.Parent = Json.Str(d, "in") ?? Json.Str(d, "parent");
+            e.Rot = F(d, "rot", 0);
+            e.Depth = F(d, "d", F(d, "depth", -1));
+            e.Horizontal = (Json.Str(d, "axis") ?? "").StartsWith("h", StringComparison.OrdinalIgnoreCase);
+            e.Shade = Json.Bool(d, "shade", sphere || e.Fill == "solid");
+            e.Shadow = Json.Bool(d, "shadow", e.Fill == "solid" && e.Parent == null && t != "line" && t != "arrow");
             e.Curve = Json.Bool(d, "curve", false) || Json.Bool(d, "smooth", false);
             e.Dash = Json.Bool(d, "dash", false) || Json.Bool(d, "dashed", false);
             foreach (object o in Json.Arr(d, "pts").Length > 0 ? Json.Arr(d, "pts") : Json.Arr(d, "points"))
@@ -249,14 +273,70 @@ namespace Bestie
                 double at = s.LastItemAt < 0 ? now + 0.15 : Math.Max(now, s.LastItemAt + Stagger(s));
                 s.LastItemAt = at;
                 var e = item as VisualElement;
-                if (e != null) { e.Appear = at; e.AppearDur = DrawTime(e); continue; }
+                if (e != null) { Settle(e); e.Appear = at; e.AppearDur = DrawTime(e); continue; }
                 var m = (VisualMotion)item;
                 m.At = at;
                 StartMotion(m, at);
             }
         }
 
-        static double Stagger(VisualStep s) { return s.Items.Count > 6 ? 0.3 : 0.45; }
+        // a step that builds a detailed object (many parts) draws them quickly, so it still fits what's being said
+        /// <summary>Things that can be slid out of each other's way (shapes standing on their own, words, tables).</summary>
+        static bool Movable(VisualElement e)
+        {
+            return e.Parent == null && !e.OnScreen && e.Kind != "arrow" && e.Kind != "line";
+        }
+
+        static float Overlap(RectangleF a, RectangleF b)
+        {
+            RectangleF i = RectangleF.Intersect(a, b);
+            return i.IsEmpty ? 0 : i.Width * i.Height;
+        }
+
+        /// <summary>A new shape that lands on top of one already showing (not a part sitting on its whole, which is on
+        /// purpose) slides to the nearest free spot on the board before it's drawn, its parts with it. Claude's layouts
+        /// overlap now and then (Haiku more often); this keeps the board readable without asking it again.</summary>
+        void Settle(VisualElement e)
+        {
+            if (!Movable(e)) return;
+            RectangleF mine = Bounds(e);
+            if (mine.Width <= 0 || mine.Height <= 0) return;
+            var others = new List<RectangleF>();
+            foreach (VisualElement o in Elements)
+            {
+                if (o == e || o.Appear < 0 || o.HideStart >= 0 || !Movable(o)) continue;
+                RectangleF ob = Bounds(o);
+                ob.Offset(o.OffX, o.OffY);
+                // a part on its whole, or a whole drawn round its parts: meant to sit together
+                PointF mc = new PointF(mine.X + mine.Width / 2, mine.Y + mine.Height / 2), oc = new PointF(ob.X + ob.Width / 2, ob.Y + ob.Height / 2);
+                if (ob.Contains(mc) && ob.Width * ob.Height > mine.Width * mine.Height * 1.6f) continue;
+                if (mine.Contains(oc) && mine.Width * mine.Height > ob.Width * ob.Height * 1.6f) continue;
+                others.Add(RectangleF.Inflate(ob, 8, 8));
+            }
+            Func<float, float, bool> clear = (dx, dy) =>
+            {
+                RectangleF m = mine; m.Offset(dx, dy);
+                foreach (RectangleF r in others) if (Overlap(m, r) > Math.Min(m.Width * m.Height, r.Width * r.Height) * 0.12f) return false;
+                return true;
+            };
+            if (clear(0, 0)) return;   // only a real overlap moves anything
+            // a new spot must stay on the board (where it is now may already poke out; that's Claude's call)
+            Func<float, float, bool> onBoard = (dx, dy) =>
+            {
+                RectangleF m = mine; m.Offset(dx, dy);
+                return m.Left >= Math.Min(25, mine.Left) && m.Right <= Math.Max(BoardW - 25, mine.Right) && m.Top >= Math.Min(75, mine.Top) && m.Bottom <= Math.Max(590, mine.Bottom);
+            };
+            // nearest free spot: down first (reading order), then sideways, then up, a little further each ring
+            for (int ring = 1; ring <= 16; ring++)
+            {
+                float s = ring * 22;
+                float[][] tries = { new[] { 0f, s }, new[] { s, 0f }, new[] { -s, 0f }, new[] { 0f, -s }, new[] { s, s }, new[] { -s, s }, new[] { s, -s }, new[] { -s, -s } };
+                foreach (float[] t in tries)
+                    if (onBoard(t[0], t[1]) && clear(t[0], t[1])) { e.OffX += t[0]; e.OffY += t[1]; return; }
+            }
+        }
+
+        static double Stagger(VisualStep s) { return s.Items.Count > 10 ? 0.16 : s.Items.Count > 5 ? 0.26 : 0.42; }
 
         double DrawTime(VisualElement e)
         {
@@ -296,6 +376,17 @@ namespace Bestie
                 e.MoveStart = at;
                 e.MoveDur = Math.Max(0.3, Math.Min(6, Json.Num(m.D, "dur", 1.4)));
             }
+            else if (m.Kind == "turn")
+            {
+                float now0 = TurnNow(e, at);
+                e.TurnFrom = now0;
+                e.TurnTo = m.D.ContainsKey("to") ? F(m.D, "to", 0) : now0 + F(m.D, "by", 30);
+                PointF pv;
+                object pivot;
+                if (m.D.TryGetValue("pivot", out pivot) && Pt(pivot, out pv)) { e.PivotX = pv.X; e.PivotY = pv.Y; }
+                e.TurnStart = at;
+                e.TurnDur = Math.Max(0.3, Math.Min(6, Json.Num(m.D, "dur", 1.2)));
+            }
             else if (m.Kind == "spin") { e.SpinStart = at; e.SpinSpeed = Math.Max(-4, Math.Min(4, Json.Num(m.D, "speed", 1))); }
             else if (m.Kind == "flow") { e.FlowStart = at; e.FlowSpeed = Math.Max(0.2, Math.Min(4, Json.Num(m.D, "speed", 1))); }
             else if (m.Kind == "pulse") e.PulseStart = at;
@@ -315,6 +406,7 @@ namespace Bestie
                 var m = (VisualMotion)item;
                 VisualElement target = Find(m.Id);
                 if (m.Kind == "move" && target != null && now < target.MoveStart + target.MoveDur) return false;
+                if (m.Kind == "turn" && target != null && now < target.TurnStart + target.TurnDur) return false;
             }
             return true;
         }
@@ -329,6 +421,7 @@ namespace Bestie
                 if (e.SpinStart >= 0 || e.FlowStart >= 0) return true;
                 if (e.Appear >= 0 && now < e.Appear + e.AppearDur + 0.1) return true;
                 if (e.MoveStart >= 0 && now < e.MoveStart + e.MoveDur + 0.1) return true;
+                if (e.TurnStart >= 0 && now < e.TurnStart + e.TurnDur + 0.1) return true;
                 if (e.PulseStart >= 0 && now < e.PulseStart + 1.0) return true;
                 if (e.HideStart >= 0 && now < e.HideStart + 0.5) return true;
                 if (e.Kind == "mark" && e.Appear >= 0 && now < e.Appear + 4) return true;
@@ -362,10 +455,34 @@ namespace Bestie
             }
             if (!marks.IsEmpty)
             {
-                float leftRoom = marks.Left - wk.X - margin, rightRoom = wk.Right - marks.Right - margin;
-                side = leftRoom >= rightRoom ? "left" : "right";
-                float room = Math.Max(leftRoom, rightRoom);
-                w = Math.Min(want, Math.Max(Math.Min(480, wk.Width - 40), room));
+                // the biggest board that fits beside, above or below what the marks point at
+                float aspect = BoardH / BoardW;
+                var room = new Dictionary<string, RectangleF>
+                {
+                    { "left", RectangleF.FromLTRB(wk.X + margin, wk.Y + margin, marks.Left - margin, wk.Bottom - margin) },
+                    { "right", RectangleF.FromLTRB(marks.Right + margin, wk.Y + margin, wk.Right - margin, wk.Bottom - margin) },
+                    { "above", RectangleF.FromLTRB(wk.X + margin, wk.Y + margin, wk.Right - margin, marks.Top - margin) },
+                    { "below", RectangleF.FromLTRB(wk.X + margin, marks.Bottom + margin, wk.Right - margin, wk.Bottom - margin) },
+                };
+                string best = null; float bestW = 0;
+                foreach (KeyValuePair<string, RectangleF> r in room)
+                {
+                    if (r.Value.Width <= 0 || r.Value.Height <= 0) continue;
+                    float fit = Math.Min(want, Math.Min(r.Value.Width, r.Value.Height / aspect));
+                    if (fit > bestW) { bestW = fit; best = r.Key; }
+                }
+                if (best != null && bestW >= Math.Min(600, want))
+                {
+                    RectangleF r = room[best];
+                    float bh = bestW * aspect;
+                    float bx = best == "left" ? r.Right - bestW : best == "right" ? r.X : marks.X + marks.Width / 2 - bestW / 2;
+                    float by = best == "above" ? r.Bottom - bh : best == "below" ? r.Y : r.Y + (r.Height - bh) * 0.42f;
+                    bx = Math.Max(wk.X + margin, Math.Min(bx, wk.Right - margin - bestW));
+                    by = Math.Max(wk.Y + margin, Math.Min(by, wk.Bottom - margin - bh));
+                    return new RectangleF(bx, by, bestW, bh);
+                }
+                // nowhere roomy: full size on the side it covers least (the marks still draw on top)
+                side = marks.Left - wk.X >= wk.Right - marks.Right ? "left" : "right";
             }
             float h = w * BoardH / BoardW;
             if (h > wk.Height - 60) { h = wk.Height - 60; w = h * BoardW / BoardH; }
@@ -390,11 +507,48 @@ namespace Bestie
             return new PointF((float)(e.MoveFromX + (e.MoveToX - e.MoveFromX) * k), (float)(e.MoveFromY + (e.MoveToY - e.MoveFromY) * k));
         }
 
+        /// <summary>A point of e (board units) where it is now: its own move, its own spin about its centre, then the
+        /// same for the whole it sits in ("in"), so moving or spinning a jet carries its parts along.</summary>
+        PointF PlaceAt(VisualElement e, PointF p, double now, int depth)
+        {
+            PointF o = Offset(e, now);
+            float turn = TurnNow(e, now);
+            if (turn != 0)
+            {
+                PointF pv = float.IsNaN(e.PivotX) ? BaseCenter(e) : new PointF(e.PivotX, e.PivotY);
+                p = Rotate(p, pv, turn * Math.PI / 180);
+            }
+            p = new PointF(p.X + o.X, p.Y + o.Y);
+            if (e.SpinStart >= 0 && now > e.SpinStart)
+            {
+                PointF bc = BaseCenter(e);
+                double ang = (now - e.SpinStart) * e.SpinSpeed * Math.PI * Clamp01((now - e.SpinStart) / 0.8);   // speed 1 = half a turn a second
+                p = Rotate(p, new PointF(bc.X + o.X, bc.Y + o.Y), ang);
+            }
+            VisualElement parent = depth < 6 && e.Parent != null && e.Parent != e.Id ? Find(e.Parent) : null;
+            return parent != null ? PlaceAt(parent, p, now, depth + 1) : p;
+        }
+
+        static float TurnNow(VisualElement e, double now)
+        {
+            if (e.TurnStart < 0) return 0;
+            if (now <= e.TurnStart) return e.TurnFrom;
+            return (float)(e.TurnFrom + (e.TurnTo - e.TurnFrom) * Ease((now - e.TurnStart) / e.TurnDur));
+        }
+
+        List<PointF> PlaceAll(VisualElement e, List<PointF> pts, double now)
+        {
+            var outp = new List<PointF>(pts.Count);
+            foreach (PointF p in pts) outp.Add(PlaceAt(e, p, now, 0));
+            return outp;
+        }
+
         static PointF BaseCenter(VisualElement e)
         {
             switch (e.Kind)
             {
-                case "box": case "grid": case "mark":
+                case "box3d": return new PointF(e.X + e.W / 2, e.Y + e.H / 2);
+                case "box": case "grid": case "mark": case "cylinder":
                     {
                         float w = e.Kind == "grid" ? e.Cols * e.Cell : e.W, h = e.Kind == "grid" ? e.Rows * e.Cell : e.H;
                         return new PointF(e.X + w / 2, e.Y + h / 2);
@@ -415,7 +569,8 @@ namespace Bestie
             if (end is ScreenPoint) return ShotToBoard((ScreenPoint)end);
             VisualElement e = Find(end as string);
             if (e == null) return new PointF(BoardW / 2, BoardH / 2);
-            PointF c = e.OnScreen ? ShotToBoard(new ScreenPoint(e.X + e.W / 2, e.Y + e.H / 2)) : BaseCenter(e);
+            if (!e.OnScreen) return PlaceAt(e, BaseCenter(e), now, 0);
+            PointF c = ShotToBoard(new ScreenPoint(e.X + e.W / 2, e.Y + e.H / 2));
             PointF o = Offset(e, now);
             return new PointF(c.X + o.X, c.Y + o.Y);
         }
@@ -454,7 +609,8 @@ namespace Bestie
         {
             switch (e.Kind)
             {
-                case "box": case "mark": return new RectangleF(e.X, e.Y, e.W, e.H);
+                case "box": case "mark": case "cylinder": return new RectangleF(e.X, e.Y, e.W, e.H);
+                case "box3d": { PointF v = DepthVector(e); return RectangleF.FromLTRB(e.X, e.Y + v.Y, e.X + e.W + v.X, e.Y + e.H); }
                 case "grid": return new RectangleF(e.X, e.Y, e.Cols * e.Cell, e.Rows * e.Cell);
                 case "circle": return new RectangleF(e.X - e.R, e.Y - e.R, 2 * e.R, 2 * e.R);
                 case "ellipse": return new RectangleF(e.X - e.Rx, e.Y - e.Ry, 2 * e.Rx, 2 * e.Ry);
@@ -530,13 +686,62 @@ namespace Bestie
             return outp;
         }
 
-        /// <summary>The element's outline in board units (moved by its offset). Arrows: the shaft.</summary>
+        /// <summary>How far back (and up) a box3d's depth goes, in board units.</summary>
+        static PointF DepthVector(VisualElement e)
+        {
+            float d = e.Depth > 0 ? e.Depth : Math.Min(e.W, e.H) * 0.5f;
+            return new PointF(d * 0.66f, -d * 0.42f);
+        }
+
+        static List<PointF> Rotated(List<PointF> pts, PointF c, float degrees)
+        {
+            if (degrees == 0) return pts;
+            double a = degrees * Math.PI / 180;
+            for (int i = 0; i < pts.Count; i++) pts[i] = Rotate(pts[i], c, a);
+            return pts;
+        }
+
+        /// <summary>A cylinder's silhouette and its near cap, unrotated (axis vertical), board units.</summary>
+        static void CylinderShape(VisualElement e, out List<PointF> body, out List<PointF> cap, out PointF left, out PointF right)
+        {
+            // a horizontal one is drawn as a vertical one of swapped size, then turned a quarter
+            float cx = e.X + e.W / 2, cy = e.Y + e.H / 2;
+            float w = e.Horizontal ? e.H : e.W, h = e.Horizontal ? e.W : e.H;
+            float x = cx - w / 2, y = cy - h / 2, rx = w / 2, ry = Math.Min(w * 0.17f, h * 0.25f);
+            body = new List<PointF>();
+            float topC = y + ry, botC = y + h - ry;
+            for (int i = 0; i <= 24; i++) { double t = Math.PI - i * Math.PI / 24; body.Add(new PointF(cx + (float)(Math.Cos(t) * rx), botC + (float)(Math.Sin(t) * ry))); }
+            for (int i = 0; i <= 24; i++) { double t = -i * Math.PI / 24; body.Add(new PointF(cx + (float)(Math.Cos(t) * rx), topC + (float)(Math.Sin(t) * ry))); }
+            body.Add(body[0]);
+            cap = EllipsePts(cx, topC, rx, ry);
+            left = new PointF(x, cy); right = new PointF(x + w, cy);
+            float rot = e.Rot + (e.Horizontal ? 90 : 0);
+            var c = new PointF(cx, cy);
+            Rotated(body, c, rot); Rotated(cap, c, rot);
+            var lr = Rotated(new List<PointF> { left, right }, c, rot);
+            left = lr[0]; right = lr[1];
+        }
+
+        /// <summary>The element's outline in board units, where it is now. Arrows: the shaft.</summary>
         List<PointF> Outline(VisualElement e, double now)
         {
             List<PointF> pts;
             switch (e.Kind)
             {
                 case "box": pts = RoundRect(e.X, e.Y, e.W, e.H, e.R); break;
+                case "box3d":
+                    {
+                        PointF v = DepthVector(e);
+                        pts = new List<PointF> { new PointF(e.X, e.Y + e.H), new PointF(e.X, e.Y), new PointF(e.X + v.X, e.Y + v.Y), new PointF(e.X + e.W + v.X, e.Y + v.Y),
+                            new PointF(e.X + e.W + v.X, e.Y + e.H + v.Y), new PointF(e.X + e.W, e.Y + e.H), new PointF(e.X, e.Y + e.H) };
+                        break;
+                    }
+                case "cylinder":
+                    {
+                        List<PointF> body, cap; PointF l, r;
+                        CylinderShape(e, out body, out cap, out l, out r);
+                        return PlaceAll(e, body, now);
+                    }
                 case "circle": pts = EllipsePts(e.X, e.Y, e.R, e.R); break;
                 case "ellipse": pts = EllipsePts(e.X, e.Y, e.Rx, e.Ry); break;
                 case "grid": pts = RoundRect(e.X, e.Y, e.Cols * e.Cell, e.Rows * e.Cell, 6); break;
@@ -552,6 +757,10 @@ namespace Bestie
                     {
                         PointF a0 = Center(e.From, now), b0 = Center(e.To, now);
                         PointF a = Edge(e.From, b0, now), b = Edge(e.To, a0, now);
+                        // an end fixed at a point moves with the arrow's own move (a push arrow pushing down)
+                        PointF own = Offset(e, now);
+                        if (e.From is PointF) a = new PointF(a.X + own.X, a.Y + own.Y);
+                        if (e.To is PointF) b = new PointF(b.X + own.X, b.Y + own.Y);
                         pts = new List<PointF>();
                         float mx = (a.X + b.X) / 2, my = (a.Y + b.Y) / 2, len = Dist(a, b);
                         float nx = len > 0 ? -(b.Y - a.Y) / len : 0, ny = len > 0 ? (b.X - a.X) / len : 0;
@@ -565,9 +774,8 @@ namespace Bestie
                     }
                 default: return new List<PointF>();
             }
-            PointF o = Offset(e, now);
-            if (o.X != 0 || o.Y != 0) for (int i = 0; i < pts.Count; i++) pts[i] = new PointF(pts[i].X + o.X, pts[i].Y + o.Y);
-            return pts;
+            if (e.Rot != 0 && e.Kind != "box3d") Rotated(pts, BaseCenter(e), e.Rot);
+            return PlaceAll(e, pts, now);
         }
 
         // ------------------------------------------------------------------ colours and type
@@ -740,9 +948,14 @@ namespace Bestie
                     g.DrawString(Current < 0 ? "drawing it…" : "", FontFor(19 * k, false), br, Px(new PointF(500, 372)), sf);
             }
 
+            // shapes first, then every word on top, so no line ever runs through a label
+            labelsLater = new List<Action>();
             foreach (VisualElement e in Elements)
                 if (!e.OnScreen && !(e.Kind == "arrow" && (e.From is ScreenPoint || e.To is ScreenPoint || IsMark(e.From) || IsMark(e.To))))
                     DrawElement(g, e, now, vis, false);
+            List<Action> words = labelsLater;
+            labelsLater = null;
+            foreach (Action a in words) a();
 
             // caption: what's being said right now
             string say = Current >= 0 && Current < Steps.Count ? Steps[Current].Say : "";
@@ -820,23 +1033,18 @@ namespace Bestie
             float pulse = 0;
             if (e.PulseStart >= 0 && now >= e.PulseStart && now < e.PulseStart + 0.9) pulse = (float)Math.Sin((now - e.PulseStart) / 0.9 * Math.PI);
 
-            if (e.Kind == "text") { DrawText(g, e, now, p, fade, col); return; }
+            if (e.Kind == "text")
+            {
+                if (labelsLater != null) labelsLater.Add(delegate { DrawText(g, e, now, p, fade, col); });
+                else DrawText(g, e, now, p, fade, col);
+                return;
+            }
             if (e.Kind == "grid") { DrawGrid(g, e, now, p, fade, col); return; }
 
             List<PointF> outline = Outline(e, now);
             if (outline.Count < 2) return;
             var px = new List<PointF>(outline.Count);
             foreach (PointF b in outline) px.Add(topLayer ? PxAny(b) : Px(b));
-            // spin: around its own centre
-            if (e.SpinStart >= 0 && now > e.SpinStart && e.Kind != "arrow")
-            {
-                PointF bc = BaseCenter(e), o = Offset(e, now);
-                PointF c = Px(new PointF(bc.X + o.X, bc.Y + o.Y));
-                double ang = (now - e.SpinStart) * e.SpinSpeed * Math.PI;   // speed 1 = half a turn a second
-                double ramp = Clamp01((now - e.SpinStart) / 0.8);
-                ang *= ramp;
-                for (int i = 0; i < px.Count; i++) px[i] = Rotate(px[i], c, ang);
-            }
             if (pulse > 0)
             {
                 PointF c = Centroid(px);
@@ -845,23 +1053,41 @@ namespace Bestie
                     g.DrawLines(halo, px.ToArray());
             }
 
-            bool closed = e.Kind == "box" || e.Kind == "circle" || e.Kind == "ellipse" || e.Kind == "poly";
+            bool closed = e.Kind == "box" || e.Kind == "circle" || e.Kind == "ellipse" || e.Kind == "poly" || e.Kind == "box3d" || e.Kind == "cylinder";
             double strokeP = Ease(Math.Min(1, p / 0.7));
             double fillA = Clamp01((p - 0.4) / 0.6);
+            Color fc = e.Fill == "solid" ? col : Mix(Paper, col, 0.2);
             if (closed && e.Fill != "none" && fillA > 0)
             {
-                Color fc = e.Fill == "solid" ? col : Mix(Paper, col, 0.2);
+                // a soft shadow under free-standing solid things: they sit on the paper instead of being printed on it
+                if (e.Shadow)
+                    using (var sp = new GraphicsPath())
+                    {
+                        var sh = new PointF[px.Count];
+                        for (int i = 0; i < px.Count; i++) sh[i] = new PointF(px[i].X + 3 * k, px[i].Y + 7 * k);
+                        sp.AddPolygon(sh);
+                        using (var br = new SolidBrush(A(Color.Black, 0.09 * fillA * fade))) g.FillPath(br, sp);
+                    }
                 using (var path = new GraphicsPath())
                 {
                     path.AddPolygon(px.ToArray());
-                    using (var br = new SolidBrush(A(fc, fillA * fade))) g.FillPath(br, path);
+                    if (e.Kind == "box3d") DrawBoxFaces(g, e, now, fc, fillA * fade);
+                    else if (e.Kind == "cylinder") DrawCylinderFill(g, e, now, fc, fillA * fade, path);
+                    else if (e.Shade) FillShaded(g, e, path, px, fc, fillA * fade);
+                    else using (var br = new SolidBrush(A(fc, fillA * fade))) g.FillPath(br, path);
                 }
             }
-            Color stroke = e.Fill == "solid" && closed ? Mix(col, Ink, 0.25) : col;
+            Color stroke = e.Fill == "solid" && closed ? Mix(col, Ink, 0.3) : col;
             using (var pen = new Pen(A(stroke, fade), e.Width * k) { LineJoin = LineJoin.Round, StartCap = LineCap.Round, EndCap = LineCap.Round })
             {
                 if (e.Dash) pen.DashPattern = new float[] { 2.2f, 1.8f };
                 DrawPartial(g, pen, px, strokeP);
+                if (fillA > 0 && (e.Kind == "box3d" || e.Kind == "cylinder"))
+                {
+                    pen.Color = A(stroke, fade * fillA);
+                    pen.Width = Math.Max(1, e.Width * 0.7f * k);
+                    foreach (PointF[] edge in InnerEdges(e, now)) g.DrawLines(pen, edge);
+                }
             }
             if (e.Kind == "arrow" && p > 0.55) DrawHead(g, px, col, e.Width * k, Clamp01((p - 0.55) / 0.3) * fade);
 
@@ -877,10 +1103,110 @@ namespace Bestie
                 }
             }
 
-            if (!string.IsNullOrEmpty(e.Label) && p > 0.5) DrawLabel(g, e, px, col, closed, Clamp01((p - 0.5) / 0.4) * fade);
+            if (!string.IsNullOrEmpty(e.Label) && p > 0.5)
+            {
+                double la = Clamp01((p - 0.5) / 0.4) * fade;
+                if (labelsLater != null) labelsLater.Add(delegate { DrawLabel(g, e, px, col, closed, la); });
+                else DrawLabel(g, e, px, col, closed, la);
+            }
         }
 
         PointF PxAny(PointF b) { return Px(b); }
+
+        List<Action> labelsLater;   // while the board draws: the words, drawn after every shape
+
+        // ------------------------------------------------------------------ shading and solids
+
+        /// <summary>Light from the top left: a gradient across the shape (a ball gets a round highlight).</summary>
+        void FillShaded(Graphics g, VisualElement e, GraphicsPath path, List<PointF> px, Color fc, double alpha)
+        {
+            RectangleF b = path.GetBounds();
+            if (b.Width < 1 || b.Height < 1) return;
+            Color light = Mix(fc, Color.White, 0.32), dark = Mix(fc, Ink, 0.22);
+            if (e.Kind == "circle")
+            {
+                using (var pg = new PathGradientBrush(path))
+                {
+                    pg.CenterPoint = new PointF(b.X + b.Width * 0.36f, b.Y + b.Height * 0.32f);
+                    pg.CenterColor = A(Mix(fc, Color.White, 0.55), alpha);
+                    pg.SurroundColors = new[] { A(dark, alpha) };
+                    pg.FocusScales = new PointF(0.15f, 0.15f);
+                    g.FillPath(pg, path);
+                }
+                return;
+            }
+            using (var lg = new LinearGradientBrush(RectangleF.Inflate(b, 1, 1), A(light, alpha), A(dark, alpha), 70f))
+            {
+                var blend = new ColorBlend(3);
+                blend.Colors = new[] { A(light, alpha), A(fc, alpha), A(dark, alpha) };
+                blend.Positions = new[] { 0f, 0.45f, 1f };
+                lg.InterpolationColors = blend;
+                g.FillPath(lg, path);
+            }
+        }
+
+        PointF[] PxPts(VisualElement e, double now, params PointF[] board)
+        {
+            var outp = new PointF[board.Length];
+            for (int i = 0; i < board.Length; i++) outp[i] = Px(PlaceAt(e, board[i], now, 0));
+            return outp;
+        }
+
+        /// <summary>A box3d's three faces: the front as is, the top lit, the side in shade.</summary>
+        void DrawBoxFaces(Graphics g, VisualElement e, double now, Color fc, double alpha)
+        {
+            PointF v = DepthVector(e);
+            float x = e.X, y = e.Y, w = e.W, h = e.H;
+            PointF[] front = PxPts(e, now, new PointF(x, y), new PointF(x + w, y), new PointF(x + w, y + h), new PointF(x, y + h));
+            PointF[] top = PxPts(e, now, new PointF(x, y), new PointF(x + v.X, y + v.Y), new PointF(x + w + v.X, y + v.Y), new PointF(x + w, y));
+            PointF[] side = PxPts(e, now, new PointF(x + w, y), new PointF(x + w + v.X, y + v.Y), new PointF(x + w + v.X, y + h + v.Y), new PointF(x + w, y + h));
+            using (var br = new SolidBrush(A(Mix(fc, Ink, 0.24), alpha))) g.FillPolygon(br, side);
+            using (var br = new SolidBrush(A(Mix(fc, Color.White, 0.3), alpha))) g.FillPolygon(br, top);
+            using (var lg = new LinearGradientBrush(new RectangleF(front[0].X, front[0].Y - 1, Math.Max(2, front[1].X - front[0].X), Math.Max(2, front[3].Y - front[0].Y + 2)),
+                A(Mix(fc, Color.White, 0.1), alpha), A(Mix(fc, Ink, 0.08), alpha), 90f))
+                g.FillPolygon(lg, front);
+        }
+
+        /// <summary>A cylinder: a body lit like a can (bright stripe, dark edges) and a lighter cap.</summary>
+        void DrawCylinderFill(Graphics g, VisualElement e, double now, Color fc, double alpha, GraphicsPath body)
+        {
+            List<PointF> bodyPts, cap; PointF l, r;
+            CylinderShape(e, out bodyPts, out cap, out l, out r);
+            PointF pl = Px(PlaceAt(e, l, now, 0)), pr = Px(PlaceAt(e, r, now, 0));
+            if (Math.Abs(pl.X - pr.X) + Math.Abs(pl.Y - pr.Y) > 1)
+            {
+                using (var lg = new LinearGradientBrush(pl, pr, A(fc, alpha), A(fc, alpha)))
+                {
+                    var blend = new ColorBlend(4);
+                    blend.Colors = new[] { A(Mix(fc, Ink, 0.3), alpha), A(Mix(fc, Color.White, 0.38), alpha), A(fc, alpha), A(Mix(fc, Ink, 0.35), alpha) };
+                    blend.Positions = new[] { 0f, 0.3f, 0.65f, 1f };
+                    lg.InterpolationColors = blend;
+                    lg.WrapMode = WrapMode.TileFlipXY;
+                    g.FillPath(lg, body);
+                }
+            }
+            var capPx = PlaceAll(e, cap, now).Select(Px).ToArray();
+            using (var br = new SolidBrush(A(Mix(fc, Color.White, 0.22), alpha))) g.FillPolygon(br, capPx);
+        }
+
+        /// <summary>The edges inside a solid's outline (a box3d's front corner lines, a cylinder's cap rim).</summary>
+        List<PointF[]> InnerEdges(VisualElement e, double now)
+        {
+            var list = new List<PointF[]>();
+            if (e.Kind == "box3d")
+            {
+                PointF v = DepthVector(e);
+                list.Add(PxPts(e, now, new PointF(e.X, e.Y), new PointF(e.X + e.W, e.Y), new PointF(e.X + e.W, e.Y + e.H)));
+                list.Add(PxPts(e, now, new PointF(e.X + e.W, e.Y), new PointF(e.X + e.W + v.X, e.Y + v.Y)));
+            }
+            else if (e.Kind == "cylinder")
+            {
+                List<PointF> body, cap; PointF l, r;
+                CylinderShape(e, out body, out cap, out l, out r);
+                list.Add(PlaceAll(e, cap, now).Select(Px).ToArray());
+            }
+            return list;
+        }
 
         /// <summary>True when smaller shapes sit inside this one (it's a whole drawn with its parts).</summary>
         bool HoldsOthers(VisualElement e)
@@ -949,7 +1275,14 @@ namespace Bestie
                 RectangleF back = RectangleF.Inflate(rect, 5 * k, 1 * k);
                 using (GraphicsPath bp = RoundedPath(back, 6 * k))
                 using (var br = new SolidBrush(A(Paper, alpha * 0.94))) g.FillPath(br, bp);
-                text = Mix(col, Ink, 0.35);
+                text = Light(col) ? Ink : Mix(col, Ink, 0.35);   // a white or yellow thing's name still reads on paper
+            }
+            else if (e.Fill != "solid")
+            {
+                // inside a tinted or empty shape: a patch of its own tint, so a line drawn across it passes under the words
+                RectangleF back = RectangleF.Inflate(rect, 4 * k, 0);
+                using (GraphicsPath bp = RoundedPath(back, 5 * k))
+                using (var br = new SolidBrush(A(e.Fill == "none" ? Paper : Mix(Paper, col, 0.2), alpha * 0.92))) g.FillPath(br, bp);
             }
             using (var br = new SolidBrush(A(text, alpha)))
             using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
@@ -958,8 +1291,8 @@ namespace Bestie
 
         void DrawText(Graphics g, VisualElement e, double now, double p, double fade, Color col)
         {
-            PointF o = Offset(e, now);
-            PointF at = Px(new PointF(e.X + o.X, e.Y + o.Y + (float)((1 - EaseOut(p)) * 8)));
+            PointF placed = PlaceAt(e, new PointF(e.X, e.Y), now, 0);
+            PointF at = Px(new PointF(placed.X, placed.Y + (float)((1 - EaseOut(p)) * 8)));
             Font f = FontFor(e.Size * k, e.Size >= 24);
             var sf = new StringFormat { LineAlignment = StringAlignment.Center };
             float maxW = 520 * k;
@@ -975,7 +1308,8 @@ namespace Bestie
 
         void DrawGrid(Graphics g, VisualElement e, double now, double p, double fade, Color col)
         {
-            PointF o = Offset(e, now);
+            PointF corner = PlaceAt(e, new PointF(e.X, e.Y), now, 0);
+            var o = new PointF(corner.X - e.X, corner.Y - e.Y);   // a grid moves with its whole but doesn't turn
             int n = e.Rows * e.Cols;
             Font f = FontFor(Math.Min(e.Cell * 0.36f, 22) * k, true);
             using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center })
