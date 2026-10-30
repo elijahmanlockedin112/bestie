@@ -54,6 +54,7 @@ namespace Bestie
             DateTime now = DateTime.Now;
             var body = new Dictionary<string, object>();
             body["model"] = s.Model;
+            body["_feature"] = "brain dump";
             body["messages"] = new List<object>
             {
                 Msg("system", Instructions),

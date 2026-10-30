@@ -69,7 +69,11 @@ To bring it back each time you log in, right-click the creature and pick **live 
 
 ## The assistant part
 
-Paste an OpenAI API key into **settings** (right-click → settings…). The key is encrypted for your Windows account with DPAPI and stays on this computer. You can also set `OPENAI_API_KEY`.
+**It thinks with Claude** (since Oct 30, 2026): Claude Haiku 5.5 answers everything, with Claude Sonnet 5.5 as the second try when Haiku fails. The Claude key is `ANTHROPIC_API_KEY`, from the environment or read at run time from Synaptic's `.env` (`learning-hub\apps\synaptic\.env`). Every Claude call is written to the shared spend ledger `C:\Users\elija\Synaptic\anthropic-spend.jsonl` (process `bestie`, filed by feature: chat, visual, memory, nosy peek…), failed calls too, and shows up on Synaptic's Claude usage page. No call goes out if the ledger can't be written, or once this month's ledger total (all apps) reaches $100. Code: `src/Claude.cs` (key, ledger) and `src/OpenAIClaude.cs` (Claude answers the same request shape the OpenAI code builds).
+
+An OpenAI key in **settings** (right-click → settings…) is still used for the OpenAI voice and ears when those are chosen. The key is encrypted for your Windows account with DPAPI and stays on this computer. You can also set `OPENAI_API_KEY`. When OpenAI is out of credit, it hears through ElevenLabs instead.
+
+- **Visual explainers:** ask how something works ("how does this tensor thing make training data?", "can a plane really hover like this?", "show me how to attach a camera to a raspberry pi") and it draws an animated diagram right on your screen while it talks you through it, step by step. It starts from what's on your screen: it can circle the real thing you're looking at and draw an arrow from it into the diagram. Things move, spin and flow to show how they work, and each spoken line shows as a caption. Claude Sonnet 5.5 writes it (setting `visualModel`), streamed, so the first stroke appears in about 2 seconds and the rest draws while it talks. Ask a follow-up ("explain more", "now show the engine") and it builds on the last one. Click the board or say "close it" to put it away; it puts itself away after 3 minutes. About 2¢ each (measured: 1-2.1¢ with a screenshot). Turn it off with `showVisuals` in settings.json. Each one's drawing (never the screenshot) is kept in `.state\visuals\`. Code: `src/Visuals.cs` (prompt, call, timing, window) and `src/VisualScene.cs` (the drawing).
 
 - **Chat:** double-click the creature, or press **Ctrl+Alt+B**. Replies show up in its speech bubble.
 - **Its voice:** it reads replies aloud with OpenAI's cheap `gpt-4o-mini-tts`, using the *ballad* voice and a direction written for the character. That works out to about 1.5¢ per minute of speech, and it starts talking in under half a second because the audio streams in.
@@ -194,7 +198,7 @@ The extension talks only to Bestie on `127.0.0.1:47823`. Bestie only accepts req
 
 ### What leaves your computer
 
-Nothing, until you talk to it. When you do, OpenAI receives:
+Nothing, until you talk to it. When you do, Anthropic (Claude) receives the list below; OpenAI or ElevenLabs only get your voice (to hear it) and its replies (to say them). Claude receives:
 
 - your message
 - the contents of `memory\`

@@ -293,6 +293,7 @@ namespace Bestie
                 var client = new OpenAIClient(s.BaseUrl, s.ApiKey);
                 var body = new Dictionary<string, object>();
                 body["model"] = s.BackgroundModel;
+                body["_feature"] = "radio dj";
                 body["messages"] = new List<object>
                 {
                     new Dictionary<string, object> { { "role", "system" }, { "content", ScriptRules } },

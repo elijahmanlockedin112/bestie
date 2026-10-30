@@ -476,6 +476,7 @@ namespace Bestie
 
                 var body = new Dictionary<string, object>();
                 body["model"] = s.BackgroundModel;
+                body["_feature"] = "patterns";
                 body["messages"] = new List<object>
                 {
                     new Dictionary<string, object> { { "role", "system" }, { "content", Instructions } },

@@ -277,6 +277,17 @@ namespace Bestie
             End();
         }
 
+        /// <summary>Speak (as Speak) and return a number that StillSaying checks, so a caller can wait for exactly this
+        /// line (the visual explainers do). -1 if nothing was started.</summary>
+        public int SpeakTracked(string text, AssistantSettings s)
+        {
+            Speak(text, s);
+            lock (gate) return cur != null ? cur.Gen : -1;
+        }
+
+        /// <summary>True while the utterance SpeakTracked returned `gen` for is still being said.</summary>
+        public bool StillSaying(int gen) { lock (gate) return cur != null && cur.Gen == gen; }
+
         /// <summary>Start a new utterance (cuts off whatever is playing). The engine is chosen now.</summary>
         public void Begin(AssistantSettings s)
         {

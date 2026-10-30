@@ -14,6 +14,12 @@
 - Locked In screen (timer, Mothball, song on the PC): opens inside the Bestie phone app from the "LOCK IN MODE ACTIVATED" notification, or by opening the app within 90 s of a tap. Direct: https://elijahman.taileb0bc0.ts.net:8445/lockin?go=1 (needs the app's key; in Safari add `&k=<pairing key>`). Sound: /lockin.wav
 - Locked In (NFC tag Shortcut): POST https://elijahman.taileb0bc0.ts.net:8445/api/control, header `X-Bestie-Key: <pairing key>`, body `{"action":"lockin"}` (`"value":"off"` stops the block, `"preview"` only says what it would do)
 
+## Claude (since Oct 30, 2026)
+- Thinks with Claude Haiku 5.5; visual explainers by Claude Sonnet 5.5. Key: `ANTHROPIC_API_KEY` in `C:\Users\elija\Downloads\Coding Projects\learning-hub\apps\synaptic\.env`
+- Spend ledger (every call, process `bestie`): `C:\Users\elija\Synaptic\anthropic-spend.jsonl`
+- Usage page: http://localhost:3000/claude-usage.html (Synaptic must be running)
+- Visual programs kept: `C:\Users\elija\OneDrive\Documents\Bestie\.state\visuals\`
+
 ## Starts with Windows
 - `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` → `Bestie`. Started from a Claude shell, Bestie's own "live here" toggle writes into Claude's sandboxed registry and Windows never sees it, so launch it with `Start-Process explorer.exe C:\Users\elija\Downloads\Bestie\Bestie.exe`.
 

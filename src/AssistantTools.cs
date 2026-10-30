@@ -32,6 +32,9 @@ namespace Bestie
         public string[] Tricks = new string[0];
         /// <summary>What they just said or typed (tools use it to sanity-check the model's choice).</summary>
         public string UserText = "";
+        /// <summary>The chat turn, and whether it was spoken (set when the turn runs).</summary>
+        public int Turn = -1;
+        public bool Voice;
     }
 
     internal sealed partial class AssistantTools
@@ -141,6 +144,16 @@ namespace Bestie
                 PE("provider", "which one", new[] { "claude", "chatgpt" })));
             if (ctx != null && ctx.Tricks != null && ctx.Tricks.Length > 0)
                 t.Add(Tool("do_trick", "do one of your little tricks on the desktop.", R("name"), PE("name", "trick", ctx.Tricks)));
+            if (s.ShowVisuals)
+            {
+                t.Add(Tool("show_visual", "draw an animated, narrated explainer right on their screen: a diagram that builds step by step while it talks them "
+                    + "through it, starting from what's on their screen. use it whenever they ask how or why something works, to explain, show, draw or "
+                    + "visualize something, how to do something physical (plug in, attach, assemble), or what something on their screen is when a picture "
+                    + "would help. follow-ups ('explain more', 'now show the engine', 'how does that lead to X') call it again. it does the talking: after "
+                    + "calling it, reply with at most 4 words.", R("request"),
+                    P("request", "string", "what to show and explain, in their words, plus anything you know that helps (what's on their screen, what they already understand)")));
+                t.Add(Tool("close_visual", "take the visual explainer off their screen (when they say close it, never mind, got it).", R()));
+            }
             return t;
         }
 
@@ -183,6 +196,13 @@ namespace Bestie
                     case "new_ai_chat": return NewAiChat(a, ctx);
                     case "organize_brain_dump": return OrganizeBrainDump(s, ctx);
                     case "time_blocks": return TimeBlocksTool(a);
+                    case "show_visual":
+                        {
+                            string req = Json.Str(a, "request") ?? (ctx != null ? ctx.UserText : "");
+                            string said = module.Visuals.Show(req, ctx, s, ctx != null ? ctx.Turn : -1, ctx != null && ctx.Voice);
+                            return new AssistantToolResult(said, "drawing it on your screen", "you asked how something works, so i drew it on your screen: " + AssistantMemory.OneLine(req));
+                        }
+                    case "close_visual": return new AssistantToolResult(module.Visuals.Close());
                     case "my_routines": return RoutinesTool(a, s, ctx);
                     case "start_brain_dump":
                         module.QueueBrainDump();

@@ -18,9 +18,13 @@ namespace Bestie
         //  - gpt-transcribe: the recommended /audio/transcriptions model (~$0.0045/min).
         //  - gpt-4o-mini-tts: the current steerable TTS model (takes `instructions`; $0.60/1M text in,
         //    $12/1M audio out, roughly $0.015/min), cheaper per character than tts-1 ($15/1M chars).
-        // luna first ($0.10 / $0.50 a million tokens); sol ($2 / $10) only when luna fails (OpenAIClient.FallbackModel)
-        public const string DefaultModel = "gpt-6-luna";
-        public const string DefaultFallbackModel = "gpt-6.1-sol";
+        // Since Oct 30 2026 (the owner's pick): Claude thinks, on the owner's Claude credit (Claude.cs keeps the key and
+        // the spend ledger). Haiku 5.5 first ($0.10 / $0.50 a million tokens); Sonnet 5.5 ($2 / $10) only when Haiku fails
+        // (OpenAIClient.FallbackModel). OpenAI still does the voice and the ears when those are set to openai.
+        public const string DefaultModel = "claude-haiku-5-5";
+        public const string DefaultFallbackModel = "claude-sonnet-5-5";
+        // the on-screen visual explainers (Visuals.cs): drawn and narrated by this model
+        public const string DefaultVisualModel = "claude-sonnet-5-5";
         public const string DefaultTtsModel = "gpt-4o-mini-tts";
         public const string DefaultOpenAiVoice = "ballad";
         public const string DefaultReasoningEffort = "none";
@@ -30,7 +34,7 @@ namespace Bestie
         public const string DefaultHotkeyVoice = "Ctrl+Alt+V";
 
         public static readonly string[] SuggestedModels = new string[] {
-            "gpt-6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-5-nano", "gpt-4.1-mini", "gpt-4o-mini" };
+            "claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5", "gpt-6-luna", "gpt-6.1-sol", "gpt-6-sol", "gpt-5.4-mini", "gpt-5-mini", "gpt-4o-mini" };
         public static readonly string[] SuggestedTranscribeModels = new string[] {
             "gpt-transcribe", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1" };
         public static readonly string[] SuggestedTtsModels = new string[] { "gpt-4o-mini-tts", "tts-1", "tts-1-hd" };
@@ -47,8 +51,11 @@ namespace Bestie
         public string FallbackModel = DefaultFallbackModel;   // "" = no second try
         // the jobs nobody waits on (memory notes, the journal digest, patterns, peeks, the radio dj's script): a model at a
         // twentieth of the price ($0.10 / $0.50 a million tokens vs $2 / $10)
-        public const string DefaultBackgroundModel = "gpt-6-luna";
+        public const string DefaultBackgroundModel = "claude-haiku-5-5";
         public string BackgroundModel = DefaultBackgroundModel;
+        public string VisualModel = DefaultVisualModel;
+        public bool ShowVisuals = true;         // "draw it on my screen when i ask how something works"
+        bool movedToClaude;                     // the settings were switched over to claude once (see LoadFile)
         public string ReasoningEffort = DefaultReasoningEffort;
         public string TranscribeModel = DefaultTranscribeModel;
         public string BaseUrl = DefaultBaseUrl;
@@ -161,9 +168,28 @@ namespace Bestie
                 s.MaxHistoryMessages = Clamp((int)Json.Num(d, "maxHistoryMessages", 24), 4, 200);
                 s.MaxReplyTokens = Clamp((int)Json.Num(d, "maxReplyTokens", 1200), 64, 32000);
                 s.ImageDetail = NonEmpty(Json.Str(d, "imageDetail"), "low");
+                s.VisualModel = NonEmpty(Json.Str(d, "visualModel"), DefaultVisualModel);
+                s.ShowVisuals = Json.Bool(d, "showVisuals", true);
+                s.movedToClaude = Json.Bool(d, "movedToClaude", false);
+                if (!s.movedToClaude) MoveToClaude(s);
             }
             catch (Exception ex) { DebugLog.Write("assistant: settings load failed: " + ex.Message); }
             return s;
+        }
+
+        /// <summary>Once (Oct 30 2026, the owner's call): the thinking moves from openai's models to claude's, and the
+        /// ears to elevenlabs when there's a key for it (the openai account had run out of credit). Any model can
+        /// still be picked again in settings afterwards; this never runs twice.</summary>
+        static void MoveToClaude(AssistantSettings s)
+        {
+            Func<string, bool> openai = m => !string.IsNullOrEmpty(m) && !OpenAIClient.IsClaude(m);
+            if (openai(s.Model)) s.Model = DefaultModel;
+            if (openai(s.BackgroundModel)) s.BackgroundModel = DefaultBackgroundModel;
+            if (openai(s.FallbackModel)) s.FallbackModel = DefaultFallbackModel;
+            if (s.TranscribeEngine == "openai" && s.ElevenKey.Length > 0) s.TranscribeEngine = "elevenlabs";
+            s.movedToClaude = true;
+            try { s.Save(); DebugLog.Write("assistant: settings moved to claude (model " + s.Model + ", ears " + s.TranscribeEngine + ")"); }
+            catch (Exception ex) { DebugLog.Write("assistant: couldn't save the move to claude: " + ex.Message); }
         }
 
         public void Save()
@@ -213,6 +239,9 @@ namespace Bestie
             d["maxHistoryMessages"] = MaxHistoryMessages;
             d["maxReplyTokens"] = MaxReplyTokens;
             d["imageDetail"] = ImageDetail ?? "low";
+            d["visualModel"] = VisualModel ?? DefaultVisualModel;
+            d["showVisuals"] = ShowVisuals;
+            d["movedToClaude"] = true;   // saved by a version that already defaults to claude: a model picked after this stays picked
             string path = FilePath;
             string tmp = path + ".tmp";
             File.WriteAllText(tmp, Json.Write(d).Replace(",\"", ",\r\n  \"").Replace("{\"", "{\r\n  \"").TrimEnd('}') + "\r\n}\r\n",

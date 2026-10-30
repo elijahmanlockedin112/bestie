@@ -51,6 +51,7 @@ namespace Bestie
         /// alive) by the time a transcription or chat request goes out. At most once a minute per base url.</summary>
         public static void Prewarm(string baseUrl, string apiKey, string model)
         {
+            if (IsClaude(model)) { PrewarmClaude(model); model = AssistantSettings.DefaultTranscribeModel; }   // openai still hears (when it's chosen)
             if (string.IsNullOrEmpty(apiKey)) return;
             lock (prewarmGate)
             {
@@ -153,6 +154,8 @@ namespace Bestie
         Dictionary<string, object> ChatCompletionOnce(Dictionary<string, object> body, int timeoutMs)
         {
             string model = Json.Str(body, "model") ?? "";
+            if (IsClaude(model)) return ViaClaude(body, timeoutMs, false, null, null);
+            body = WithoutPrivate(body);
             string qkey = baseUrl + "|" + model;
             lock (quirkGate)
             {
@@ -188,6 +191,8 @@ namespace Bestie
         Dictionary<string, object> ChatCompletionStreamOnce(Dictionary<string, object> body, int timeoutMs, Action<string> onContent, Action onToolCall)
         {
             string model = Json.Str(body, "model") ?? "";
+            if (IsClaude(model)) return ViaClaude(body, timeoutMs, true, onContent, onToolCall);
+            body = WithoutPrivate(body);
             string qkey = baseUrl + "|" + model;
             bool noStream = false;
             lock (quirkGate)

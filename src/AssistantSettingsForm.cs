@@ -125,7 +125,7 @@ namespace Bestie
             int ei = Array.IndexOf(AssistantSettings.ReasoningChoices, s.ReasoningEffort ?? "");
             effortBox.SelectedIndex = ei >= 0 ? ei : 0;
             Row("model", modelBox, Lbl("thinking", Muted), effortBox);
-            Row("", Note("gpt-6-luna is cheap and quick. bigger models cost more per message.", Muted));
+            Row("", Note("claude-haiku-5-5 is cheap and quick (claude's key comes from synaptic's .env). the openai key is for the voice and ears.", Muted));
             transcribeBox = Combo(AssistantSettings.SuggestedTranscribeModels, s.TranscribeModel, true, S(180));
             Row("ears", transcribeBox, Lbl("(speech-to-text model)", Muted));
             baseUrlBox = new TextBox();
@@ -583,6 +583,16 @@ namespace Bestie
         internal static string TestKey(string baseUrl, string key, string model, out bool ok)
         {
             ok = false;
+            if (OpenAIClient.IsClaude(model))
+            {
+                // claude thinks (its key comes from synaptic's .env); this openai key is only for the voice and the ears now
+                string problem = OpenAIClient.CheckClaudeModel(model);
+                if (problem != null) return problem;
+                bool openAiOk;
+                string ears = TestKey(baseUrl, key, AssistantSettings.DefaultTranscribeModel, out openAiOk);
+                ok = true;
+                return "works. claude thinks (" + model + ")." + (openAiOk ? " the openai key works too." : " openai key: " + ears);
+            }
             var c = new OpenAIClient(baseUrl, key);
             try
             {

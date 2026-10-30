@@ -105,6 +105,7 @@ namespace Bestie
             };
             var body = new Dictionary<string, object>();
             body["model"] = s.BackgroundModel;
+            body["_feature"] = "lock in";
             body["messages"] = msgs;
             bool thinks = !string.IsNullOrEmpty(s.ReasoningEffort) && s.ReasoningEffort != "none";
             body["max_completion_tokens"] = thinks ? 1500 : 500;
