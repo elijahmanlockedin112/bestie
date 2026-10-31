@@ -653,7 +653,7 @@ namespace Bestie
                 case "show_visual": return pick(new[] { "let me draw it.", "one sec. drawing it.", "ok, watch." });
                 case "check_claude": return "checking.";
             }
-            if (name.StartsWith("calendar_") || name == "web_search" || name == "read_tab" || name == "search_memory") return pick(new[] { "one sec.", "checking." });
+            if (name.StartsWith("calendar_") || name == "web_search" || name == "read_tab" || name == "search_memory" || name == "weather") return pick(new[] { "one sec.", "checking." });
             return null;
         }
 

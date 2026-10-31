@@ -137,6 +137,7 @@ namespace Bestie
             bool calendarConnected = module.Calendar != null && module.Calendar.IsConnected;
             if (calendarConnected) AddCalendarTools(t);
             AddExtraTools(t, browser, calendarConnected);
+            t.Add(WeatherDef());
             AddAgentTools(t);
             t.Add(Tool("list_ai_sessions","list the user's claude and chatgpt sessions (claude code, codex, browser tabs, desktop apps) with ids and status.", R()));
             t.Add(Tool("focus_ai_session", "bring one of those sessions to the front.", R("id"), P("id", "string", "session id from list_ai_sessions")));
@@ -203,6 +204,7 @@ namespace Bestie
                             return new AssistantToolResult(said, "drawing it on your screen", "you asked how something works, so i drew it on your screen: " + AssistantMemory.OneLine(req));
                         }
                     case "close_visual": return new AssistantToolResult(module.Visuals.Close());
+                    case "weather": return WeatherTool(a);
                     case "my_routines": return RoutinesTool(a, s, ctx);
                     case "start_brain_dump":
                         module.QueueBrainDump();

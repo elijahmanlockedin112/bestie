@@ -46,6 +46,27 @@ namespace Bestie
 
         static IEnumerable<object> List(Dictionary<string, object> d, string key) { return Json.Arr(d, key); }
 
+        /// <summary>Words wrapped to a width, at most maxLines lines (the last one ends in … if there's more).</summary>
+        List<string> WrapWords(string text, Font f, int width, int maxLines)
+        {
+            var lines = new List<string>();
+            string line = "";
+            foreach (string word in (text ?? "").Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string tryLine = line.Length == 0 ? word : line + " " + word;
+                if (W(tryLine, f) <= width || line.Length == 0) { line = tryLine; continue; }
+                lines.Add(line);
+                line = word;
+            }
+            if (line.Length > 0) lines.Add(line);
+            if (lines.Count > maxLines)
+            {
+                lines = lines.Take(maxLines).ToList();
+                lines[maxLines - 1] = lines[maxLines - 1] + "…";
+            }
+            return lines;
+        }
+
         int cardIndex;   // counts cards within the message being laid out (checklist ticks are keyed by it)
 
         int Card(List<Piece> outp, string json, int x, int y, int width, List<string> lines)
@@ -109,8 +130,11 @@ namespace Bestie
                         o.Add(new Piece { Kind = PK.Text, R = new Rectangle(gx, y - S(4), vw + 4, bigFont.Height), Text = value, Font = bigFont, Fore = Ink });
                         if (!string.IsNullOrEmpty(delta))
                         {
-                            bool down = delta.TrimStart().StartsWith("-") || delta.TrimStart().StartsWith("−") || delta.TrimStart().StartsWith("↓");
-                            Color dc = Json.Bool(it, "good_down", false) ? (down ? AddInk : DelInk) : (down ? DelInk : AddInk);
+                            string dt = delta.TrimStart();
+                            bool down = dt.StartsWith("-") || dt.StartsWith("−") || dt.StartsWith("↓");
+                            bool up = dt.StartsWith("+") || dt.StartsWith("↑");
+                            // only a change gets a colour; anything else beside the number is a quiet note
+                            Color dc = !up && !down ? Muted : Json.Bool(it, "good_down", false) ? (down ? AddInk : DelInk) : (down ? DelInk : AddInk);
                             o.Add(new Piece { Kind = PK.Text, R = new Rectangle(gx + vw + S(8), y + S(6), W(delta, smallBold) + 4, bigFont.Height - S(10)), Text = delta, Font = smallBold, Fore = dc });
                         }
                         int ly = y + bigFont.Height - S(6);
@@ -121,10 +145,16 @@ namespace Bestie
                     {
                         var tiles = List(it, "tiles").OfType<Dictionary<string, object>>().ToList();
                         if (tiles.Count == 0) return y;
-                        int per = Math.Max(1, Math.Min(tiles.Count, Math.Max(1, w / S(76))));
+                        // as many to a row as fit, then rows evened out (5 tiles: one row of 5, or 3 + 2, never 4 + 1)
+                        int perMax = Math.Max(1, w / S(62));
+                        int rowsNeeded = (tiles.Count + perMax - 1) / perMax;
+                        int per = Math.Max(1, (tiles.Count + rowsNeeded - 1) / rowsNeeded);
                         int gap = S(6), tw = (w - gap * (per - 1)) / per, rowY = y;
                         bool icons = tiles.Any(tl => tl.ContainsKey("icon"));
-                        int th = S(10) + small.Height + (icons ? S(30) : S(2)) + midFont.Height + (tiles.Any(tl => tl.ContainsKey("small")) ? small.Height + S(2) : 0) + S(8);
+                        // each tile's caption wrapped to its width (two lines at most), and every tile as tall as the tallest
+                        var captions = tiles.Select(tl => WrapWords(Json.Str(tl, "small") ?? "", small, tw - S(10), 2)).ToList();
+                        int capLines = captions.Max(l => l.Count);
+                        int th = S(10) + small.Height + (icons ? S(30) : S(2)) + midFont.Height + (capLines > 0 ? capLines * small.Height + S(2) : 0) + S(8);
                         for (int i = 0; i < tiles.Count; i++)
                         {
                             if (i > 0 && i % per == 0) rowY += th + gap;
@@ -142,7 +172,11 @@ namespace Bestie
                             }
                             o.Add(new Piece { Kind = PK.Text, R = new Rectangle(tx, cy2, tw, midFont.Height), Text = Json.Str(tl, "big") ?? "", Font = midFont, Fore = Ink, Radius = -3 });
                             cy2 += midFont.Height;
-                            if (tl.ContainsKey("small")) o.Add(new Piece { Kind = PK.Text, R = new Rectangle(tx, cy2, tw, small.Height), Text = Json.Str(tl, "small"), Font = small, Fore = Muted, Radius = -3 });
+                            foreach (string cap in captions[i])
+                            {
+                                o.Add(new Piece { Kind = PK.Text, R = new Rectangle(tx, cy2, tw, small.Height), Text = cap, Font = small, Fore = Muted, Radius = -3 });
+                                cy2 += small.Height;
+                            }
                         }
                         return rowY + th;
                     }
