@@ -165,6 +165,7 @@ namespace Bestie
             history = new ChatView(this.scale);
             history.Dock = DockStyle.Fill;
             history.LinkClicked += delegate(string url) { owner.OpenLinkFromChat(url); };
+            history.ChoiceClicked += delegate(string choice) { if (owner != null) owner.SubmitFromChat(choice); };   // a card's button: as if they'd typed it
 
             // screenshot card (hidden until something is attached)
             attachPanel = new Panel();

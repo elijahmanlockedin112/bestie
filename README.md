@@ -79,7 +79,8 @@ An OpenAI key in **settings** (right-click → settings…) is still used for th
   - code as a dark card with syntax colours, real line numbers, the broken line highlighted, and a copy button
   - a fix as a card with the file and line on top, old lines in red, new ones in green, and "copy fixed"
   - steps as numbered circles, shortcuts like `Ctrl+S` as key caps, a swatch next to a colour, tips, tables, and small bar charts for numbers
-  - right-click a message to copy it. The voice skips code, charts and tables and says "it's in the chat" instead.
+  - cards for anything with a shape (`src/ChatCards.cs`): weather with day tiles, your day as a timeline (done / now / next), comparisons with its pick, a recipe with a tickable ingredient list, a word's meaning, a song rated out of 7, progress bars, key facts. It writes a small ```` ```ui ```` JSON block and the chat draws it with line-drawn icons. Choice buttons send what you click as your next message; checklist items tick.
+  - right-click a message to copy it. The voice skips code, charts and tables and says "it's in the chat" instead; a card is said through the sentence beside it.
   - the compose box grows as you type; its icons attach a screenshot, start the mic (it turns orange while listening) and open settings.
 - **Its voice:** it reads replies aloud with OpenAI's cheap `gpt-4o-mini-tts`, using the *ballad* voice and a direction written for the character. That works out to about 1.5¢ per minute of speech, and it starts talking in under half a second because the audio streams in.
   - Without a key, or if anything goes wrong, it falls back to the free Windows voice.

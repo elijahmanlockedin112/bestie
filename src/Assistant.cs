@@ -1070,7 +1070,7 @@ namespace Bestie
                 }
             }
 
-            bool inFence, saidCode;
+            bool inFence, quietFence, saidCode;   // quietFence: a ```ui card (said by the sentence beside it, nothing to point at)
 
             /// <summary>A streamed piece without what's inside ``` blocks or table rows (they're drawn in the chat, not
             /// read out); the first time something is left out, the voice says where it is.</summary>
@@ -1081,8 +1081,14 @@ namespace Bestie
                 foreach (string line in piece.Split('\n'))
                 {
                     string t = line.TrimStart();
-                    if (t.StartsWith("```")) { inFence = !inFence; dropped = true; continue; }
-                    if (inFence || t.StartsWith("|")) { if (t.Length > 0) dropped = true; continue; }
+                    if (t.StartsWith("```"))
+                    {
+                        if (!inFence) { string lang = t.Substring(3).Trim().ToLowerInvariant(); quietFence = lang.StartsWith("ui") || lang.StartsWith("card"); }
+                        inFence = !inFence;
+                        if (!quietFence) dropped = true;
+                        continue;
+                    }
+                    if (inFence || t.StartsWith("|")) { if (t.Length > 0 && !(inFence && quietFence)) dropped = true; continue; }
                     sb.Append(line).Append('\n');
                 }
                 if (dropped && !saidCode) { saidCode = true; sb.Append(" it's in the chat. "); }
@@ -1393,6 +1399,17 @@ namespace Bestie
             sb.Append("- the chat window draws your replies, so show, don't describe: code in ``` fences with its language, and when it's a fix in their file, the real line numbers and the broken line marked (```html:3 {5} = numbered from 3, line 5 highlighted); ")
               .Append("a change as ```diff (first line \"# file, lines 4-5\", then - old lines and + new lines); steps as a numbered list; shortcuts in backticks (`Ctrl+S` becomes key caps); colours in backticks (`#ff6600`, `blue` get a swatch); ")
               .Append("numbers worth comparing as ```chart (\"# title\" then \"label: number unit\" lines, drawn as bars); a | table | for side-by-side facts; > for one tip. keep the words around them short. the voice skips code, charts and tables, so a spoken answer still makes sense without them.\n");
+            sb.Append("- cards: when an answer has a shape (weather, a schedule or plan, a comparison or recommendation, options to pick from, progress, a rating, a recipe or list, a definition, a score, anything you'd lay out on a page), put it in a card the chat draws, plus one short sentence outside it for the voice. a card is a ```ui block holding ONE json object on any number of lines: ")
+              .Append("{\"title\":\"...\",\"sub\":\"...\",\"accent\":\"blue\",\"items\":[...]} (accent: warm blue green orange red purple teal pink yellow gray). items: ")
+              .Append("{\"t\":\"stat\",\"value\":\"72°F\",\"label\":\"clear, light wind\",\"icon\":\"sun\",\"delta\":\"+3°\"} · ")
+              .Append("{\"t\":\"tiles\",\"tiles\":[{\"top\":\"sat\",\"icon\":\"rain\",\"big\":\"68°\",\"small\":\"storms\",\"hi\":true}]} (a row of small boxes: days, options, scores) · ")
+              .Append("{\"t\":\"kv\",\"rows\":[[\"humidity\",\"64%\"]]} · {\"t\":\"progress\",\"label\":\"essay\",\"value\":3,\"max\":5,\"note\":\"3 of 5 done\"} · {\"t\":\"rating\",\"label\":\"this song\",\"value\":5,\"of\":7} · ")
+              .Append("{\"t\":\"timeline\",\"items\":[{\"time\":\"3:00\",\"text\":\"robotics\",\"state\":\"done\"},{\"time\":\"5:30\",\"text\":\"dinner\",\"state\":\"now\",\"note\":\"...\"}]} (state done, now or next) · ")
+              .Append("{\"t\":\"checklist\",\"items\":[\"eggs\",\"milk\"],\"done\":[0]} (they can tick items) · ")
+              .Append("{\"t\":\"compare\",\"cols\":[{\"title\":\"...\",\"points\":[\"+ quiet\",\"- pricey\"],\"pick\":true}]} (2-3 options, + good, - bad, mark your pick) · ")
+              .Append("{\"t\":\"choices\",\"options\":[\"play lofi\",\"play my mix\"]} (buttons: the one they click comes back as their message, so offer real next steps worded as they'd say them) · ")
+              .Append("{\"t\":\"tags\",\"items\":[\"...\"]} · {\"t\":\"term\",\"word\":\"tensor\",\"how\":\"noun\",\"sound\":\"TEN-ser\",\"means\":\"...\",\"example\":\"...\"} · {\"t\":\"bars\",\"rows\":[[\"quicksort\",0.21,\"s\"]]} · {\"t\":\"text\",\"text\":\"markdown\"} · {\"t\":\"divider\"}. ")
+              .Append("icons are drawn: sun cloud rain storm snow moon clock calendar check music star heart pin book bulb fire money warning. pick the parts that fit the content; real values only (look things up with your tools first). small talk and one-line answers stay plain text.\n");
             if (s.ShowVisuals)
                 sb.Append("- explaining: when they want to understand something (how or why it works, what that thing on their screen is, how to physically do something, \"can you show me\"), call show_visual instead of explaining in words. it draws an animated diagram on their screen, built from what they're looking at, and narrates it in your voice. follow-ups about it call show_visual again; \"close it\" calls close_visual. after show_visual, reply with at most 4 words. quick facts and yes/no questions don't need one.\n");
             sb.Append("SAFETY (always)\n")
@@ -1518,7 +1535,8 @@ namespace Bestie
         {
             if (text == null) return "";
             // code blocks, charts and tables are for the eyes (the chat draws them); the voice says where they are
-            string t = Regex.Replace(text, @"```[\s\S]*?(```|$)", " (it's in the chat.) ");
+            string t = Regex.Replace(text, @"```\s*(ui|card)\b[\s\S]*?(```|$)", " ");   // a card: the sentence beside it is what gets said
+            t = Regex.Replace(t, @"```[\s\S]*?(```|$)", " (it's in the chat.) ");
             t = Regex.Replace(t, @"(\(it's in the chat\.\)\s*)+", "(it's in the chat.) ");
             t = Regex.Replace(t, @"^\s*\|.*\|\s*$", " ", RegexOptions.Multiline);
             t = Regex.Replace(t, @"\[([^\]]+)\]\((https?://[^)]+)\)", "$1");

@@ -15,7 +15,7 @@ using System.Windows.Forms;
 
 namespace Bestie
 {
-    internal sealed class ChatView : Control
+    internal sealed partial class ChatView : Control
     {
         // ------------------------------------------------------------------ palette (bestie's warm paper)
 
@@ -53,9 +53,11 @@ namespace Bestie
             public int LaidWidth = -1;
             public int Height;
             public readonly List<Piece> Pieces = new List<Piece>();
+            public readonly HashSet<string> Ticked = new HashSet<string>();   // checklist items ticked here ("card:item")
+            public string Chosen;                                              // the choice button they clicked
         }
 
-        enum PK { Text, Box, Bar, Dot }
+        enum PK { Text, Box, Bar, Dot, Glyph }
 
         sealed class Piece
         {
@@ -66,8 +68,16 @@ namespace Bestie
             public Color Fore, Back, Border;
             public int Radius;
             public string Link, Copy;     // clickable: a url, or text to copy
-            public bool Underline;
+            public string Choice, Tick;   // clickable: a choice button (sent as their reply), a checklist item to tick
+            public bool Underline, Strike;
         }
+
+        Entry laying;                     // the message being laid out (cards keep their ticks and choice on it)
+
+        /// <summary>A choice button was clicked: its text, to send as their next message.</summary>
+        public event Action<string> ChoiceClicked;
+
+        static bool Clickable(Piece p) { return p.Link != null || p.Copy != null || p.Choice != null || p.Tick != null; }
 
         readonly List<Entry> entries = new List<Entry>();
         readonly float scale;
@@ -125,7 +135,7 @@ namespace Bestie
             if (disposing)
             {
                 copyTimer.Dispose(); menu.Dispose();
-                foreach (Font f in new[] { body, bold, head, small, smallBold, note, mono, monoSmall }) f.Dispose();
+                foreach (Font f in new[] { body, bold, head, small, smallBold, note, mono, monoSmall, bigFont, midFont }) if (f != null) f.Dispose();
             }
             base.Dispose(disposing);
         }
@@ -213,7 +223,10 @@ namespace Bestie
             int y = 0;
             e.Pieces.Add(new Piece { Kind = PK.Text, R = new Rectangle(0, 0, width, small.Height), Text = (e.Name ?? "bestie").ToLowerInvariant(), Font = smallBold, Fore = Warm });
             y += small.Height + S(3);
+            laying = e;
+            cardIndex = 0;
             y = Blocks(e.Pieces, e.Text, 0, y, width);
+            laying = null;
             e.Height = y;
         }
 
@@ -257,6 +270,7 @@ namespace Bestie
                     y = space(y); first = false;
                     if (lang == "diff" || lang == "fix") y = Diff(outp, code, x, y, width);
                     else if (lang == "chart" || lang == "bars") y = Chart(outp, code, x, y, width);
+                    else if (lang == "ui" || lang == "card") y = Card(outp, string.Join("\n", code.ToArray()), x, y, width, code);
                     else y = Code(outp, code, lang, start, marks, fm.Groups[2].Success, x, y, width);
                     continue;
                 }
@@ -946,6 +960,10 @@ namespace Bestie
                         break;
                     case PK.Dot:
                         using (var br = new SolidBrush(p.Back)) g.FillEllipse(br, r);
+                        if (p.Border.A > 0) using (var pen = new Pen(p.Border, Math.Max(1.5f, 2f * scale))) g.DrawEllipse(pen, r);
+                        break;
+                    case PK.Glyph:
+                        DrawGlyph(g, p.Text, r, p.Fore);
                         break;
                     case PK.Text:
                         {
@@ -955,7 +973,7 @@ namespace Bestie
                             bool center = p.Font == smallBold && p.Fore == Color.White || p.Copy != null || p.Font == smallBold && p.R.Width < S(60) && p.Fore == Ink;   // step numbers, copy, key caps
                             float tw = W(text, p.Font);
                             float ty = r.Y + (r.Height - p.Font.GetHeight(g)) / 2f;
-                            float tx = center ? r.X + (r.Width - tw) / 2f : p.Radius == -1 ? r.Right - tw : r.X;   // -1: line numbers, right aligned
+                            float tx = center || p.Radius == -3 ? r.X + (r.Width - tw) / 2f : p.Radius == -1 ? r.Right - tw : r.X;   // -1: right aligned (line numbers), -3: centred (tiles, buttons, tags)
                             using (var br = new SolidBrush(fore))
                             {
                                 if (p.Radius == -2 && tw > r.Width)   // a chart label too long for its column
@@ -964,6 +982,8 @@ namespace Bestie
                             }
                             if (p.Underline)
                                 using (var pen = new Pen(Color.FromArgb(120, fore), 1)) g.DrawLine(pen, tx, r.Y + r.Height - S(5), tx + tw, r.Y + r.Height - S(5));
+                            if (p.Strike)
+                                using (var pen = new Pen(Color.FromArgb(150, fore), Math.Max(1, S(1)))) g.DrawLine(pen, tx, r.Y + r.Height / 2f + S(1), tx + tw, r.Y + r.Height / 2f + S(1));
                             break;
                         }
                 }
@@ -1033,7 +1053,7 @@ namespace Bestie
                 return;
             }
             Entry en; Piece p = HitPiece(e.Location, out en);
-            Cursor = p != null && (p.Link != null || p.Copy != null) ? Cursors.Hand : Cursors.Default;
+            Cursor = p != null && Clickable(p) && !(p.Choice != null && en != null && en.Chosen != null) ? Cursors.Hand : Cursors.Default;
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -1058,6 +1078,22 @@ namespace Bestie
                 Invalidate();
             }
             else if (p.Link != null && LinkClicked != null) LinkClicked(p.Link);
+            else if (p.Tick != null && en != null)
+            {
+                if (!en.Ticked.Remove(p.Tick)) en.Ticked.Add(p.Tick);
+                en.LaidWidth = -1;
+                Relayout();
+                Invalidate();
+            }
+            else if (p.Choice != null && en != null && en.Chosen == null)
+            {
+                // one answer per set of buttons: the picked one stays lit, the rest fade
+                en.Chosen = p.Choice;
+                en.LaidWidth = -1;
+                Relayout();
+                Invalidate();
+                if (ChoiceClicked != null) ChoiceClicked(p.Choice);
+            }
         }
 
         protected override void OnKeyDown(KeyEventArgs e)
@@ -1082,7 +1118,7 @@ namespace Bestie
                     for (int i = e.Pieces.Count - 1; i >= 0; i--)
                     {
                         Piece p = e.Pieces[i];
-                        if ((p.Link != null || p.Copy != null) && new Rectangle(p.R.X + Pad, p.R.Y + y, p.R.Width, p.R.Height).Contains(pt)) return p;
+                        if (Clickable(p) && new Rectangle(p.R.X + Pad, p.R.Y + y, p.R.Width, p.R.Height).Contains(pt)) return p;
                     }
                     return null;
                 }
