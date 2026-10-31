@@ -1051,7 +1051,7 @@ namespace Bestie
                         }
                         if (end < 0) break;
                     }
-                    string clean = SpeakableSegment(all.Substring(consumed, end - consumed));
+                    string clean = SpeakableSegment(Unfenced(all.Substring(consumed, end - consumed)));
                     consumed = end;
                     if (clean.Length == 0) continue;
                     if (spokenChars + clean.Length > MaxSpokenChars)
@@ -1068,6 +1068,25 @@ namespace Bestie
                     m.tts.Add(clean);
                     spokenChars += clean.Length;
                 }
+            }
+
+            bool inFence, saidCode;
+
+            /// <summary>A streamed piece without what's inside ``` blocks or table rows (they're drawn in the chat, not
+            /// read out); the first time something is left out, the voice says where it is.</summary>
+            string Unfenced(string piece)
+            {
+                var sb = new StringBuilder();
+                bool dropped = false;
+                foreach (string line in piece.Split('\n'))
+                {
+                    string t = line.TrimStart();
+                    if (t.StartsWith("```")) { inFence = !inFence; dropped = true; continue; }
+                    if (inFence || t.StartsWith("|")) { if (t.Length > 0) dropped = true; continue; }
+                    sb.Append(line).Append('\n');
+                }
+                if (dropped && !saidCode) { saidCode = true; sb.Append(" it's in the chat. "); }
+                return sb.ToString();
             }
 
             public void Complete(string reply)
@@ -1371,6 +1390,9 @@ namespace Bestie
               .Append("sound trouble (can't hear, no sound, wrong speakers, switch to headphones): sound_output list first, then fix it yourself with set when the answer is clear (e.g. the default is a virtual device and there's one real speaker); ask only if several real outputs could be the one.\n");
             sb.Append("- you keep a factual behavior log for them (they asked you to, for their own good): what's in front of them and for how long, sites, focus streaks, switching, time away, late nights, focus blocks, music. my_patterns turns it into numbers. use it whenever they ask about their day, week, habits, focus, procrastination, sleep or screen time, and give an honest, specific, kind read with one or two concrete changes. you may mention something from their day so far when it's genuinely useful (a very late night, hours on one video site before a deadline), but not as nagging.\n");
             sb.Append("- you can list their claude and chatgpt sessions, bring one to the front, or open a new chat.\n");
+            sb.Append("- the chat window draws your replies, so show, don't describe: code in ``` fences with its language, and when it's a fix in their file, the real line numbers and the broken line marked (```html:3 {5} = numbered from 3, line 5 highlighted); ")
+              .Append("a change as ```diff (first line \"# file, lines 4-5\", then - old lines and + new lines); steps as a numbered list; shortcuts in backticks (`Ctrl+S` becomes key caps); colours in backticks (`#ff6600`, `blue` get a swatch); ")
+              .Append("numbers worth comparing as ```chart (\"# title\" then \"label: number unit\" lines, drawn as bars); a | table | for side-by-side facts; > for one tip. keep the words around them short. the voice skips code, charts and tables, so a spoken answer still makes sense without them.\n");
             if (s.ShowVisuals)
                 sb.Append("- explaining: when they want to understand something (how or why it works, what that thing on their screen is, how to physically do something, \"can you show me\"), call show_visual instead of explaining in words. it draws an animated diagram on their screen, built from what they're looking at, and narrates it in your voice. follow-ups about it call show_visual again; \"close it\" calls close_visual. after show_visual, reply with at most 4 words. quick facts and yes/no questions don't need one.\n");
             sb.Append("SAFETY (always)\n")
@@ -1495,7 +1517,11 @@ namespace Bestie
         static string StripMarkdown(string text)
         {
             if (text == null) return "";
-            string t = Regex.Replace(text, @"\[([^\]]+)\]\((https?://[^)]+)\)", "$1");
+            // code blocks, charts and tables are for the eyes (the chat draws them); the voice says where they are
+            string t = Regex.Replace(text, @"```[\s\S]*?(```|$)", " (it's in the chat.) ");
+            t = Regex.Replace(t, @"(\(it's in the chat\.\)\s*)+", "(it's in the chat.) ");
+            t = Regex.Replace(t, @"^\s*\|.*\|\s*$", " ", RegexOptions.Multiline);
+            t = Regex.Replace(t, @"\[([^\]]+)\]\((https?://[^)]+)\)", "$1");
             t = Regex.Replace(t, @"(\*\*|__|`|^#+\s*)", "", RegexOptions.Multiline);
             return t;
         }
